@@ -1,0 +1,6 @@
+allowBuilds:
+  core-js: false
+  es5-ext: false
+  onnxruntime-node: false
+  protobufjs: false
+  sharp: false

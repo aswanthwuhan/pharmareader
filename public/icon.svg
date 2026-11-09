@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="PharmaReader">
+  <rect width="512" height="512" rx="96" fill="#0f4c5c" />
+  <path d="M132 116h124c22 0 40 18 40 40v244c-14-14-34-22-56-22H132z" fill="#f4f1ea" />
+  <path d="M380 116H256c-22 0-40 18-40 40v244c14-14 34-22 56-22h108z" fill="#cfe3e6" />
+  <circle cx="256" cy="196" r="34" fill="#0f4c5c" />
+  <path d="M242 196h28M256 182v28" stroke="#f4f1ea" stroke-width="12" stroke-linecap="round" />
+</svg>
