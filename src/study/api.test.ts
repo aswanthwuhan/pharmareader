@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { db, newId } from '../core/db';
 import { setSetting } from '../core/settings';
 import type { BookRecord, Bookmark, CardRecord, Highlight, Topic } from '../core/types';
@@ -77,6 +77,20 @@ describe('highlights and bookmarks', () => {
     expect(await db.highlights.get(second.id)).toBeUndefined();
   });
 
+  it('keeps cards made from a deleted highlight and only unlinks them', async () => {
+    const b = book();
+    const source = await addHighlight(highlight(b.id, 'Warfarin is metabolised by CYP2C9.'));
+    const card = await createCard(cardFromHighlight(source, 'cloze'));
+
+    await deleteHighlight(source.id);
+
+    const kept = await db.cards.get(card.id);
+    expect(kept).toBeDefined();
+    expect(kept?.front).toBe(card.front);
+    // The link is removed rather than left dangling.
+    expect(kept && 'highlightId' in kept).toBe(false);
+  });
+
   it('creates, lists and deletes bookmarks', async () => {
     const b = book();
     await db.books.add(b);
@@ -103,6 +117,21 @@ describe('fsrs serialisation', () => {
     expect(card.state).toBe(0);
     expect(card.due).toBeInstanceOf(Date);
     expect(fromFsrs({ state: 99 }).state).toBe(0);
+  });
+
+  it('keeps last_review and learning_steps through storage', async () => {
+    const card = await createCard({ front: 'Q', back: 'A', kind: 'qa' });
+    const { card: reviewed } = await reviewCard(card.id, 3);
+
+    const stored = reviewed.fsrs as { due: string; last_review?: string; learning_steps: number };
+    expect(typeof stored.last_review).toBe('string');
+    expect(stored.learning_steps).toBe(1);
+
+    // What IndexedDB hands back must still schedule the same way.
+    const reread = fromFsrs((await db.cards.get(card.id))?.fsrs);
+    expect(reread.last_review).toBeInstanceOf(Date);
+    expect(reread.learning_steps).toBe(1);
+    expect(reread.due.getTime()).toBe(new Date(stored.due).getTime());
   });
 });
 
@@ -145,6 +174,23 @@ describe('cardFromHighlight', () => {
     const card = cardFromHighlight(highlight(b.id, 'Aspirin is an NSAID.'), 'qa');
     expect(card.front).toBe('Explain: Aspirin is an NSAID.');
   });
+
+  it('never blanks the whole highlight for a one-word cloze', () => {
+    const card = cardFromHighlight(highlight(b.id, 'Aspirin'), 'cloze');
+    expect(card.front).not.toBe('[...]');
+    // The first letter plus the length still gives the learner a foothold.
+    expect(card.front).toBe('A[...] (7 characters)');
+  });
+
+  it('falls back to a length hint when the highlight has no word at all', () => {
+    const card = cardFromHighlight(highlight(b.id, '1 2 3'), 'cloze');
+    expect(card.front).toBe('[...] (3 characters)');
+  });
+
+  it('never produces an empty Q&A prompt', () => {
+    const card = cardFromHighlight(highlight(b.id, '   '), 'qa');
+    expect(card.front).toBe('Recall this highlight');
+  });
 });
 
 describe('reviewCard', () => {
@@ -164,6 +210,15 @@ describe('reviewCard', () => {
 
   it('throws for an unknown card id', async () => {
     await expect(reviewCard('nope', 3)).rejects.toThrow(/not found/);
+  });
+
+  it('rejects ratings outside 1-4 before touching the card', async () => {
+    const card = await createCard({ front: 'Q', back: 'A', kind: 'qa' });
+    // Rating.Manual (0) and 5 are not grades FSRS can schedule from.
+    await expect(reviewCard(card.id, 0 as unknown as 1)).rejects.toThrow(/Invalid rating/);
+    await expect(reviewCard(card.id, 5 as unknown as 1)).rejects.toThrow(/Invalid rating/);
+    expect(await db.reviewLogs.count()).toBe(0);
+    expect((await db.cards.get(card.id))?.fsrs).toMatchObject({ reps: 0 });
   });
 });
 
@@ -185,6 +240,22 @@ describe('dueCards', () => {
     await many(25);
     await setSetting('study.newPerDay', 5);
     expect(await dueCards(100)).toHaveLength(5);
+  });
+
+  it('accepts a numeric string and falls back to the default for nonsense', async () => {
+    await many(25);
+    await setSetting('study.newPerDay', '7');
+    expect(await dueCards(100)).toHaveLength(7);
+
+    // A corrupt row must not silently stop every new card.
+    await setSetting('study.newPerDay', 'lots');
+    expect(await dueCards(100)).toHaveLength(20);
+  });
+
+  it('allows zero new cards per day when that is the setting', async () => {
+    await many(3);
+    await setSetting('study.newPerDay', 0);
+    expect(await dueCards(100)).toEqual([]);
   });
 
   it('counts new cards already reviewed today against the cap', async () => {
@@ -232,5 +303,37 @@ describe('exports', () => {
     expect(csv.split('\n')[0]).toBe('#separator:Semicolon');
     expect(csv).toContain('"What does ""t½"" mean; really?";"Half-life\nin hours";Pharmacokinetics');
     expect(csv).toContain('Question;Answer;unknown-topic');
+  });
+
+  it('reads only the requested book record when exporting one book', async () => {
+    const wanted = book('Wanted');
+    const other = book('Other');
+    await db.books.add(wanted);
+    await db.books.add(other);
+    await db.highlights.add(highlight(wanted.id, 'Keep this one.'));
+    await db.highlights.add(highlight(other.id, 'Leave this one out.'));
+
+    const everyBook = vi.spyOn(db.books, 'toArray');
+    try {
+      const md = await exportNotesMarkdown(wanted.id);
+      // Book records carry the whole file blob, so loading them all is a memory spike.
+      expect(everyBook).not.toHaveBeenCalled();
+      expect(md).toContain('Keep this one.');
+      expect(md).not.toContain('Leave this one out.');
+    } finally {
+      everyBook.mockRestore();
+    }
+  });
+
+  it('declares the tags column and sanitises tags for Anki', async () => {
+    const topic: Topic = { id: 't2', parentId: null, title: 'Drug metabolism', level: 'basic', order: 2 };
+    await db.topics.add(topic);
+    await createCard({ front: 'Q', back: 'A', kind: 'qa', topicIds: ['t2'] });
+
+    const csv = await exportCardsCsv();
+    // Without the header Anki imports the tags as a third field of the note.
+    expect(csv.split('\n')[1]).toBe('#tags column:3');
+    // Anki splits tags on whitespace, so a spaced title has to become one tag.
+    expect(csv).toContain('Q;A;Drug_metabolism');
   });
 });

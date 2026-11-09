@@ -1,8 +1,11 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { fsrs, type Grade } from 'ts-fsrs';
 import type { CardRecord } from '../core/types';
 import { dueCards, fromFsrs, reviewCard } from './api';
 import './study.css';
+
+/** One scheduler for the whole module: `fsrs()` builds models and is not cheap. */
+const scheduler = fsrs();
 
 const RATINGS = [
   { value: 1, label: 'Again' },
@@ -27,7 +30,7 @@ function formatGap(ms: number): string {
 
 function previewIntervals(card: CardRecord): Record<number, string> {
   const now = new Date();
-  const preview = fsrs().repeat(fromFsrs(card.fsrs), now);
+  const preview = scheduler.repeat(fromFsrs(card.fsrs), now);
   const out: Record<number, string> = {};
   for (const { value } of RATINGS) {
     out[value] = formatGap(preview[value as Grade].card.due.getTime() - now.getTime());
@@ -35,7 +38,7 @@ function previewIntervals(card: CardRecord): Record<number, string> {
   return out;
 }
 
-/** Renders a cloze gap (`[...]`) as a styled blank. */
+/** Renders a cloze gap (`[...]`) as a styled blank, announced as "blank". */
 function ClozeText({ text }: { text: string }) {
   const parts = text.split(/\[\.\.\.\]|\[…\]/);
   return (
@@ -43,9 +46,12 @@ function ClozeText({ text }: { text: string }) {
       {parts.map((part, index) => (
         <Fragment key={index}>
           {index > 0 ? (
-            <span className="cloze-gap" aria-label="blank">
-              […]
-            </span>
+            <>
+              <span className="cloze-gap" aria-hidden="true">
+                […]
+              </span>
+              <span className="cloze-blank-label">blank</span>
+            </>
           ) : null}
           {part}
         </Fragment>
@@ -60,8 +66,17 @@ export default function ReviewSession({ topicIds }: { topicIds?: string[] }) {
   const [revealed, setRevealed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [loadToken, setLoadToken] = useState(0);
+  const mounted = useRef(true);
   const topicKey = topicIds?.join(',') ?? '';
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -93,21 +108,28 @@ export default function ReviewSession({ topicIds }: { topicIds?: string[] }) {
   async function rate(rating: 1 | 2 | 3 | 4) {
     if (!current || busy) return;
     setBusy(true);
+    setError('');
     try {
       await reviewCard(current.id, rating);
+      if (!mounted.current) return;
       setRevealed(false);
       setPos((p) => p + 1);
+    } catch {
+      if (mounted.current) setError('That rating could not be saved. Try again.');
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   }
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
-      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      if (target && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable)) return;
       if (!current) return;
+      // Space/Enter belong to whatever control has focus (tabs, links, buttons).
+      const onControl = target?.closest?.('button, a, [role="button"], [role="tab"], [role="menuitem"]') != null;
       if ((event.key === ' ' || event.key === 'Enter') && !revealed) {
+        if (onControl) return;
         event.preventDefault();
         setRevealed(true);
         return;
@@ -119,7 +141,9 @@ export default function ReviewSession({ topicIds }: { topicIds?: string[] }) {
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  });
+    // rate is re-created per render; the values it reads are listed instead.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current, revealed, busy]);
 
   if (loading) return <p className="muted">Loading cards…</p>;
 
@@ -143,6 +167,12 @@ export default function ReviewSession({ topicIds }: { topicIds?: string[] }) {
       <p className="study-front">
         {current.kind === 'cloze' ? <ClozeText text={current.front} /> : current.front}
       </p>
+
+      {error ? (
+        <p className="study-error" role="alert">
+          {error}
+        </p>
+      ) : null}
 
       {revealed ? (
         <>

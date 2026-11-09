@@ -30,6 +30,17 @@ export default function HighlightList({ bookId, onJump }: { bookId: string; onJu
     }
   }
 
+  async function saveNote(id: string) {
+    try {
+      await updateHighlight(id, { note: noteDraft.trim() || undefined });
+      setEditingNote(null);
+      setStatus('Note saved.');
+    } catch {
+      // Keep the editor open so the typed note is not lost.
+      setStatus('Could not save the note.');
+    }
+  }
+
   return (
     <section className="study-highlights" aria-label="Highlights and bookmarks">
       <h2>Highlights</h2>
@@ -60,14 +71,7 @@ export default function HighlightList({ bookId, onJump }: { bookId: string; onJu
                     onChange={(event) => setNoteDraft(event.target.value)}
                   />
                   <div className="study-row">
-                    <button
-                      type="button"
-                      className="study-btn primary"
-                      onClick={() => {
-                        void updateHighlight(highlight.id, { note: noteDraft.trim() || undefined });
-                        setEditingNote(null);
-                      }}
-                    >
+                    <button type="button" className="study-btn primary" onClick={() => void saveNote(highlight.id)}>
                       Save note
                     </button>
                     <button type="button" className="study-btn" onClick={() => setEditingNote(null)}>
@@ -112,7 +116,15 @@ export default function HighlightList({ bookId, onJump }: { bookId: string; onJu
                 <button type="button" className="study-btn" onClick={() => void makeCard(highlight, 'cloze')}>
                   Cloze card
                 </button>
-                <button type="button" className="study-btn danger" onClick={() => void deleteHighlight(highlight.id)}>
+                <button
+                  type="button"
+                  className="study-btn danger"
+                  onClick={() => {
+                    // Cards made from the highlight are kept, so say so before removing it.
+                    if (!window.confirm('Delete this highlight? Cards made from it are kept.')) return;
+                    void deleteHighlight(highlight.id);
+                  }}
+                >
                   Delete
                 </button>
               </div>

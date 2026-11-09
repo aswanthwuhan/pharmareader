@@ -20,7 +20,7 @@
   cursor: pointer;
 }
 
-.study-tab[aria-selected='true'] {
+.study-tab[aria-pressed='true'] {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--accent-text);
@@ -173,6 +173,25 @@
   background: color-mix(in srgb, #f6d743 45%, var(--surface));
   font-weight: 700;
   letter-spacing: 0.08em;
+}
+
+/* Text alternative for the cloze gap, which is drawn with an aria-hidden glyph. */
+.cloze-blank-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.study-error {
+  margin: 8px 0 0;
+  color: #b3261e;
+  font-weight: 600;
 }
 
 .rate-gap {

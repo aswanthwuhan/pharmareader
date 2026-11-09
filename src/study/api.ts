@@ -85,8 +85,17 @@ export async function updateHighlight(id: string, patch: Partial<Omit<Highlight,
   await db.highlights.update(id, patch);
 }
 
+/**
+ * Remove a highlight. Cards made from it stay useful, so they are kept and
+ * only unlinked — a dangling `highlightId` would break "jump to source".
+ */
 export async function deleteHighlight(id: string): Promise<void> {
-  await db.highlights.delete(id);
+  await db.transaction('rw', [db.highlights, db.cards], async () => {
+    await db.highlights.delete(id);
+    await db.cards.where('highlightId').equals(id).modify((card) => {
+      delete card.highlightId;
+    });
+  });
 }
 
 export async function listHighlights(bookId: string): Promise<Highlight[]> {
@@ -172,16 +181,39 @@ function pickClozeToken(text: string): { start: number; end: number } | null {
   return longest ? { start: longest.start, end: longest.end } : null;
 }
 
+const EMPTY_PROMPT = 'Recall this highlight';
+
+/**
+ * Front text for a cloze card. A gap that swallows the whole highlight (a
+ * one-word quote) or a highlight with no letters at all leaves nothing to cue
+ * recall, so those fall back to a hint plus the answer's length.
+ */
+function clozeFront(text: string): string {
+  const token = pickClozeToken(text);
+  if (!token) {
+    const chars = text.replace(/\s+/g, '').length;
+    return chars > 0 ? `[...] (${chars} characters)` : '[...]';
+  }
+  const before = text.slice(0, token.start);
+  const after = text.slice(token.end);
+  if (!/[A-Za-z0-9]/.test(before) && !/[A-Za-z0-9]/.test(after)) {
+    const word = text.slice(token.start, token.end);
+    return `${word.slice(0, 1)}[...] (${word.length} characters)`;
+  }
+  return `${before}[...]${after}`;
+}
+
 /** Build a card from a highlight. Pure: hand the result to `createCard` to save. */
 export function cardFromHighlight(h: Highlight, kind: 'qa' | 'cloze'): CardRecord {
+  const text = h.text.trim();
   let front: string;
   if (kind === 'cloze') {
-    const token = pickClozeToken(h.text);
-    front = token ? `${h.text.slice(0, token.start)}[...]${h.text.slice(token.end)}` : '[...]';
+    front = clozeFront(text);
   } else {
-    const words = h.text.trim().split(/\s+/).filter(Boolean);
-    const lead = words.slice(0, 12).join(' ');
-    front = `Explain: ${lead}${words.length > 12 ? '…' : ''}`;
+    const words = text.split(/\s+/).filter(Boolean);
+    front = words.length
+      ? `Explain: ${words.slice(0, 12).join(' ')}${words.length > 12 ? '…' : ''}`
+      : EMPTY_PROMPT;
   }
   const note = h.note?.trim();
   return {
@@ -190,7 +222,7 @@ export function cardFromHighlight(h: Highlight, kind: 'qa' | 'cloze'): CardRecor
     highlightId: h.id,
     kind,
     front,
-    back: note ? `${h.text}\n\n${note}` : h.text,
+    back: [text, note].filter(Boolean).join('\n\n'),
     topicIds: [...h.topicIds],
     fsrs: toFsrs(createEmptyCard(new Date())),
     createdAt: Date.now(),
@@ -209,6 +241,12 @@ async function newCardsReviewedToday(now: number): Promise<number> {
   return logs.filter((log) => (log.log as { state?: unknown } | null)?.state === State.New).length;
 }
 
+/** `study.newPerDay` as a usable allowance; absent or nonsense values use the default. */
+function perDayAllowance(value: unknown): number {
+  const parsed = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
+  return typeof parsed === 'number' && Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : DEFAULT_NEW_PER_DAY;
+}
+
 /**
  * Cards ready now, earliest due first. New cards are capped per day
  * (`study.newPerDay`, default 20) because introducing more never sticks.
@@ -224,7 +262,7 @@ export async function dueCards(limit: number, topicIds?: string[]): Promise<Card
     .map((record) => ({ record, fsrsCard: fromFsrs(record.fsrs) }))
     .filter(({ fsrsCard }) => fsrsCard.due.getTime() <= now);
 
-  const perDay = Math.max(0, await getSetting<number>(NEW_PER_DAY_KEY, DEFAULT_NEW_PER_DAY));
+  const perDay = perDayAllowance(await getSetting<unknown>(NEW_PER_DAY_KEY, DEFAULT_NEW_PER_DAY));
   const allowance = Math.max(0, perDay - (await newCardsReviewedToday(now)));
 
   const fresh = due
@@ -246,6 +284,10 @@ export interface ReviewResult {
 
 /** Apply one FSRS rating and persist both the updated card and the review log. */
 export async function reviewCard(cardId: string, rating: 1 | 2 | 3 | 4): Promise<ReviewResult> {
+  // Rating.Manual (0) and out-of-range grades corrupt the scheduling state.
+  if (!Number.isInteger(rating) || rating < 1 || rating > 4) {
+    throw new Error(`Invalid rating: ${String(rating)}`);
+  }
   const record = await db.cards.get(cardId);
   if (!record) throw new Error(`Card ${cardId} not found`);
 
@@ -288,8 +330,10 @@ function oneLine(text: string): string {
 
 /** Notes as Markdown, grouped by book then chapter, with the highlight's note. */
 export async function exportNotesMarkdown(bookId?: string): Promise<string> {
+  // Reading one book's record is enough for a per-book export; loading every
+  // record would pull every stored file blob into memory for nothing.
   const [books, highlights] = await Promise.all([
-    db.books.toArray(),
+    bookId ? db.books.where('id').equals(bookId).toArray() : db.books.toArray(),
     bookId ? db.highlights.where('bookId').equals(bookId).toArray() : db.highlights.toArray(),
   ]);
 
@@ -347,6 +391,11 @@ function csvCell(value: string): string {
   return /[";,\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
+/** Anki splits tags on whitespace, so a title like "Drug metabolism" needs an underscore. */
+function ankiTag(value: string): string {
+  return value.trim().replace(/\s+/g, '_');
+}
+
 /**
  * Anki text import (`front;back;tags`). Topic ids become titles when the
  * syllabus knows them, otherwise the raw id keeps the tag traceable.
@@ -357,9 +406,13 @@ export async function exportCardsCsv(): Promise<string> {
   const rows = cards
     .sort((a, b) => a.createdAt - b.createdAt)
     .map((card) => {
-      const tags = card.topicIds.map((id) => titleById.get(id) ?? id).join(' ');
+      const tags = card.topicIds
+        .map((id) => ankiTag(titleById.get(id) ?? id))
+        .filter(Boolean)
+        .join(' ');
       return [card.front, card.back, tags].map(csvCell).join(';');
     });
-  // Anki reads this comment to pick the field separator; it is not imported as a card.
-  return ['#separator:Semicolon', ...rows].join('\n');
+  // Anki reads these comments to pick the field separator and the tags column;
+  // without the tags column the third field would be imported as a note field.
+  return ['#separator:Semicolon', '#tags column:3', ...rows].join('\n');
 }

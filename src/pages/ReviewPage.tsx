@@ -1,7 +1,7 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useState } from 'react';
 import { db } from '../core/db';
-import type { CardRecord } from '../core/types';
+import type { BookRecord, CardRecord } from '../core/types';
 import TopicPicker from '../syllabus/TopicPicker';
 import CardEditor, { type CardDraft } from '../study/CardEditor';
 import ReviewSession from '../study/ReviewSession';
@@ -37,7 +37,12 @@ export default function ReviewPage() {
   const [status, setStatus] = useState('');
 
   const cards = useLiveQuery(() => listCards(), [], []);
-  const books = useLiveQuery(() => db.books.orderBy('title').toArray(), [], []);
+  // Book records carry their file blob, so only read them when the export tab needs the list.
+  const books = useLiveQuery<BookRecord[], BookRecord[]>(
+    () => (tab === 'export' ? db.books.orderBy('title').toArray() : Promise.resolve([])),
+    [tab],
+    [],
+  );
 
   const query = search.trim().toLowerCase();
   const visibleCards = query
@@ -45,40 +50,49 @@ export default function ReviewPage() {
     : cards;
 
   async function saveCard(draft: CardDraft) {
-    if (draft.id) {
-      await updateCard(draft.id, { front: draft.front, back: draft.back, kind: draft.kind, topicIds: draft.topicIds });
-    } else {
-      await createCard({ front: draft.front, back: draft.back, kind: draft.kind, topicIds: draft.topicIds });
+    try {
+      if (draft.id) {
+        await updateCard(draft.id, { front: draft.front, back: draft.back, kind: draft.kind, topicIds: draft.topicIds });
+      } else {
+        await createCard({ front: draft.front, back: draft.back, kind: draft.kind, topicIds: draft.topicIds });
+      }
+      setEditing(null);
+      setStatus('Card saved.');
+    } catch {
+      setStatus('Could not save the card.');
     }
-    setEditing(null);
-    setStatus('Card saved.');
   }
 
   async function downloadNotes() {
-    const markdown = await exportNotesMarkdown(exportBookId || undefined);
-    downloadFile(`pharmareader-notes-${new Date().toISOString().slice(0, 10)}.md`, markdown, 'text/markdown;charset=utf-8');
-    setStatus('Notes downloaded.');
+    try {
+      const markdown = await exportNotesMarkdown(exportBookId || undefined);
+      downloadFile(`pharmareader-notes-${new Date().toISOString().slice(0, 10)}.md`, markdown, 'text/markdown;charset=utf-8');
+      setStatus('Notes downloaded.');
+    } catch {
+      setStatus('Could not export notes.');
+    }
   }
 
   async function downloadCards() {
-    const csv = await exportCardsCsv();
-    downloadFile(`pharmareader-cards-${new Date().toISOString().slice(0, 10)}.csv`, csv, 'text/csv;charset=utf-8');
-    setStatus('Cards downloaded.');
+    try {
+      const csv = await exportCardsCsv();
+      downloadFile(`pharmareader-cards-${new Date().toISOString().slice(0, 10)}.csv`, csv, 'text/csv;charset=utf-8');
+      setStatus('Cards downloaded.');
+    } catch {
+      setStatus('Could not export cards.');
+    }
   }
 
   return (
     <section className="page">
       <h1>Review</h1>
 
-      <div className="study-tabs" role="tablist" aria-label="Study">
+      <div className="study-tabs" role="group" aria-label="Study">
         {TABS.map((item) => (
           <button
             key={item.id}
             type="button"
-            role="tab"
-            id={`tab-${item.id}`}
-            aria-selected={tab === item.id}
-            aria-controls={`panel-${item.id}`}
+            aria-pressed={tab === item.id}
             className="study-tab"
             onClick={() => setTab(item.id)}
           >
@@ -88,7 +102,7 @@ export default function ReviewPage() {
       </div>
 
       {tab === 'review' ? (
-        <div role="tabpanel" id="panel-review" aria-labelledby="tab-review">
+        <div>
           <div className="study-field">
             <span className="study-label">Filter by topic</span>
             <TopicPicker value={topicIds} onChange={setTopicIds} />
@@ -98,7 +112,7 @@ export default function ReviewPage() {
       ) : null}
 
       {tab === 'cards' ? (
-        <div role="tabpanel" id="panel-cards" aria-labelledby="tab-cards">
+        <div>
           <div className="study-row">
             <button type="button" className="study-btn primary" onClick={() => setEditing('new')}>
               New card
@@ -143,8 +157,14 @@ export default function ReviewPage() {
                     type="button"
                     className="study-btn danger"
                     onClick={() => {
-                      void deleteCard(card.id);
-                      setStatus('Card deleted.');
+                      if (!window.confirm('Delete this card and its review history?')) return;
+                      void deleteCard(card.id)
+                        .then(() => {
+                          // A card open in the editor would otherwise stay editable after deletion.
+                          setEditing((open) => (open && open !== 'new' && open.id === card.id ? null : open));
+                          setStatus('Card deleted.');
+                        })
+                        .catch(() => setStatus('Could not delete the card.'));
                     }}
                   >
                     Delete
@@ -157,7 +177,7 @@ export default function ReviewPage() {
       ) : null}
 
       {tab === 'export' ? (
-        <div role="tabpanel" id="panel-export" aria-labelledby="tab-export">
+        <div>
           <div className="study-card">
             <h2>Notes</h2>
             <p className="muted">Highlights with their notes, grouped by book and chapter, as Markdown.</p>

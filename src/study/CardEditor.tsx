@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import type { CardRecord } from '../core/types';
 import TopicPicker from '../syllabus/TopicPicker';
 import './study.css';
@@ -24,6 +24,11 @@ export default function CardEditor({
   const [back, setBack] = useState(card?.back ?? '');
   const [kind, setKind] = useState<'qa' | 'cloze'>(card?.kind ?? 'qa');
   const [topicIds, setTopicIds] = useState<string[]>(card?.topicIds ?? []);
+  // Unique per editor: a fixed id would point two editors' labels at the same field.
+  const fieldId = useId();
+  const kindId = `${fieldId}-kind`;
+  const frontId = `${fieldId}-front`;
+  const backId = `${fieldId}-back`;
 
   const canSave = front.trim().length > 0 && back.trim().length > 0;
 
@@ -38,17 +43,17 @@ export default function CardEditor({
       }}
     >
       <div className="study-field">
-        <label htmlFor="card-kind">Card type</label>
-        <select id="card-kind" className="study-select" value={kind} onChange={(event) => setKind(event.target.value as 'qa' | 'cloze')}>
+        <label htmlFor={kindId}>Card type</label>
+        <select id={kindId} className="study-select" value={kind} onChange={(event) => setKind(event.target.value as 'qa' | 'cloze')}>
           <option value="qa">Q&amp;A</option>
           <option value="cloze">Cloze</option>
         </select>
       </div>
 
       <div className="study-field">
-        <label htmlFor="card-front">Front</label>
+        <label htmlFor={frontId}>Front</label>
         <textarea
-          id="card-front"
+          id={frontId}
           className="study-textarea"
           rows={3}
           value={front}
@@ -58,9 +63,9 @@ export default function CardEditor({
       </div>
 
       <div className="study-field">
-        <label htmlFor="card-back">Back</label>
+        <label htmlFor={backId}>Back</label>
         <textarea
-          id="card-back"
+          id={backId}
           className="study-textarea"
           rows={4}
           value={back}
