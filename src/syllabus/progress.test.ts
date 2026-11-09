@@ -97,4 +97,29 @@ describe('topicProgress', () => {
     expect((await topicProgress('parent')).books).toBe(1);
     expect((await topicProgress('child')).books).toBe(1);
   });
+
+  it('counts a card once when it is tagged to parent and child', async () => {
+    await db.topics.bulkPut([topic('parent', null), topic('child', 'parent')]);
+    const shared = card(['parent', 'child'], { stability: 40, state: 2, scheduled_days: 45 });
+    await db.cards.put(shared);
+    await db.reviewLogs.put({ id: newId(), cardId: shared.id, rating: 3, reviewedAt: Date.now(), log: {} });
+
+    const all = await topicProgressAll();
+    expect(all.get('parent')).toEqual({ books: 0, highlights: 0, cards: 1, mature: 1, reviewedToday: 1 });
+    expect(all.get('child')).toEqual({ books: 0, highlights: 0, cards: 1, mature: 1, reviewedToday: 1 });
+  });
+
+  it('rolls a three-level subtree up without double counting overlapping tags', async () => {
+    await db.topics.bulkPut([topic('root', null), topic('mid', 'root'), topic('leaf', 'mid')]);
+    const shared = book(['root', 'mid', 'leaf']);
+    await db.books.bulkPut([shared, book(['leaf'])]);
+    const sharedCard = card(['root', 'leaf'], { stability: 30 });
+    const leafCard = card(['leaf'], { stability: 1 });
+    await db.cards.bulkPut([sharedCard, leafCard]);
+
+    const all = await topicProgressAll();
+    expect(all.get('leaf')).toEqual({ books: 2, highlights: 0, cards: 2, mature: 1, reviewedToday: 0 });
+    expect(all.get('mid')).toEqual({ books: 2, highlights: 0, cards: 2, mature: 1, reviewedToday: 0 });
+    expect(all.get('root')).toEqual({ books: 2, highlights: 0, cards: 2, mature: 1, reviewedToday: 0 });
+  });
 });

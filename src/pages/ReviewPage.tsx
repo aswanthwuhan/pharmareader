@@ -1,5 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { db } from '../core/db';
 import type { BookRecord, CardRecord } from '../core/types';
 import TopicPicker from '../syllabus/TopicPicker';
@@ -30,7 +31,16 @@ function downloadFile(filename: string, text: string, mime: string) {
 
 export default function ReviewPage() {
   const [tab, setTab] = useState<TabId>('review');
-  const [topicIds, setTopicIds] = useState<string[]>([]);
+  const [searchParams] = useSearchParams();
+  const topicParam = searchParams.get('topic');
+  // Syllabus rows link here as /review?topic=<id>; start with that topic pre-selected.
+  const [topicIds, setTopicIds] = useState<string[]>(() =>
+    topicParam ? [topicParam] : [],
+  );
+  // Keep the filter in step when only the query string changes (back/forward).
+  useEffect(() => {
+    if (topicParam) setTopicIds([topicParam]);
+  }, [topicParam]);
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<CardRecord | 'new' | null>(null);
   const [exportBookId, setExportBookId] = useState('');

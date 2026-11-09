@@ -55,7 +55,7 @@ describe('TopicPicker', () => {
     expect(input!.getAttribute('aria-expanded')).toBe('true');
 
     const options = container.querySelectorAll('[role="option"]');
-    expect(options).toHaveLength(20);
+    expect(options).toHaveLength(26);
 
     await act(async () => {
       input!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -65,6 +65,49 @@ describe('TopicPicker', () => {
     expect(chosen).toHaveLength(1);
     const active = input!.getAttribute('aria-activedescendant') ?? '';
     expect(active.endsWith(`-opt-${chosen[0]}`)).toBe(true);
+  });
+
+  it('opens on the first row when ArrowDown is pressed while closed', async () => {
+    const onChange = vi.fn();
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<TopicPicker value={[]} onChange={onChange} />);
+    });
+    await flush();
+
+    const input = container.querySelector<HTMLInputElement>('input[role="combobox"]')!;
+    expect(input.getAttribute('aria-expanded')).toBe('false');
+
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    });
+    await flush();
+
+    expect(input.getAttribute('aria-expanded')).toBe('true');
+    const first = container.querySelector('[role="option"]');
+    expect(first?.textContent).toContain('General Pharmacology');
+    expect(input.getAttribute('aria-activedescendant')).toBe(first?.id);
+  });
+
+  it('matches descendants when the query names a parent domain', async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<TopicPicker value={[]} onChange={() => {}} />);
+    });
+    await flush();
+
+    const input = container.querySelector<HTMLInputElement>('input[role="combobox"]')!;
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setValue.call(input, 'Pharmacy Practice');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await flush();
+
+    const text = container.textContent ?? '';
+    expect(text).toContain('Dispensing & Pharmaceutical Calculations');
+    expect(text).toContain('Drugs & Therapeutics Committee');
+    expect(text).not.toContain('Antihypertensives');
   });
 
   it('shows chosen topics as removable chips', async () => {

@@ -41,16 +41,19 @@ export default function TopicPicker({ value, onChange, label = 'Topics' }: Topic
   const rows = useMemo(() => {
     const out: Row[] = [];
     const q = query.trim().toLowerCase();
-    const walk = (nodes: TopicNode[], depth: number, parent: string | undefined, showAll: boolean) => {
+    const walk = (nodes: TopicNode[], depth: number, ancestors: string[], showAll: boolean) => {
       for (const node of nodes) {
-        const matches = !q || node.title.toLowerCase().includes(q) || (parent ?? '').toLowerCase().includes(q);
+        const parent = ancestors[ancestors.length - 1];
+        // Match the whole ancestor path, so searching a domain name also finds its topics.
+        const haystack = [...ancestors, node.title].join(' ').toLowerCase();
+        const matches = !q || haystack.includes(q);
         if (matches) {
           out.push({ id: node.id, title: node.title, level: node.level, depth, parent, hasChildren: node.children.length > 0 });
         }
-        if (showAll || expanded.has(node.id)) walk(node.children, depth + 1, node.title, showAll);
+        if (showAll || expanded.has(node.id)) walk(node.children, depth + 1, [...ancestors, node.title], showAll);
       }
     };
-    walk(tree, 0, undefined, q.length > 0);
+    walk(tree, 0, [], q.length > 0);
     return out;
   }, [tree, expanded, query]);
 
@@ -105,10 +108,20 @@ export default function TopicPicker({ value, onChange, label = 'Topics' }: Topic
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      setOpen(true);
-      setActive((i) => Math.min(i + 1, rows.length - 1));
+      if (!open) {
+        // First ArrowDown opens the list on the first row; it must not skip row 0.
+        openPicker();
+        setActive(0);
+        return;
+      }
+      setActive((i) => Math.min(i + 1, Math.max(rows.length - 1, 0)));
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
+      if (!open) {
+        openPicker();
+        setActive(0);
+        return;
+      }
       setActive((i) => Math.max(i - 1, 0));
     } else if (event.key === 'Home') {
       event.preventDefault();
