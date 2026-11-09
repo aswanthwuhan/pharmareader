@@ -34,6 +34,7 @@ import {
   type KokoroStage,
 } from '../native/kokoroFailure';
 import { isKokoroNativeAvailable, Kokoro, type KokoroStatus } from '../native/kokoroPlugin';
+import '../tts.css';
 
 const ATTRIBUTION = 'Kokoro-82M by hexgrad (Apache-2.0) via sherpa-onnx (Apache-2.0)';
 const SPEED_TEST_SENTENCE =
@@ -218,25 +219,70 @@ export default function KokoroNativePanel(): React.JSX.Element {
   const dataWarning = meteredWarning(status?.metered, downloaded);
   const busy = state === 'downloading';
 
+  const percent = Math.round(clamp01(fraction) * 100);
+  const chipLabel =
+    state === 'unsupported'
+      ? 'Not available here'
+      : state === 'loading'
+        ? 'Checking…'
+        : state === 'downloading'
+          ? `Downloading ${percent}%`
+          : state === 'error'
+            ? 'Error'
+            : downloaded
+              ? 'Ready'
+              : 'Not downloaded';
+  const chipTone =
+    state === 'ready'
+      ? 'is-ready'
+      : state === 'error'
+        ? 'is-error'
+        : state === 'downloading' || state === 'loading'
+          ? 'is-busy'
+          : '';
+  const progressLabel =
+    stage === 'unpack' || fraction >= 1
+      ? 'Unpacking the model archive… (this is the slow part)'
+      : stage === 'load'
+        ? 'Loading the model into memory…'
+        : `Downloading model… ${percent}%${resumable > 0 && resumable < 1 ? ' (resumed)' : ''}`;
+
   return (
-    <section className="tts-section" aria-labelledby="kokoro-native-heading" aria-busy={busy}>
-      <h2 id="kokoro-native-heading">Kokoro (on-device)</h2>
-      <p className="tts-hint">
-        Runs Kokoro-82M entirely on this phone through sherpa-onnx — no PC and no server. The model is a
-        334 MB download that is stored in the app&apos;s private storage and survives restarts.
+    <section className="kokoro-panel" aria-labelledby="kokoro-native-heading" aria-busy={busy}>
+      <header className="kokoro-head">
+        <div>
+          <h3 className="kokoro-title" id="kokoro-native-heading">
+            Kokoro (on-device)
+          </h3>
+          <p className="kokoro-sub">Kokoro-82M through sherpa-onnx · 334 MB model</p>
+        </div>
+        <span className={chipTone ? `status-chip ${chipTone}` : 'status-chip'}>
+          <span className="status-dot" aria-hidden="true" />
+          {chipLabel}
+        </span>
+      </header>
+
+      <p className="field-hint">
+        Runs Kokoro-82M entirely on this phone through sherpa-onnx — no PC and no server. The model is a 334 MB download
+        that is stored in the app&apos;s private storage and survives restarts.
       </p>
 
-      <div className="tts-field-row">
-        <div className="tts-field">
-          <label htmlFor="kokoro-native-size">Model</label>
-          <output id="kokoro-native-size" className="tts-value">
+      <div className="tts-field-grid">
+        <div className="field">
+          <span className="field-label" id="kokoro-native-size-label">
+            Model
+          </span>
+          <output id="kokoro-native-size" className="tts-value" aria-labelledby="kokoro-native-size-label">
             {status?.modelId ? `${status.modelId} · ${sizeLabel}` : sizeLabel}
           </output>
         </div>
-        <div className="tts-field">
-          <label htmlFor="kokoro-native-threads">Threads</label>
+        <div className="field">
+          <label className="field-label" htmlFor="kokoro-native-threads">
+            Threads
+          </label>
           <select
             id="kokoro-native-threads"
+            className="input"
             value={threads}
             onChange={(event) => void changeThreads(Number(event.target.value))}
             disabled={state === 'unsupported' || busy}
@@ -251,10 +297,13 @@ export default function KokoroNativePanel(): React.JSX.Element {
         </div>
       </div>
 
-      <div className="tts-field">
-        <label htmlFor="kokoro-native-voice">Voice</label>
+      <div className="field">
+        <label className="field-label" htmlFor="kokoro-native-voice">
+          Voice
+        </label>
         <select
           id="kokoro-native-voice"
+          className="input"
           value={selectedVoice}
           onChange={(event) => void changeVoice(event.target.value)}
           disabled={state === 'unsupported'}
@@ -268,27 +317,19 @@ export default function KokoroNativePanel(): React.JSX.Element {
       </div>
 
       {state === 'unsupported' && (
-        <p className="tts-tip">
-          The native Kokoro engine is only available in the Android app. In the browser, use the
-          in-browser Kokoro or Pocket TTS model, or the system voice.
-        </p>
+        <div className="banner banner-info">
+          <p>
+            The native Kokoro engine is only available in the Android app. In the browser, use the in-browser Kokoro or
+            Pocket TTS model, or the system voice.
+          </p>
+        </div>
       )}
 
       {busy && (
-        <div className="tts-field">
-          <progress
-            value={clamp01(fraction)}
-            max={1}
-            aria-label="Kokoro model download progress"
-          />
+        <div className="kokoro-progress">
+          <progress value={clamp01(fraction)} max={1} aria-label="Kokoro model download progress" />
           <p className="tts-status" role="status">
-            {stage === 'unpack' || fraction >= 1
-              ? 'Unpacking the model archive… (this is the slow part)'
-              : stage === 'load'
-                ? 'Loading the model into memory…'
-                : `Downloading model… ${Math.round(clamp01(fraction) * 100)}%${
-                    resumable > 0 && resumable < 1 ? ' (resumed)' : ''
-                  }`}
+            {progressLabel}
           </p>
         </div>
       )}
@@ -302,36 +343,36 @@ export default function KokoroNativePanel(): React.JSX.Element {
       )}
 
       {dataWarning && (
-        <p className="tts-tip" role="status">
-          {dataWarning}
-        </p>
+        <div className="banner banner-info" role="status">
+          <p>{dataWarning}</p>
+        </div>
       )}
 
       {spaceWarning && (
-        <p className="tts-error" role="alert">
-          {spaceWarning}
-        </p>
+        <div className="banner banner-error" role="alert">
+          <p>{spaceWarning}</p>
+        </div>
       )}
 
       {!busy && !downloaded && resumable > 0 && resumable < 1 && (
-        <p className="tts-hint" role="status">
-          A partial download is saved ({Math.round(resumable * 100)}% of{' '}
-          {formatBytes(status?.archiveBytes)}). Resuming continues from there.
+        <p className="field-hint" role="status">
+          A partial download is saved ({Math.round(resumable * 100)}% of {formatBytes(status?.archiveBytes)}). Resuming
+          continues from there.
         </p>
       )}
 
       {failure && (
-        <div className="tts-field">
-          <p className="tts-error" role="alert">
-            {failure.message}
-          </p>
-          <details className="tts-hint">
+        <div className="kokoro-diagnostics">
+          <div className="banner banner-error" role="alert">
+            <p>{failure.message}</p>
+          </div>
+          <details>
             <summary>Error details</summary>
             <pre style={DETAILS_STYLE}>{failure.details}</pre>
           </details>
           <button
             type="button"
-            className="tts-button"
+            className="btn btn-secondary"
             style={TAP_TARGET}
             onClick={() => void copyDetails()}
           >
@@ -348,7 +389,7 @@ export default function KokoroNativePanel(): React.JSX.Element {
         {(state === 'absent' || state === 'error') && (
           <button
             type="button"
-            className="tts-button"
+            className="btn btn-primary"
             onClick={() => void download()}
             disabled={spaceWarning !== null}
           >
@@ -362,14 +403,14 @@ export default function KokoroNativePanel(): React.JSX.Element {
           </button>
         )}
         {busy && (
-          <button type="button" className="tts-button" disabled>
+          <button type="button" className="btn btn-primary" disabled>
             Downloading…
           </button>
         )}
         {(state === 'ready' || state === 'absent') && (
           <button
             type="button"
-            className="tts-button"
+            className="btn btn-secondary"
             onClick={() => void measureSpeed()}
             disabled={!ready || measuring}
           >
@@ -379,7 +420,7 @@ export default function KokoroNativePanel(): React.JSX.Element {
         {ready && (
           <button
             type="button"
-            className="tts-link danger"
+            className="btn btn-ghost"
             style={TAP_TARGET}
             onClick={() => void remove()}
           >
@@ -389,16 +430,16 @@ export default function KokoroNativePanel(): React.JSX.Element {
       </div>
 
       {measure && (
-        <div className="tts-tip">
-          <p className="tts-value">
-            RTF {measure.rtf.toFixed(2)} · {Math.round(measure.durationMs)} ms of audio in{' '}
-            {Math.round(measure.elapsedMs)} ms · {Math.round(measure.sampleRate / 1000)} kHz
+        <div className="kokoro-measure">
+          <p>
+            RTF {measure.rtf.toFixed(2)} · {Math.round(measure.durationMs)} ms of audio in {Math.round(measure.elapsedMs)}{' '}
+            ms · {Math.round(measure.sampleRate / 1000)} kHz
           </p>
-          <p className="tts-value">{verdict(measure.rtf)}</p>
+          <p>{verdict(measure.rtf)}</p>
         </div>
       )}
 
-      <p className="tts-hint">{status?.attribution ?? ATTRIBUTION}</p>
+      <p className="field-hint">{status?.attribution ?? ATTRIBUTION}</p>
     </section>
   );
 }

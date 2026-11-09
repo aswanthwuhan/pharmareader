@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { setSetting, useSetting } from '../core/settings';
 import type { LexiconEntry, TtsVoice } from '../core/types';
 import { cacheSizeBytes, clearAudio } from './cache';
@@ -23,16 +23,33 @@ export const VOICE_TIP =
 
 type EngineChoice = 'auto' | 'system' | 'pocket' | 'kokoro';
 
-const ENGINE_OPTIONS: { value: EngineChoice; label: string }[] = [
-  { value: 'auto', label: 'Auto (best available)' },
-  { value: 'system', label: 'System voices (free, offline)' },
-  { value: 'pocket', label: 'Pocket TTS (on-device model)' },
-  { value: 'kokoro', label: 'Kokoro (on-device model)' },
+const ENGINE_OPTIONS: { value: EngineChoice; label: string; hint: string }[] = [
+  {
+    value: 'auto',
+    label: 'Auto (best available)',
+    hint: 'Uses a downloaded on-device model when one is ready, and your system voice otherwise. Nothing else to set up.',
+  },
+  {
+    value: 'system',
+    label: 'System voices (free, offline)',
+    hint: 'The voices your phone already has. No download, works offline, and follows the device speed.',
+  },
+  {
+    value: 'pocket',
+    label: 'Pocket TTS (on-device model)',
+    hint: 'A 148 MB model that runs on this device. Speed is limited to 0.80×–1.25× because it works by resampling.',
+  },
+  {
+    value: 'kokoro',
+    label: 'Kokoro (on-device model)',
+    hint: 'Kokoro-82M, from 90 MB (q8) to 320 MB (fp32). Faster than real-time on most phones.',
+  },
 ];
 
 const RATE_MIN = 0.5;
 const RATE_MAX = 2;
 const RATE_STEP = 0.05;
+const INITIAL_RULES = 8;
 
 interface Draft {
   id?: string;
@@ -65,209 +82,35 @@ export function isEngineChoice(value: string): value is EngineChoice {
   return ENGINE_OPTIONS.some((o) => o.value === value);
 }
 
-interface LexiconEditorProps {
-  onError(message: string): void;
+export function engineHint(value: string): string {
+  return (ENGINE_OPTIONS.find((o) => o.value === value) ?? ENGINE_OPTIONS[0]).hint;
 }
 
-/** Search, toggle, add and edit the pronunciation rules. */
-function LexiconEditor({ onError }: LexiconEditorProps) {
-  const [entries, setEntries] = useState<LexiconEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState('');
-  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
-  const [previewText, setPreviewText] = useState('');
-  const [previewResult, setPreviewResult] = useState('');
-
-  const reload = useCallback(async () => {
-    try {
-      setEntries(await listLexiconEntries());
-    } catch (err) {
-      onError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [onError]);
-
-  useEffect(() => {
-    void reload();
-  }, [reload]);
-
-  // Preview is cheap but runs the whole rule list; debounce while typing.
-  useEffect(() => {
-    if (!previewText.trim()) {
-      setPreviewResult('');
-      return;
-    }
-    let alive = true;
-    const timer = setTimeout(() => {
-      void expand(previewText).then((out) => {
-        if (alive) setPreviewResult(out);
-      });
-    }, 150);
-    return () => {
-      alive = false;
-      clearTimeout(timer);
-    };
-  }, [previewText, entries]);
-
-  const visible = useMemo(() => filterEntries(entries, query), [entries, query]);
-
-  const toggle = async (entry: LexiconEntry) => {
-    try {
-      await setEntryEnabled(entry.id, !entry.enabled);
-      await reload();
-    } catch (err) {
-      onError(err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  const save = async () => {
-    if (!draft.pattern.trim()) {
-      onError('A pattern is required.');
-      return;
-    }
-    try {
-      await saveUserEntry({
-        id: draft.id,
-        pattern: draft.pattern,
-        replacement: draft.replacement,
-        isRegex: draft.isRegex,
-      });
-      setDraft(EMPTY_DRAFT);
-      await reload();
-    } catch (err) {
-      onError(err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  const remove = async (entry: LexiconEntry) => {
-    try {
-      await deleteUserEntry(entry.id);
-      if (draft.id === entry.id) setDraft(EMPTY_DRAFT);
-      await reload();
-    } catch (err) {
-      onError(err instanceof Error ? err.message : String(err));
-    }
-  };
-
+function ErrorBanner({ message }: { message: string | null }) {
+  if (!message) return null;
   return (
-    <section className="tts-section" aria-labelledby="tts-lexicon-heading">
-      <h2 id="tts-lexicon-heading">Pronunciation lexicon</h2>
-      <p className="tts-hint">
-        Rules rewrite tricky pharmacology notation before it is spoken. Built-in rules can be switched off but not edited;
-        your own rules run first.
-      </p>
-
-      <div className="tts-field">
-        <label htmlFor="tts-lexicon-search">Search rules</label>
-        <input
-          id="tts-lexicon-search"
-          type="search"
-          value={query}
-          placeholder="CYP, half-life, mg/kg…"
-          onChange={(e) => setQuery(e.target.value)}
-        />
-      </div>
-
-      <ul className="tts-lexicon-list" aria-busy={loading}>
-        {visible.map((entry) => (
-          <li key={entry.id} className={entry.enabled ? 'tts-rule' : 'tts-rule off'}>
-            <label className="tts-rule-toggle">
-              <input type="checkbox" checked={entry.enabled} onChange={() => void toggle(entry)} />
-              <span className="tts-rule-pattern">
-                {entry.pattern}
-                <span className="tts-rule-arrow" aria-hidden="true">
-                  {' → '}
-                </span>
-                {entry.replacement}
-              </span>
-            </label>
-            <span className={entry.source === 'builtin' ? 'tts-badge' : 'tts-badge user'}>
-              {entry.source === 'builtin' ? 'built-in' : 'yours'}
-            </span>
-            {entry.source === 'user' ? (
-              <span className="tts-rule-actions">
-                <button
-                  type="button"
-                  className="tts-link"
-                  onClick={() =>
-                    setDraft({ id: entry.id, pattern: entry.pattern, replacement: entry.replacement, isRegex: entry.isRegex })
-                  }
-                >
-                  Edit
-                </button>
-                <button type="button" className="tts-link danger" onClick={() => void remove(entry)}>
-                  Delete
-                </button>
-              </span>
-            ) : null}
-          </li>
-        ))}
-        {!loading && visible.length === 0 ? <li className="tts-hint">No rules match “{query}”.</li> : null}
-      </ul>
-
-      <div className="tts-field">
-        <label htmlFor="tts-lexicon-preview">Preview</label>
-        <input
-          id="tts-lexicon-preview"
-          type="text"
-          value={previewText}
-          placeholder="Type a sentence to hear how it will be spoken…"
-          onChange={(e) => setPreviewText(e.target.value)}
-        />
-        <output className="tts-preview" htmlFor="tts-lexicon-preview" aria-live="polite">
-          {previewResult || 'Nothing to preview yet.'}
-        </output>
-      </div>
-
-      <fieldset className="tts-new-rule">
-        <legend>{draft.id ? 'Edit your rule' : 'Add your own rule'}</legend>
-        <div className="tts-field-row">
-          <div className="tts-field">
-            <label htmlFor="tts-rule-pattern">Find</label>
-            <input
-              id="tts-rule-pattern"
-              type="text"
-              value={draft.pattern}
-              placeholder="\\bCYP3A4\\b"
-              onChange={(e) => setDraft({ ...draft, pattern: e.target.value })}
-            />
-          </div>
-          <div className="tts-field">
-            <label htmlFor="tts-rule-replacement">Say instead</label>
-            <input
-              id="tts-rule-replacement"
-              type="text"
-              value={draft.replacement}
-              placeholder="C Y P three A four"
-              onChange={(e) => setDraft({ ...draft, replacement: e.target.value })}
-            />
-          </div>
-        </div>
-        <label className="tts-check">
-          <input
-            type="checkbox"
-            checked={draft.isRegex}
-            onChange={(e) => setDraft({ ...draft, isRegex: e.target.checked })}
-          />
-          Treat “Find” as a regular expression
-        </label>
-        <div className="tts-actions">
-          <button type="button" className="tts-button" onClick={() => void save()}>
-            {draft.id ? 'Save changes' : 'Add rule'}
-          </button>
-          {draft.id ? (
-            <button type="button" className="tts-link" onClick={() => setDraft(EMPTY_DRAFT)}>
-              Cancel
-            </button>
-          ) : null}
-        </div>
-      </fieldset>
-    </section>
+    <div className="banner banner-error" role="alert">
+      <svg
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7.5v5.5M12 16.5h.01" />
+      </svg>
+      <p>{message}</p>
+    </div>
   );
 }
 
-export default function TtsSettings() {
+/** Engine, system voice, speed and the test sentence. */
+export function VoicePanel() {
   const engine = useSetting<string>(TTS_ENGINE_SETTING, 'auto');
   const voiceId = useSetting<string>(TTS_VOICE_SETTING, '');
   const rate = useSetting<number>(TTS_RATE_SETTING, 1);
@@ -276,8 +119,6 @@ export default function TtsSettings() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
-  const [cacheBytes, setCacheBytes] = useState<number | null>(null);
-  const [clearing, setClearing] = useState(false);
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -303,18 +144,6 @@ export default function TtsSettings() {
     };
   }, []);
 
-  const refreshCache = useCallback(async () => {
-    try {
-      setCacheBytes(await cacheSizeBytes());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshCache();
-  }, [refreshCache]);
-
   const testVoice = async () => {
     if (testing) {
       systemEngine.stop();
@@ -338,6 +167,434 @@ export default function TtsSettings() {
     }
   };
 
+  const engineValue: EngineChoice = isEngineChoice(engine) ? engine : 'auto';
+  const systemVoiceActive = engineValue === 'system' || engineValue === 'auto';
+  const voiceHint = systemVoiceActive
+    ? voices.length > 0
+      ? `${voices.length} system ${voices.length === 1 ? 'voice' : 'voices'} reported by this device.`
+      : 'Voices are provided by the device; none were reported yet.'
+    : 'Used when the system engine speaks. The on-device model brings its own voices.';
+
+  return (
+    <div className="tts-panel">
+      <div className="field">
+        <label className="field-label" htmlFor="tts-engine">
+          Engine
+        </label>
+        <select
+          id="tts-engine"
+          className="input"
+          value={engineValue}
+          aria-describedby="tts-engine-hint"
+          onChange={(e) => {
+            void setSetting(TTS_ENGINE_SETTING, e.target.value);
+            setStatus(null);
+          }}
+        >
+          {ENGINE_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <p className="field-hint" id="tts-engine-hint">
+          {engineHint(engineValue)}{' '}
+          <a href="#voice-models">Manage on-device models</a>.
+        </p>
+      </div>
+
+      <div className="tts-field-grid">
+        <div className="field">
+          <label className="field-label" htmlFor="tts-voice">
+            System voice
+          </label>
+          <select
+            id="tts-voice"
+            className="input"
+            value={voiceId}
+            disabled={!systemVoiceActive}
+            aria-describedby="tts-voice-hint"
+            onChange={(e) => void setSetting(TTS_VOICE_SETTING, e.target.value)}
+          >
+            <option value="">Device default</option>
+            {voices.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.name} ({v.lang})
+              </option>
+            ))}
+          </select>
+          <p className="field-hint" id="tts-voice-hint">
+            {voiceHint}
+          </p>
+        </div>
+
+        <div className="field">
+          <div className="tts-label-row">
+            <label className="field-label" htmlFor="tts-rate">
+              Speed
+            </label>
+            <span className="tts-rate-value tnum" aria-hidden="true">
+              {formatRate(rate)}×
+            </span>
+          </div>
+          <input
+            id="tts-rate"
+            className="tts-range"
+            type="range"
+            min={RATE_MIN}
+            max={RATE_MAX}
+            step={RATE_STEP}
+            value={rate}
+            aria-valuetext={`${formatRate(rate)} times`}
+            onChange={(e) => void setSetting(TTS_RATE_SETTING, Number(e.target.value))}
+          />
+          <p className="field-hint">
+            {RATE_MIN}×–{RATE_MAX}×, applied to every engine.
+          </p>
+        </div>
+      </div>
+
+      <div className="tts-test-row">
+        <button
+          type="button"
+          className={testing ? 'btn btn-secondary' : 'btn btn-primary'}
+          onClick={() => void testVoice()}
+        >
+          {testing ? 'Stop test' : 'Test voice'}
+        </button>
+        <p className="tts-status" role="status">
+          {status ?? ''}
+        </p>
+      </div>
+      <p className="field-hint tts-test-sentence">Speaks: “{TEST_SENTENCE}”</p>
+
+      <div className="banner banner-info">
+        <svg
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 11v5.5M12 7.5h.01" />
+        </svg>
+        <div className="banner-body">
+          <p className="banner-title">A more natural system voice</p>
+          <p>{VOICE_TIP}</p>
+        </div>
+      </div>
+
+      <ErrorBanner message={error} />
+    </div>
+  );
+}
+
+/** Search, toggle, add and edit the pronunciation rules. */
+export function LexiconPanel() {
+  const [entries, setEntries] = useState<LexiconEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
+  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [adding, setAdding] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [previewText, setPreviewText] = useState('');
+  const [previewResult, setPreviewResult] = useState('');
+
+  const reload = useCallback(async () => {
+    try {
+      setEntries(await listLexiconEntries());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  // Preview is cheap but runs the whole rule list; debounce while typing.
+  useEffect(() => {
+    if (!previewText.trim()) {
+      setPreviewResult('');
+      return;
+    }
+    let alive = true;
+    const timer = setTimeout(() => {
+      void expand(previewText).then((out) => {
+        if (alive) setPreviewResult(out);
+      });
+    }, 150);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [previewText, entries]);
+
+  // The reader's own rules come first: they are the ones being curated, while
+  // the built-in list runs to a few hundred rows.
+  const visible = useMemo(() => {
+    const rows = [...filterEntries(entries, query)];
+    return rows.sort((a, b) => Number(b.source === 'user') - Number(a.source === 'user'));
+  }, [entries, query]);
+
+  // A few hundred built-in rows would bury the rest of the page, so the list
+  // starts with the first few and grows on request.
+  const shown = showAll ? visible : visible.slice(0, INITIAL_RULES);
+  const hiddenCount = visible.length - shown.length;
+
+  const closeEditor = () => {
+    setDraft(EMPTY_DRAFT);
+    setAdding(false);
+  };
+
+  const startEdit = (entry: LexiconEntry) => {
+    setAdding(false);
+    setDraft({ id: entry.id, pattern: entry.pattern, replacement: entry.replacement, isRegex: entry.isRegex });
+  };
+
+  const toggle = async (entry: LexiconEntry) => {
+    try {
+      await setEntryEnabled(entry.id, !entry.enabled);
+      await reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const save = async () => {
+    if (!draft.pattern.trim()) {
+      setError('A pattern is required.');
+      return;
+    }
+    try {
+      await saveUserEntry({
+        id: draft.id,
+        pattern: draft.pattern,
+        replacement: draft.replacement,
+        isRegex: draft.isRegex,
+      });
+      closeEditor();
+      await reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const remove = async (entry: LexiconEntry) => {
+    try {
+      await deleteUserEntry(entry.id);
+      if (draft.id === entry.id) closeEditor();
+      await reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const editor = (
+    <fieldset className="tts-editor">
+      <legend>{draft.id ? 'Edit rule' : 'New rule'}</legend>
+      <div className="tts-editor-grid">
+        <div className="field">
+          <label className="field-label" htmlFor="tts-rule-pattern">
+            Find
+          </label>
+          <input
+            id="tts-rule-pattern"
+            className="input"
+            type="text"
+            value={draft.pattern}
+            placeholder="\bCYP3A4\b"
+            onChange={(e) => setDraft({ ...draft, pattern: e.target.value })}
+          />
+        </div>
+        <div className="field">
+          <label className="field-label" htmlFor="tts-rule-replacement">
+            Say instead
+          </label>
+          <input
+            id="tts-rule-replacement"
+            className="input"
+            type="text"
+            value={draft.replacement}
+            placeholder="C Y P three A four"
+            onChange={(e) => setDraft({ ...draft, replacement: e.target.value })}
+          />
+        </div>
+      </div>
+      <label className="tts-check">
+        <input
+          type="checkbox"
+          checked={draft.isRegex}
+          onChange={(e) => setDraft({ ...draft, isRegex: e.target.checked })}
+        />
+        Treat “Find” as a regular expression
+      </label>
+      <div className="tts-editor-actions">
+        <button type="button" className="btn btn-primary" onClick={() => void save()}>
+          {draft.id ? 'Save changes' : 'Add rule'}
+        </button>
+        <button type="button" className="btn btn-secondary" onClick={closeEditor}>
+          Cancel
+        </button>
+      </div>
+    </fieldset>
+  );
+
+  const editingVisible = draft.id !== undefined && shown.some((e) => e.id === draft.id);
+
+  return (
+    <div className="tts-panel">
+      <div className="field">
+        <label className="field-label" htmlFor="tts-lexicon-search">
+          Search rules
+        </label>
+        <input
+          id="tts-lexicon-search"
+          className="input"
+          type="search"
+          value={query}
+          placeholder="CYP, half-life, mg/kg…"
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setShowAll(false);
+          }}
+        />
+        <p className="field-hint tts-lexicon-count" aria-live="polite">
+          {loading
+            ? 'Loading rules…'
+            : hiddenCount > 0
+              ? `Showing ${shown.length} of ${visible.length} rules`
+              : `${visible.length} of ${entries.length} rules`}
+        </p>
+      </div>
+
+      {adding ? (
+        <div className="tts-editor-row">{editor}</div>
+      ) : draft.id === undefined ? (
+        <div className="tts-add">
+          <button type="button" className="btn btn-secondary" onClick={() => setAdding(true)}>
+            Add a rule
+          </button>
+        </div>
+      ) : null}
+
+      <ul className="tts-rules" aria-busy={loading}>
+        {shown.map((entry) => (
+          <Fragment key={entry.id}>
+            <li className={entry.enabled ? 'tts-rule' : 'tts-rule is-off'}>
+              <label className="tts-rule-toggle">
+                <input
+                  type="checkbox"
+                  checked={entry.enabled}
+                  aria-label={`${entry.enabled ? 'Disable' : 'Enable'} rule ${entry.pattern}`}
+                  onChange={() => void toggle(entry)}
+                />
+                <span className="tts-rule-text">
+                  <span className="tts-rule-pattern" title={entry.pattern}>
+                    {entry.pattern}
+                  </span>
+                  <span className="tts-rule-replacement" title={entry.replacement}>
+                    {entry.replacement || '—'}
+                  </span>
+                </span>
+              </label>
+              <span className="tts-rule-meta">
+                {entry.source === 'user' ? <span className="badge badge-accent">yours</span> : null}
+                {entry.source === 'user' ? (
+                  <span className="tts-rule-actions">
+                    <button
+                      type="button"
+                      className="tts-rule-action"
+                      aria-label={`Edit rule ${entry.pattern}`}
+                      onClick={() => startEdit(entry)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="tts-rule-action danger"
+                      aria-label={`Delete rule ${entry.pattern}`}
+                      onClick={() => void remove(entry)}
+                    >
+                      Delete
+                    </button>
+                  </span>
+                ) : null}
+              </span>
+            </li>
+            {draft.id === entry.id ? <li className="tts-editor-row">{editor}</li> : null}
+          </Fragment>
+        ))}
+        {!loading && visible.length === 0 ? (
+          <li className="tts-empty">{query ? `No rules match “${query}”.` : 'No rules yet.'}</li>
+        ) : null}
+      </ul>
+
+      {hiddenCount > 0 ? (
+        <div className="tts-add">
+          <button type="button" className="btn btn-secondary" onClick={() => setShowAll(true)}>
+            Show all {visible.length} rules
+          </button>
+        </div>
+      ) : showAll && visible.length > INITIAL_RULES ? (
+        <div className="tts-add">
+          <button type="button" className="btn btn-ghost" onClick={() => setShowAll(false)}>
+            Show fewer
+          </button>
+        </div>
+      ) : null}
+
+      {draft.id !== undefined && !editingVisible ? <div className="tts-editor-row">{editor}</div> : null}
+
+      <div className="field">
+        <label className="field-label" htmlFor="tts-lexicon-preview">
+          Preview
+        </label>
+        <input
+          id="tts-lexicon-preview"
+          className="input"
+          type="text"
+          value={previewText}
+          placeholder="CYP3A4 inhibitors at 5 mg/kg…"
+          onChange={(e) => setPreviewText(e.target.value)}
+        />
+        <output className="tts-preview" htmlFor="tts-lexicon-preview" aria-live="polite">
+          {previewResult || 'Type a phrase to see the spoken form.'}
+        </output>
+      </div>
+
+      <ErrorBanner message={error} />
+    </div>
+  );
+}
+
+/** Audio cache size and the button that empties it. */
+export function CachePanel() {
+  const [cacheBytes, setCacheBytes] = useState<number | null>(null);
+  const [clearing, setClearing] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const refreshCache = useCallback(async () => {
+    try {
+      setCacheBytes(await cacheSizeBytes());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshCache();
+  }, [refreshCache]);
+
   const clearCache = async () => {
     setClearing(true);
     setError(null);
@@ -352,100 +609,40 @@ export default function TtsSettings() {
     }
   };
 
-  const engineValue: EngineChoice = isEngineChoice(engine) ? engine : 'auto';
+  return (
+    <div className="tts-panel">
+      <div className="tts-cache-row">
+        <div>
+          <p className="tts-cache-size tnum" data-testid="tts-cache-size">
+            {cacheBytes === null ? 'Measuring…' : formatBytes(cacheBytes)}
+          </p>
+          <p className="field-hint">
+            Sentences already read by an on-device model. Stored on this device; removing them only costs a moment to
+            rebuild.
+          </p>
+        </div>
+        <button type="button" className="btn btn-secondary" disabled={clearing} onClick={() => void clearCache()}>
+          {clearing ? 'Clearing…' : 'Clear cache'}
+        </button>
+      </div>
+      <p className="tts-status" role="status">
+        {status ?? ''}
+      </p>
+      <ErrorBanner message={error} />
+    </div>
+  );
+}
 
+/**
+ * All three voice panels in one stack, without page headings — the Settings page
+ * places each panel under its own section heading.
+ */
+export default function TtsSettings() {
   return (
     <div className="tts-settings">
-      <section className="tts-section" aria-labelledby="tts-engine-heading">
-        <h2 id="tts-engine-heading">Voice and speed</h2>
-
-        <div className="tts-field">
-          <label htmlFor="tts-engine">Engine</label>
-          <select
-            id="tts-engine"
-            value={engineValue}
-            onChange={(e) => {
-              void setSetting(TTS_ENGINE_SETTING, e.target.value);
-              setStatus(null);
-            }}
-          >
-            {ENGINE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-          <p className="tts-hint">On-device models are set up under “On-device voice models” below. “Auto” falls back to system voices when nothing is ready.</p>
-        </div>
-
-        <div className="tts-field">
-          <label htmlFor="tts-voice">System voice</label>
-          <select
-            id="tts-voice"
-            value={voiceId}
-            disabled={engineValue !== 'system' && engineValue !== 'auto'}
-            onChange={(e) => void setSetting(TTS_VOICE_SETTING, e.target.value)}
-          >
-            <option value="">Device default</option>
-            {voices.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.name} ({v.lang})
-              </option>
-            ))}
-          </select>
-          {engineValue !== 'system' && engineValue !== 'auto' ? (
-            <p className="tts-hint">This voice is used when the system engine speaks. The chosen model brings its own voices.</p>
-          ) : null}
-        </div>
-
-        <div className="tts-field">
-          <label htmlFor="tts-rate">
-            Speed <span className="tts-value">{formatRate(rate)}×</span>
-          </label>
-          <input
-            id="tts-rate"
-            type="range"
-            min={RATE_MIN}
-            max={RATE_MAX}
-            step={RATE_STEP}
-            value={rate}
-            onChange={(e) => void setSetting(TTS_RATE_SETTING, Number(e.target.value))}
-          />
-        </div>
-
-        <div className="tts-actions">
-          <button type="button" className="tts-button" onClick={() => void testVoice()}>
-            {testing ? 'Stop test' : 'Test voice'}
-          </button>
-        </div>
-
-        <p className="tts-tip">{VOICE_TIP}</p>
-        <p className="tts-status" role="status">
-          {status ?? ''}
-        </p>
-        {error ? (
-          <p className="tts-error" role="alert">
-            {error}
-          </p>
-        ) : null}
-      </section>
-
-      <LexiconEditor onError={setError} />
-
-      <section className="tts-section" aria-labelledby="tts-cache-heading">
-        <h2 id="tts-cache-heading">Cached audio</h2>
-        <p className="tts-hint">
-          Sentences read by an on-device model are stored so re-reading them is instant. The cache never leaves this device.
-        </p>
-        <p className="tts-value" data-testid="tts-cache-size">
-          {cacheBytes === null ? 'Measuring…' : formatBytes(cacheBytes)}
-        </p>
-        <div className="tts-actions">
-          <button type="button" className="tts-button" disabled={clearing} onClick={() => void clearCache()}>
-            {clearing ? 'Clearing…' : 'Clear cache'}
-          </button>
-        </div>
-      </section>
+      <VoicePanel />
+      <LexiconPanel />
+      <CachePanel />
     </div>
   );
 }

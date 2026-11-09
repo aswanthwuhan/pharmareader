@@ -1,122 +1,92 @@
-/* Backup section. Uses the app's shared colour variables. */
-.backup-section {
+/* Backup panel: one export card and one import card. Tokens from src/styles.css. */
+
+.backup-panel {
   display: grid;
-  gap: 14px;
-  margin: 20px 0;
-  padding: 16px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  gap: var(--space-4);
 }
 
-.backup-section h2 {
-  margin: 0;
-  font-size: 1.05rem;
-  color: var(--accent);
-}
-
-.backup-notice {
-  margin: 0;
-  font-size: 0.85rem;
-  color: var(--muted);
-}
-
-.backup-row {
+.backup-card {
   display: grid;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
-.backup-row > label {
-  font-size: 0.9rem;
-  font-weight: 600;
+.backup-actions {
+  display: grid;
+  gap: var(--space-2);
 }
 
-.backup-row input[type='file'] {
-  min-height: 44px;
-  padding: 8px;
-  font: inherit;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+@media (min-width: 520px) {
+  .backup-actions {
+    display: flex;
+    flex-wrap: wrap;
+  }
 }
 
-.backup-row:has(> .backup-btn) {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.backup-btn {
-  min-height: 44px;
-  padding: 0 14px;
-  font: inherit;
-  font-weight: 600;
-  color: var(--text);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  cursor: pointer;
-}
-
-.backup-btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.backup-btn.primary {
-  color: var(--accent-text);
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-.backup-rule {
+.backup-file {
   width: 100%;
-  margin: 2px 0;
-  border: 0;
-  border-top: 1px solid var(--border);
+  max-width: 100%;
+  min-height: var(--tap);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+}
+
+.backup-file::file-selector-button {
+  min-height: 32px;
+  margin-right: var(--space-3);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
 }
 
 .backup-mode {
   display: grid;
-  gap: 8px;
+  gap: var(--space-2);
   margin: 0;
-  padding: 10px 12px;
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
 }
 
-.backup-mode legend {
-  padding: 0 4px;
-  font-size: 0.9rem;
-  font-weight: 600;
+.backup-mode > .field-label {
+  margin: 0;
 }
 
 .backup-radio {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--space-2);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+  cursor: pointer;
 }
 
 .backup-radio input {
-  width: 22px;
-  height: 22px;
-  margin: 1px 0 0;
   flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
 }
 
-.backup-radio label {
-  font-size: 0.9rem;
+.backup-radio-label {
+  font-weight: var(--fw-semibold);
 }
 
-.backup-ok {
+.backup-card .banner p {
   margin: 0;
-  font-size: 0.9rem;
-  color: #1b7f3b;
-}
-
-.backup-error {
-  margin: 0;
-  font-size: 0.9rem;
-  color: #b3261e;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
 }

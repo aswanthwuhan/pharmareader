@@ -1,240 +1,470 @@
-/* TTS settings: engine, voice, lexicon editor and audio cache. */
+/* Voice, pronunciation, cache and Kokoro panels for the Settings page.
+   Colour, type and spacing come from the tokens in src/styles.css. */
+
 .tts-settings {
   display: grid;
-  gap: 18px;
-  margin: 20px 0;
+  gap: var(--space-6);
 }
 
-.tts-section {
+.tts-panel {
   display: grid;
-  gap: 14px;
-  padding: 16px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  gap: var(--space-5);
 }
 
-.tts-section h2 {
-  margin: 0;
-  font-size: 1.05rem;
-  color: var(--accent);
-}
-
-.tts-hint {
-  margin: 0;
-  font-size: 0.85rem;
-  line-height: 1.45;
-  color: var(--muted);
-}
-
-.tts-field {
+.tts-field-grid {
   display: grid;
-  gap: 6px;
+  gap: var(--space-4);
 }
 
-.tts-field > label {
-  font-size: 0.9rem;
-  font-weight: 600;
-}
-
-.tts-field-row {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: 1fr 1fr;
-}
-
-@media (max-width: 520px) {
-  .tts-field-row {
-    grid-template-columns: 1fr;
+@media (min-width: 520px) {
+  .tts-field-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-.tts-field select,
-.tts-field input[type='text'],
-.tts-field input[type='search'],
-.tts-new-rule input[type='text'] {
-  min-height: 44px;
-  padding: 8px 10px;
-  font: inherit;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-
-.tts-field input[type='range'] {
-  width: 100%;
-  min-height: 44px;
-  accent-color: var(--accent);
-}
-
-.tts-value {
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
-  font-size: 0.9rem;
-}
-
-.tts-check {
+.tts-label-row {
   display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.tts-label-row .field-label {
+  margin-bottom: 0;
+}
+
+.tts-rate-value {
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+.tts-range {
+  width: 100%;
+  height: var(--tap);
+  margin: 0;
+  accent-color: var(--accent);
+  background: transparent;
+}
+
+.tts-test-row {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  font-size: 0.9rem;
+  gap: var(--space-2) var(--space-4);
+}
+
+.tts-test-row .tts-status {
+  margin: 0;
+}
+
+.tts-status {
+  min-height: var(--space-5);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+
+.tts-test-sentence {
+  margin: calc(-1 * var(--space-3)) 0 0;
 }
 
 .tts-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-2);
 }
 
-.tts-button {
-  min-height: 44px;
-  padding: 0 16px;
-  font: inherit;
-  font-weight: 600;
-  color: var(--accent-text);
-  background: var(--accent);
-  border: 1px solid var(--accent);
-  border-radius: 10px;
-  cursor: pointer;
-}
-
-.tts-button:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.tts-link {
-  padding: 6px 4px;
-  font: inherit;
-  font-size: 0.85rem;
-  color: var(--accent);
-  background: none;
-  border: 0;
-  cursor: pointer;
-  text-decoration: underline;
-}
-
-.tts-link.danger {
-  color: #b3261e;
-}
-
-.tts-tip {
-  margin: 0;
-  padding: 10px 12px;
-  font-size: 0.82rem;
-  line-height: 1.45;
-  color: var(--muted);
-  background: var(--bg);
-  border-left: 3px solid var(--accent);
-  border-radius: 6px;
-}
-
-.tts-status {
-  margin: 0;
-  min-height: 1.2em;
-  font-size: 0.85rem;
-  color: var(--muted);
-}
-
-.tts-error {
-  margin: 0;
-  font-size: 0.85rem;
-  color: #b3261e;
-}
-
-.tts-lexicon-list {
+.tts-panel .banner-body {
   display: grid;
-  gap: 6px;
-  max-height: 320px;
+  gap: var(--space-1);
+}
+
+.tts-panel .banner p,
+.kokoro-panel .banner p {
   margin: 0;
-  padding: 6px;
-  overflow-y: auto;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+}
+
+.tts-panel .banner .banner-title {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+.tts-panel .banner > svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.kokoro-panel .banner {
+  width: 100%;
+}
+
+/* --- Pronunciation lexicon ------------------------------------------------ */
+
+.tts-lexicon-count {
+  margin-top: var(--space-2);
+}
+
+.tts-rules {
+  display: grid;
+  margin: 0;
+  padding: 0;
   list-style: none;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.tts-rule:last-child {
+  border-bottom: 0;
 }
 
 .tts-rule {
-  display: grid;
-  grid-template-columns: 1fr auto;
+  display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-
-.tts-rule.off {
-  opacity: 0.55;
+  gap: var(--space-2);
+  min-height: var(--tap);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
 }
 
 .tts-rule-toggle {
   display: flex;
+  flex: 1 1 auto;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
   min-width: 0;
-  font-size: 0.85rem;
+  padding: var(--space-1) 0;
+  cursor: pointer;
+}
+
+.tts-rule-toggle input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.tts-rule-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
 .tts-rule-pattern {
   overflow: hidden;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
 }
 
-.tts-rule-arrow {
+.tts-rule-replacement {
+  overflow: hidden;
   color: var(--muted);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tts-rule.is-off .tts-rule-pattern,
+.tts-rule.is-off .tts-rule-replacement {
+  color: var(--muted);
+}
+
+.tts-rule-meta {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .tts-rule-actions {
   display: flex;
-  gap: 4px;
+  gap: 2px;
 }
 
-.tts-badge {
-  padding: 2px 8px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+.tts-rule-action {
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--muted);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 999px;
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
 }
 
-.tts-badge.user {
-  color: var(--accent);
-  border-color: var(--accent);
+.tts-rule-action:hover {
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+
+.tts-rule-action.danger {
+  color: var(--danger);
+}
+
+.tts-rule-action.danger:hover {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.tts-empty {
+  padding: var(--space-5) 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.tts-editor-row {
+  padding: var(--space-2) 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+  list-style: none;
+}
+
+.tts-editor {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+
+.tts-editor legend {
+  padding: 0 var(--space-2);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+.tts-editor-grid {
+  display: grid;
+  gap: var(--space-3);
+}
+
+@media (min-width: 560px) {
+  .tts-editor-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.tts-check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+
+.tts-check input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.tts-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.tts-add {
+  display: flex;
+  justify-content: flex-start;
 }
 
 .tts-preview {
   display: block;
-  min-height: 1.4em;
-  padding: 8px 10px;
-  font-size: 0.9rem;
-  line-height: 1.45;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px dashed var(--border);
-  border-radius: 8px;
-}
-
-.tts-new-rule {
-  display: grid;
-  gap: 12px;
-  margin: 0;
-  padding: 12px;
+  min-height: var(--space-8);
+  margin-top: var(--space-2);
+  padding: var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
 }
 
-.tts-new-rule legend {
-  padding: 0 6px;
-  font-size: 0.9rem;
-  font-weight: 600;
+/* --- Cached audio --------------------------------------------------------- */
+
+.tts-cache-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-5);
+}
+
+.tts-cache-size {
+  margin: 0 0 var(--space-1);
+  color: var(--text);
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+}
+
+/* --- Kokoro native panel -------------------------------------------------- */
+
+.kokoro-panel {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.kokoro-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.kokoro-title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+}
+
+.kokoro-sub {
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+}
+
+.status-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 24px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface-sunken);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+}
+
+.status-chip.is-busy {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.status-chip.is-ready {
+  border-color: var(--success-border);
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.status-chip.is-error {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: currentColor;
+}
+
+.kokoro-panel .tts-value {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+
+.kokoro-progress {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.kokoro-progress progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--accent);
+}
+
+.kokoro-progress .tts-status {
+  min-height: 0;
+}
+
+.kokoro-measure {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+
+.kokoro-measure p {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+
+.kokoro-diagnostics {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+}
+
+.kokoro-diagnostics details {
+  width: 100%;
+}
+
+.kokoro-diagnostics summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.kokoro-diagnostics pre {
+  overflow: auto;
+  max-height: 240px;
+  margin: var(--space-2) 0 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 430px) {
+  .tts-rule .badge {
+    display: none;
+  }
 }

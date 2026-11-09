@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { setSetting, useSetting } from '../core/settings';
 import { AI_DEFAULTS, AI_PRESETS, chat, type AiPresetId } from './client';
-import './ai.css';
+import './ai-settings.css';
 
-/** BYO-key AI settings section for the Settings page. */
+/** BYO-key AI settings panel for the Settings page (the page owns the heading). */
 export default function AiSettings() {
   const enabled = useSetting('ai.enabled', AI_DEFAULTS.enabled);
   const storedBaseUrl = useSetting('ai.baseUrl', AI_DEFAULTS.baseUrl);
@@ -62,40 +62,65 @@ export default function AiSettings() {
   }
 
   return (
-    <section className="ai-section" aria-labelledby="ai-settings-heading">
-      <h2 id="ai-settings-heading">AI (bring your own key)</h2>
+    <div className="ai-panel">
+      <div className="banner banner-info">
+        <svg
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path d="M12 3 5 6v5.5c0 4.4 3 8.2 7 9.5 4-1.3 7-5.1 7-9.5V6l-7-3Z" />
+          <path d="M9.5 12.2 11 13.7l3.6-3.6" />
+        </svg>
+        <div className="banner-body">
+          <p className="banner-title">Your key stays on this device</p>
+          <p>Selected text is sent to the provider you choose. Your key is stored only on this device.</p>
+        </div>
+      </div>
 
-      <div className="ai-check">
+      <label className="ai-enable">
         <input
           id="ai-enabled"
           type="checkbox"
           checked={enabled}
           onChange={(e) => void setSetting('ai.enabled', e.target.checked)}
         />
-        <label htmlFor="ai-enabled">
-          Enable AI
-          <span className="ai-notice">
-            Selected text is sent to the provider you choose. Your key is stored only on this device.
+        <span className="ai-enable-text">
+          <span className="ai-enable-label">Enable AI</span>
+          <span className="field-hint ai-enable-hint">
+            When off, no text leaves the app and the AI actions are hidden.
           </span>
-        </label>
-      </div>
+        </span>
+      </label>
 
-      <div className="ai-row">
-        <label htmlFor="ai-preset">Provider</label>
-        <select id="ai-preset" value={picked} onChange={(e) => void onPresetChange(e.target.value)}>
+      <div className="field">
+        <label className="field-label" htmlFor="ai-preset">
+          Provider
+        </label>
+        <select id="ai-preset" className="input" value={picked} onChange={(e) => void onPresetChange(e.target.value)}>
           {AI_PRESETS.map((p) => (
             <option key={p.id} value={p.id}>
               {p.label}
             </option>
           ))}
         </select>
+        <p className="field-hint">Presets fill in a base URL and model. Choose Custom to point at another server.</p>
       </div>
 
-      <div className="ai-row">
-        <label htmlFor="ai-key">API key</label>
+      <div className="field">
+        <label className="field-label" htmlFor="ai-key">
+          API key
+        </label>
         <div className="ai-key-row">
           <input
             id="ai-key"
+            className="input"
             type={showKey ? 'text' : 'password'}
             value={apiKey}
             autoComplete="off"
@@ -104,51 +129,82 @@ export default function AiSettings() {
             onChange={(e) => setApiKey(e.target.value)}
             onBlur={() => void persist()}
           />
-          <button type="button" className="ai-btn" onClick={() => setShowKey((v) => !v)} aria-pressed={showKey}>
-            {showKey ? 'Hide' : 'Show'}
+          <button
+            type="button"
+            className="btn btn-secondary btn-icon"
+            aria-label={showKey ? 'Hide API key' : 'Show API key'}
+            aria-pressed={showKey}
+            title={showKey ? 'Hide API key' : 'Show API key'}
+            onClick={() => setShowKey((v) => !v)}
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+              <circle cx="12" cy="12" r="2.6" />
+              {showKey ? <path d="m4 4 16 16" /> : null}
+            </svg>
           </button>
+        </div>
+        <p className="field-hint">Sent as a bearer token to the base URL below. Never written into a backup.</p>
+      </div>
+
+      <div className="ai-endpoints">
+        <div className="field">
+          <label className="field-label" htmlFor="ai-base-url">
+            Base URL
+          </label>
+          <input
+            id="ai-base-url"
+            className="input"
+            type="text"
+            inputMode="url"
+            value={baseUrl}
+            spellCheck={false}
+            placeholder="https://api.openai.com/v1"
+            onChange={(e) => setBaseUrl(e.target.value)}
+            onBlur={() => void persist()}
+          />
+        </div>
+
+        <div className="field">
+          <label className="field-label" htmlFor="ai-model">
+            Model
+          </label>
+          <input
+            id="ai-model"
+            className="input"
+            type="text"
+            value={model}
+            spellCheck={false}
+            placeholder="gpt-4.1-mini"
+            onChange={(e) => setModel(e.target.value)}
+            onBlur={() => void persist()}
+          />
         </div>
       </div>
 
-      <div className="ai-row">
-        <label htmlFor="ai-base-url">Base URL</label>
-        <input
-          id="ai-base-url"
-          type="text"
-          inputMode="url"
-          value={baseUrl}
-          spellCheck={false}
-          placeholder="https://api.openai.com/v1"
-          onChange={(e) => setBaseUrl(e.target.value)}
-          onBlur={() => void persist()}
-        />
-      </div>
-
-      <div className="ai-row">
-        <label htmlFor="ai-model">Model</label>
-        <input
-          id="ai-model"
-          type="text"
-          value={model}
-          spellCheck={false}
-          placeholder="gpt-4.1-mini"
-          onChange={(e) => setModel(e.target.value)}
-          onBlur={() => void persist()}
-        />
-      </div>
-
-      <div className="ai-actions-row">
-        <button type="button" className="ai-btn" onClick={() => void test()} disabled={testing}>
+      <div className="ai-test-row">
+        <button type="button" className="btn btn-secondary" onClick={() => void test()} disabled={testing}>
           {testing ? 'Testing…' : 'Test'}
         </button>
-        <span className="ai-notice">Sends one tiny message to check the key and model.</span>
+        <p className="field-hint ai-test-hint">Sends one tiny message to check the key and model.</p>
       </div>
 
-      {result && (
-        <p className={result.ok ? 'ai-ok' : 'ai-error'} role={result.ok ? 'status' : 'alert'}>
-          {result.message}
-        </p>
-      )}
-    </section>
+      {result ? (
+        <div className={result.ok ? 'banner banner-success' : 'banner banner-error'} role={result.ok ? 'status' : 'alert'}>
+          <p>{result.message}</p>
+        </div>
+      ) : null}
+    </div>
   );
 }

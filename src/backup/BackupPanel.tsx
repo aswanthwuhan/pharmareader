@@ -19,7 +19,7 @@ function label(table: string, n: number): string {
   return n === 1 ? pair[0] : pair[1];
 }
 
-/** Backup section for the Settings page: zip out, zip back in. */
+/** Backup panel for the Settings page: one card out, one card back in. */
 export default function BackupPanel() {
   const [busy, setBusy] = useState<'books' | 'data' | 'import' | null>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -64,78 +64,100 @@ export default function BackupPanel() {
   }
 
   return (
-    <section className="backup-section" aria-labelledby="backup-heading">
-      <h2 id="backup-heading">Backup</h2>
-      <p className="backup-notice">
-        Everything stays on this device until you export. The audio cache is left out — it is rebuilt when you listen
-        again. AI settings and your API key are never written into a backup.
-      </p>
-
-      <div className="backup-row">
-        <button type="button" className="backup-btn primary" onClick={() => void runExport(true)} disabled={busy !== null}>
-          {busy === 'books' ? 'Exporting…' : 'Export (with books)'}
-        </button>
-        <button type="button" className="backup-btn" onClick={() => void runExport(false)} disabled={busy !== null}>
-          {busy === 'data' ? 'Exporting…' : 'Export (notes & cards only)'}
-        </button>
-      </div>
-
-      <hr className="backup-rule" />
-
-      <div className="backup-row">
-        <label htmlFor="backup-file">Backup file</label>
-        <input
-          id="backup-file"
-          type="file"
-          accept=".zip,application/zip"
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-          disabled={busy !== null}
-        />
-      </div>
-
-      <fieldset className="backup-mode">
-        <legend>Import mode</legend>
-        <div className="backup-radio">
-          <input
-            id="backup-merge"
-            type="radio"
-            name="backup-mode"
-            checked={mode === 'merge'}
-            onChange={() => setMode('merge')}
-          />
-          <label htmlFor="backup-merge">Merge — add to what is already here</label>
+    <div className="backup-panel">
+      <div className="card backup-card">
+        <h3 className="card-title">Export</h3>
+        <p className="card-body">
+          Everything stays on this device until you export. The audio cache is left out — it is rebuilt when you listen
+          again. AI settings and your API key are never written into a backup.
+        </p>
+        <div className="backup-actions">
+          <button type="button" className="btn btn-primary" onClick={() => void runExport(true)} disabled={busy !== null}>
+            {busy === 'books' ? 'Exporting…' : 'Export (with books)'}
+          </button>
+          <button type="button" className="btn btn-secondary" onClick={() => void runExport(false)} disabled={busy !== null}>
+            {busy === 'data' ? 'Exporting…' : 'Export (notes & cards only)'}
+          </button>
         </div>
-        <div className="backup-radio">
+        <p className="field-hint">A .zip file with your books and study data, saved wherever your browser downloads.</p>
+      </div>
+
+      <div className="card backup-card">
+        <h3 className="card-title">Import</h3>
+        <p className="card-body">Restores a backup made with PharmaReader, on this device or another one.</p>
+
+        <div className="field">
+          <label className="field-label" htmlFor="backup-file">
+            Backup file
+          </label>
           <input
-            id="backup-replace"
-            type="radio"
-            name="backup-mode"
-            checked={mode === 'replace'}
-            onChange={() => setMode('replace')}
+            id="backup-file"
+            className="backup-file"
+            type="file"
+            accept=".zip,application/zip"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            disabled={busy !== null}
           />
-          <label htmlFor="backup-replace">
-            Replace — delete local books, highlights, cards, reviews, topics, pronunciations and settings first
+        </div>
+
+        <div className="backup-mode" role="radiogroup" aria-labelledby="backup-mode-label">
+          <p id="backup-mode-label" className="field-label">
+            Import mode
+          </p>
+          <label className="backup-radio">
+            <input
+              id="backup-merge"
+              type="radio"
+              name="backup-mode"
+              checked={mode === 'merge'}
+              onChange={() => setMode('merge')}
+            />
+            <span>
+              <span className="backup-radio-label">Merge</span> — add to what is already here
+            </span>
+          </label>
+          <label className="backup-radio">
+            <input
+              id="backup-replace"
+              type="radio"
+              name="backup-mode"
+              checked={mode === 'replace'}
+              onChange={() => setMode('replace')}
+            />
+            <span>
+              <span className="backup-radio-label">Replace</span> — delete local books, highlights, cards, reviews,
+              topics, pronunciations and settings first
+            </span>
           </label>
         </div>
-      </fieldset>
 
-      <div className="backup-row">
-        <button
-          type="button"
-          className="backup-btn primary"
-          onClick={() => void runImport()}
-          disabled={!file || busy !== null}
-        >
-          {busy === 'import' ? 'Importing…' : 'Import backup'}
-        </button>
+        {mode === 'replace' ? (
+          <div className="banner banner-warning" role="alert">
+            <p>
+              Importing will delete the books, highlights, bookmarks, cards, reviews, topics, pronunciations and settings
+              already on this device before restoring the backup. This cannot be undone.
+            </p>
+          </div>
+        ) : null}
+
+        <div className="backup-actions">
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => void runImport()}
+            disabled={!file || busy !== null}
+          >
+            {busy === 'import' ? 'Importing…' : 'Import backup'}
+          </button>
+        </div>
       </div>
 
-      {status && (
-        <p className={status.ok ? 'backup-ok' : 'backup-error'} role={status.ok ? 'status' : 'alert'}>
-          {status.text}
-        </p>
-      )}
-    </section>
+      {status ? (
+        <div className={status.ok ? 'banner banner-success' : 'banner banner-error'} role={status.ok ? 'status' : 'alert'}>
+          <p>{status.text}</p>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
