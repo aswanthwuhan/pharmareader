@@ -27,7 +27,7 @@ describe('seedLexicon', () => {
 
     const rows = await db.lexicon.where('source').equals('builtin').toArray();
     expect(rows).toHaveLength(BUILTIN_LEXICON.length);
-    expect(rows.every((r) => /^(b|rx)-\d+$/.test(r.id))).toBe(true);
+    expect(rows.every((r) => /^(b|rx|med)-\d+$/.test(r.id))).toBe(true);
     expect(rows.length).toBeGreaterThanOrEqual(150);
   });
 
@@ -136,7 +136,7 @@ describe('pharmacology sentences', () => {
     ['α1 blockers cause hypotension.', 'alpha one blockers cause hypotension.'],
     ['α2 agonists reduce sympathetic outflow.', 'alpha two agonists reduce sympathetic outflow.'],
     ['M2 receptors slow the heart.', 'M two receptors slow the heart.'],
-    ['D2 blockade causes hyperprolactinaemia.', 'D two blockade causes hyperprolactinaemia.'],
+    ['D2 blockade causes hyperprolactinaemia.', 'D two blockade causes hyperprolactineemia.'],
     ['H1 blockers cause sedation.', 'H one blockers cause sedation.'],
     ['H2 blockers reduce acid secretion.', 'H two blockers reduce acid secretion.'],
     ['AT1 blockers lower blood pressure.', 'A.T one blockers lower blood pressure.'],
@@ -587,7 +587,14 @@ describe('drug respelling group', () => {
   it('marks every respelling as a drug entry', () => {
     expect(entryGroup('b-1')).toBe('core');
     expect(entryGroup('rx-1')).toBe('drug');
-    expect(BUILTIN_LEXICON.every((e) => entryGroup(e.id) === (e.id.startsWith('rx-') ? 'drug' : 'core'))).toBe(true);
+    expect(entryGroup('med-1')).toBe('medical');
+    expect(
+      BUILTIN_LEXICON.every(
+        (e) =>
+          entryGroup(e.id) ===
+          (e.id.startsWith('rx-') ? 'drug' : e.id.startsWith('med-') ? 'medical' : 'core'),
+      ),
+    ).toBe(true);
   });
 
   it('can be switched off as a group, leaving the drug names untouched', async () => {
@@ -604,3 +611,224 @@ describe('drug respelling group', () => {
   });
 });
 
+describe('medical respelling group (hypo-/hyper- + -emia)', () => {
+  // The hypo-/hyper- families are one morphology rule, not a word list: the
+  // stem keeps its own spelling and gains the "ee" that every engine needs.
+  const medical: Array<[string, string]> = [
+    ['Hypoglycemia is common.', 'Hypoglyceemia is common.'],
+    ['hyperglycemia', 'hyperglyceemia'],
+    ['hypoglycaemia', 'hypoglyceemia'],
+    ['Severe hypokalaemia was corrected.', 'Severe hypokaleemia was corrected.'],
+    ['Hyperkalemia', 'Hyperkaleemia'],
+    ['hyponatraemia', 'hyponatreemia'],
+    ['Hypernatremia', 'Hypernatreemia'],
+    ['hypocalcemia', 'hypocalceemia'],
+    ['Hypocalcaemia', 'Hypocalceemia'],
+    ['hypomagnesemia', 'hypomagneseemia'],
+    ['hypophosphatemia', 'hypophosphateemia'],
+    ['hypochloremia', 'hypochloreemia'],
+    ['hypovolemia', 'hypovoleemia'],
+    ['hyperlipidemia', 'hyperlipideemia'],
+    ['hyperuricemia', 'hyperuriceemia'],
+    ['hypertriglyceridemia', 'hypertriglycerideemia'],
+    ['hypocholesterolemia', 'hypocholesteroleemia'],
+    ['hyperbilirubinemia', 'hyperbilirubineemia'],
+    ['hyperinsulinemia', 'hyperinsulineemia'],
+    ['hypoalbuminemia', 'hypoalbumineemia'],
+    ['hypoproteinemia', 'hypoproteineemia'],
+    ['hypoxemia', 'hypoxeemia'],
+    ['Hyperoxemia', 'Hyperoxeemia'],
+    ['hyperprolactinaemia', 'hyperprolactineemia'],
+    // -emic adjectives: only the stems whose vowel espeak-ng gets wrong.
+    ['hypokalemic', 'hypokaleemic'],
+    ['Hyperkalemic', 'Hyperkaleemic'],
+    ['hypocalcemic', 'hypocalceemic'],
+    ['hypocalcaemic', 'hypocalceemic'],
+    // Never fires twice on its own output.
+    ['Hypoglyceemia is fixed.', 'Hypoglyceemia is fixed.'],
+  ];
+  for (const [input, want] of medical) {
+    it(`speaks ${JSON.stringify(input)}`, async () => {
+      await seedLexicon();
+      expect(await expand(input)).toBe(want);
+    });
+  }
+
+  const untouched: string[] = [
+    // Plain English that merely starts with the same letters.
+    'hype',
+    'Hyper',
+    'hyperlink',
+    'hyperlinks',
+    'hypertext',
+    'hyperactive',
+    'hyperactivity',
+    'hyperbole',
+    'hyperbolic',
+    'hypotenuse',
+    'hypothesis',
+    'hypotheses',
+    'hypothetical',
+    'hypocrite',
+    'hypocrisy',
+    'hypochondria',
+    'hypochondriac',
+    'hypodermic',
+    'hypoallergenic',
+    'hypothermia',
+    'hypothyroidism',
+    'hyperthyroidism',
+    'hypertension',
+    'hypotension',
+    'hyperventilation',
+    'hypoventilation',
+    'hyperemesis',
+    'hypopnea',
+    'hyperpnea',
+    'tachycardia',
+    'bradycardia',
+    // -emia words with another prefix, or with no prefix at all.
+    'glycemia',
+    'glycaemia',
+    'euglycemia',
+    'normoglycemia',
+    'anemia',
+    'anaemia',
+    'septicemia',
+    'bacteremia',
+    'uremia',
+    'leukemia',
+    'hyperemia',
+    'hyperaemia',
+    // Hyphens and casing that the rule deliberately leaves alone.
+    'nonhypoglycemic',
+    'hypoglycemias',
+    'HYPOGLYCEMIA',
+    'hypoglyc',
+  ];
+  for (const input of untouched) {
+    it(`leaves ${JSON.stringify(input)} alone`, async () => {
+      await seedLexicon();
+      expect(await expand(input)).toBe(input);
+    });
+  }
+});
+
+
+
+describe('medical respelling group (-toxicity, -rrhea, -megaly, single words)', () => {
+  // Every rule below was chosen by measurement: it had to move espeak-ng's IPA
+  // (the phonemizer Kokoro uses) towards the intended reading, and it had to
+  // survive Whisper recognition on the three engines in the check harness.
+  // See src/tts/lexicon/medical-respellings.md for the before/after evidence.
+  const words: Array<[string, string]> = [
+    // -toxicity: the bare "o" prefix is a schwa in espeak-ng.
+    ['Ototoxicity is dose related.', 'Ohtohtoxicity is dose related.'],
+    ['hepatotoxicity', 'hepatohtoxicity'],
+    ['Nephrotoxicity', 'Nephrohtoxicity'],
+    ['cardiotoxicity', 'cardiohtoxicity'],
+    // -rrhea: the British rrhoea spelling carries the stress.
+    ['amenorrhea', 'amenorrhoea'],
+    ['Steatorrhea', 'Steatorrhoea'],
+    ['galactorrhea', 'galactorrhoea'],
+    // kaliemia has no hypo-/hyper- prefix, so the -emia rule misses it.
+    ['kaliemia was noted.', 'kaleemia was noted.'],
+    // -megaly: espeak-ng swallows the vowel before the g.
+    ['Hepatomegaly was present.', 'Hepatohmegalee was present.'],
+    ['splenomegaly', 'spleenohmegalee'],
+    ['nephromegaly', 'nefrohmegalee'],
+    ['hepatosplenomegaly', 'hepatoospleenohmegalee'],
+    // Single words, each with a measured defect in the plain reading.
+    ['empyema', 'empyeema'],
+    ['atelectasis', 'attelektasis'],
+    ['hepatocyte', 'hepatohsite'],
+    ['cholecystitis', 'coleesistitis'],
+    ['pruritus', 'proorightus'],
+    ['oophorectomy', 'oophoorectomee'],
+    ['hemiparesis', 'hemiparresis'],
+    ['hemiplegia', 'hemipleejia'],
+    ['tracheitis', 'trakeeitis'],
+    ['epididymitis', 'epididimitis'],
+    ['pyelonephritis', 'pylonefritis'],
+    ['ketoacidosis', 'ketoasidosis'],
+    ['cecum', 'ceekum'],
+    ['enalapril', 'enalapryl'],
+    ['glycosuria', 'glykohsyooria'],
+    ['dysuria', 'disyooria'],
+    ['nocturia', 'nocktyooria'],
+    ['hematochezia', 'hematokeesia'],
+    ['Haematochezia', 'Haematokeesia'],
+    ['gynaecomastia', 'gynaecomasteea'],
+    ['gynecomastia', 'gynecomasteea'],
+    ['erythema', 'erytheema'],
+    // Already respelled: the rules must not fire twice.
+    ['empyeema', 'empyeema'],
+    ['ohtohtoxicity', 'ohtohtoxicity'],
+    ['ceekum', 'ceekum'],
+    ['amenorrhoea', 'amenorrhoea'],
+  ];
+  for (const [input, want] of words) {
+    it(`speaks ${JSON.stringify(input)}`, async () => {
+      await seedLexicon();
+      expect(await expand(input)).toBe(want);
+    });
+  }
+
+  const untouched: string[] = [
+    // Same opening letters, different word.
+    'ototoxic',
+    'ototoxicty',
+    'hepatotoxic',
+    'neuralgic',
+    'neuralgias',
+    'hemiplegic',
+    'cholecystectomy',
+    'petechial',
+    'erythematous',
+    'tubulin',
+    'tubules',
+    'cecumx',
+    'enalaprilat',
+    'normokaliemia',
+    'hepatocytes',
+    'megakaryocytes',
+    'diarrhoea',
+    // Other -emias and -urias are read correctly already.
+    'uremia',
+    'pyuria',
+    'polyuria',
+    'anuria',
+    'oliguria',
+    'hematuria',
+    'azotemia',
+    'erythrocyte',
+    'megalomania',
+    'cardiomegaly',
+    // The hypo-/hyper- family keeps its own boundaries.
+    'hype',
+    'hyperlink',
+    'hypothesis',
+    'hypocrite',
+    'hypothermia',
+    'hypertension',
+    'hyperemesis',
+    'anemia',
+    'leukemia',
+    'septicemia',
+    'hyperemia',
+    // Respellings that were tried and reverted: the recognition round got worse
+    // on at least two engines and no engine improved, so these stay as written.
+    'digoxin',
+    'tubule',
+    'neuralgia',
+    'bronchiectasis',
+    'petechiae',
+    'megakaryocyte',
+  ];
+  for (const input of untouched) {
+    it(`leaves ${JSON.stringify(input)} alone`, async () => {
+      await seedLexicon();
+      expect(await expand(input)).toBe(input);
+    });
+  }
+});

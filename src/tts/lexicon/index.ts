@@ -50,11 +50,14 @@ function builtinOrder(id: string): number {
 }
 
 /**
- * Which toggleable group an entry belongs to. Drug respellings can be switched
- * off as one group without touching the notation rules.
+ * Which toggleable group an entry belongs to. Drug respellings and medical
+ * respellings can each be switched off as a group without touching the
+ * notation rules.
  */
-export function entryGroup(id: string): 'core' | 'drug' {
-  return id.startsWith('rx-') ? 'drug' : 'core';
+export function entryGroup(id: string): 'core' | 'drug' | 'medical' {
+  if (id.startsWith('rx-')) return 'drug';
+  if (id.startsWith('med-')) return 'medical';
+  return 'core';
 }
 
 // ---------------------------------------------------------------------------
