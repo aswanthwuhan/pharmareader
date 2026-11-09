@@ -8,18 +8,53 @@ import { createPlayer } from './player';
 // Test doubles: jsdom has neither object URLs nor a working audio element.
 // ---------------------------------------------------------------------------
 
+/** A RIFF/WAVE clip: 8 kHz, 8-bit mono, `dataSize` bytes of silence. */
+function wavBlob(byteRate: number, dataSize: number): Blob {
+  const buf = new Uint8Array(44 + dataSize);
+  const view = new DataView(buf.buffer);
+  const tag = (offset: number, text: string) => {
+    for (let i = 0; i < 4; i++) buf[offset + i] = text.charCodeAt(i);
+  };
+  tag(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  tag(8, 'WAVE');
+  tag(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, 8000, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, 1, true);
+  view.setUint16(34, 8, true);
+  tag(36, 'data');
+  view.setUint32(40, dataSize, true);
+  return new Blob([buf]);
+}
+
 class FakeAudio {
   static instances: FakeAudio[] = [];
-  src: string;
+  /** How many upcoming play() calls hang until gateNow() (autoplay-settle tests). */
+  static holdPlays = 0;
+
+  src = '';
+  muted = false;
   paused = true;
   onended: (() => void) | null = null;
   onerror: (() => void) | null = null;
-  constructor(src: string) {
+  private gate: (() => void) | null = null;
+
+  constructor(src = '') {
     this.src = src;
     FakeAudio.instances.push(this);
   }
   play(): Promise<void> {
     this.paused = false;
+    if (FakeAudio.holdPlays > 0) {
+      FakeAudio.holdPlays--;
+      return new Promise<void>((resolve) => {
+        this.gate = resolve;
+      });
+    }
     return Promise.resolve();
   }
   pause(): void {
@@ -31,6 +66,10 @@ class FakeAudio {
   }
   fail(): void {
     this.onerror?.();
+  }
+  gateNow(): void {
+    this.gate?.();
+    this.gate = null;
   }
 }
 
@@ -130,7 +169,7 @@ const baseOptions = {
   onError: () => {},
 };
 
-async function until(check: () => boolean, timeoutMs = 1000): Promise<void> {
+async function until(check: () => boolean, timeoutMs = 1500): Promise<void> {
   const started = Date.now();
   while (!check()) {
     if (Date.now() - started > timeoutMs) throw new Error('timed out waiting for condition');
@@ -138,8 +177,11 @@ async function until(check: () => boolean, timeoutMs = 1000): Promise<void> {
   }
 }
 
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 beforeEach(() => {
   FakeAudio.instances = [];
+  FakeAudio.holdPlays = 0;
   urlSeq = 0;
   created.length = 0;
   revoked.length = 0;
@@ -180,6 +222,8 @@ describe('streaming engines', () => {
     });
 
     player.play();
+    // No audio element is created: streaming engines have no clip to unlock.
+    expect(FakeAudio.instances).toHaveLength(0);
     await until(() => engine.spoken.length === 1);
     engine.releaseAll();
     await until(() => engine.spoken.length === 2);
@@ -200,7 +244,7 @@ describe('streaming engines', () => {
     player.play();
     player.play();
     await until(() => engine.spoken.length === 1);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await delay(20);
     expect(engine.spoken).toHaveLength(1);
   });
 
@@ -219,7 +263,7 @@ describe('streaming engines', () => {
     await until(() => engine.spoken.length === 1);
     player.stop();
     engine.releaseAll();
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await delay(30);
 
     expect(engine.stopped).toBeGreaterThan(0);
     expect(seen).toEqual(['s1']);
@@ -235,6 +279,21 @@ describe('streaming engines', () => {
     player.seek(2);
     await until(() => engine.spoken.length === 2);
     expect(engine.spoken[1]?.id).toBe('s3');
+    player.stop();
+  });
+
+  it('survives a burst of seeks: only the last run speaks', async () => {
+    const engine = new FakeEngine(false);
+    const player = createPlayer({ ...baseOptions, engine });
+
+    player.play();
+    player.seek(1);
+    player.seek(2);
+    player.seek(0);
+    await until(() => engine.spoken.length >= 1);
+    await delay(40);
+    expect(engine.spoken).toHaveLength(1);
+    expect(engine.spoken[0]?.id).toBe('s1');
     player.stop();
   });
 
@@ -289,7 +348,7 @@ describe('streaming engines', () => {
 });
 
 describe('synthesising engines', () => {
-  it('renders, caches and plays sentences through audio elements', async () => {
+  it('renders, caches and plays sentences through one reused audio element', async () => {
     const engine = new FakeEngine(true);
     const seen: string[] = [];
     let done = 0;
@@ -301,34 +360,59 @@ describe('synthesising engines', () => {
     });
 
     player.play();
-    await until(() => FakeAudio.instances.length === 1);
-    const first = FakeAudio.instances[0]!;
-    // Prefetching may already have created other URLs, so match the set.
-    expect(created).toContain(first.src);
-    first.finish();
+    const el = FakeAudio.instances[0]!;
+    expect(el.src.startsWith('data:audio/wav')).toBe(true); // gesture unlock
+    expect(el.muted).toBe(true);
 
-    await until(() => FakeAudio.instances.length === 2);
-    FakeAudio.instances[1]!.finish();
-    await until(() => FakeAudio.instances.length === 3);
-    FakeAudio.instances[2]!.finish();
+    const playedSrcs: string[] = [];
+    for (let i = 0; i < items.length; i++) {
+      await until(() => el.src.startsWith('blob:') && !playedSrcs.includes(el.src));
+      playedSrcs.push(el.src);
+      expect(el.muted).toBe(false);
+      el.finish();
+    }
     await until(() => done === 1);
 
+    expect(FakeAudio.instances).toHaveLength(1); // one element for the whole book
+    expect(playedSrcs).toHaveLength(3);
     expect(seen).toEqual(['s1', 's2', 's3']);
     expect(engine.synthTexts).toHaveLength(3);
     expect(await db.audioCache.count()).toBe(3);
+  });
+
+  it('stores a real durationMs when the clip is a WAV', async () => {
+    const engine = new FakeEngine(true);
+    engine.synthesize = async () => wavBlob(8000, 16000); // 2 s
+    let done = 0;
+    const player = createPlayer({ ...baseOptions, items: [items[0]!], engine, onDone: () => (done += 1) });
+
+    player.play();
+    const el = FakeAudio.instances[0]!;
+    await until(() => el.src.startsWith('blob:'));
+    await delay(10);
+
+    const rows = await db.audioCache.toArray();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.durationMs).toBe(2000);
+
+    el.finish();
+    await until(() => done === 1);
   });
 
   it('reuses cached audio for a second session without re-synthesising', async () => {
     const engine = new FakeEngine(true);
     const first = createPlayer({ ...baseOptions, items: [items[0]!], engine });
     first.play();
-    await until(() => FakeAudio.instances.length === 1);
-    FakeAudio.instances[0]!.finish();
+    const firstEl = FakeAudio.instances[0]!;
+    await until(() => firstEl.src.startsWith('blob:'));
+    firstEl.finish();
     await until(() => engine.synthTexts.length === 1);
 
     const second = createPlayer({ ...baseOptions, items: [items[0]!], engine });
     second.play();
-    await until(() => FakeAudio.instances.length === 2);
+    expect(FakeAudio.instances).toHaveLength(2);
+    const secondEl = FakeAudio.instances[1]!;
+    await until(() => secondEl.src.startsWith('blob:'));
     expect(engine.synthTexts).toHaveLength(1);
     second.stop();
   });
@@ -338,8 +422,8 @@ describe('synthesising engines', () => {
     const player = createPlayer({ ...baseOptions, items: [items[0]!], engine });
 
     player.play();
-    await until(() => FakeAudio.instances.length === 1);
     const el = FakeAudio.instances[0]!;
+    await until(() => el.src.startsWith('blob:'));
     await until(() => el.paused === false);
 
     player.pause();
@@ -349,23 +433,51 @@ describe('synthesising engines', () => {
     player.stop();
   });
 
-  it('revokes object URLs when the cache evicts them', async () => {
+  it('does not play before resume() when paused during synthesis', async () => {
     const engine = new FakeEngine(true);
-    const many = Array.from({ length: 8 }, (_, i) => ({ id: `s${i}`, text: `Sentence ${i}.` }));
-    const player = createPlayer({ ...baseOptions, items: many, engine });
+    const gate: { release?: (blob: Blob) => void } = {};
+    engine.synthesize = () =>
+      new Promise<Blob>((resolve) => {
+        gate.release = resolve;
+      });
+    const player = createPlayer({ ...baseOptions, items: [items[0]!], engine });
 
     player.play();
-    for (let i = 0; i < many.length; i++) {
-      await until(() => FakeAudio.instances.length === i + 1);
-      FakeAudio.instances[i]!.finish();
-    }
-    await until(() => revoked.length > 0);
-    // 8 rendered, 6 kept.
-    expect(revoked.length).toBe(2);
+    const el = FakeAudio.instances[0]!;
+    await until(() => gate.release !== undefined);
+    player.pause();
+    gate.release!(wavBlob(8000, 16000));
+    await delay(30);
+    expect(el.src.startsWith('blob:')).toBe(false);
+
+    player.resume();
+    await until(() => el.src.startsWith('blob:'));
+    await until(() => el.paused === false);
     player.stop();
   });
 
-  it('reports a synthesis failure without playing anything', async () => {
+  it('revokes object URLs when the cache evicts them, never the one loaded', async () => {
+    const engine = new FakeEngine(true);
+    const many = Array.from({ length: 8 }, (_, i) => ({ id: `s${i}`, text: `Sentence ${i}.` }));
+    let done = 0;
+    const player = createPlayer({ ...baseOptions, items: many, engine, onDone: () => (done += 1) });
+
+    player.play();
+    const el = FakeAudio.instances[0]!;
+    const playedSrcs: string[] = [];
+    for (let i = 0; i < many.length; i++) {
+      await until(() => el.src.startsWith('blob:') && !playedSrcs.includes(el.src));
+      playedSrcs.push(el.src);
+      expect(revoked).not.toContain(el.src);
+      el.finish();
+    }
+    await until(() => done === 1);
+    // 8 rendered, 6 kept.
+    expect(revoked).toHaveLength(2);
+    player.stop();
+  });
+
+  it('reports a synthesis failure without loading a clip', async () => {
     const engine = new FakeEngine(true);
     engine.synthError = new Error('model not loaded');
     const errors: Error[] = [];
@@ -374,7 +486,45 @@ describe('synthesising engines', () => {
     player.play();
     await until(() => errors.length === 1);
     expect(errors[0]?.message).toBe('model not loaded');
-    expect(FakeAudio.instances).toHaveLength(0);
+    // The silent gesture-unlock clip was primed, but no real audio was loaded.
+    expect(FakeAudio.instances.every((a) => !a.src.startsWith('blob:'))).toBe(true);
+  });
+
+  it('recovers when a prefetch fails but the sentence itself can be rendered', async () => {
+    const engine = new FakeEngine(true);
+    const calls: string[] = [];
+    let betaFailures = 1;
+    engine.synthesize = async (text: string) => {
+      calls.push(text);
+      await delay(5); // let the prefetch of the next sentence start first
+      if (text.includes('Beta') && betaFailures > 0) {
+        betaFailures--;
+        throw new Error('transient');
+      }
+      return wavBlob(8000, 160);
+    };
+    const errors: Error[] = [];
+    let done = 0;
+    const player = createPlayer({
+      ...baseOptions,
+      engine,
+      onError: (e) => errors.push(e),
+      onDone: () => (done += 1),
+    });
+
+    player.play();
+    const el = FakeAudio.instances[0]!;
+    const played: string[] = [];
+    for (let i = 0; i < items.length; i++) {
+      await until(() => el.src.startsWith('blob:') && !played.includes(el.src));
+      played.push(el.src);
+      el.finish();
+    }
+    await until(() => done === 1);
+    expect(errors).toHaveLength(0);
+    // Beta was attempted twice: once by the failed prefetch, once for playback.
+    expect(calls.filter((t) => t.includes('Beta'))).toHaveLength(2);
+    expect(played).toHaveLength(3);
   });
 
   it('reports an audio element failure and stops', async () => {
@@ -390,9 +540,54 @@ describe('synthesising engines', () => {
     });
 
     player.play();
-    await until(() => FakeAudio.instances.length === 1);
-    FakeAudio.instances[0]!.fail();
+    const el = FakeAudio.instances[0]!;
+    await until(() => el.src.startsWith('blob:'));
+    el.fail();
     await until(() => errors.length === 1);
+    expect(errors[0]?.message).toBe('Audio playback failed.');
+    expect(done).toBe(0);
+  });
+
+  it('settles a stop() that lands while play() is still pending', async () => {
+    const engine = new FakeEngine(true);
+    FakeAudio.holdPlays = 2; // the gesture primer and the first real clip
+    const errors: Error[] = [];
+    let done = 0;
+    const player = createPlayer({
+      ...baseOptions,
+      items: [items[0]!],
+      engine,
+      onError: (e) => errors.push(e),
+      onDone: () => (done += 1),
+    });
+
+    player.play();
+    const el = FakeAudio.instances[0]!;
+    await until(() => el.src.startsWith('blob:'));
+    const beforeStop = el.src;
+    player.stop();
+    await delay(30);
+    expect(errors).toHaveLength(0);
+    expect(done).toBe(0);
+    expect(revoked.length).toBeGreaterThan(0);
+
+    // The player is not wedged: a fresh play() still works and completes.
+    player.play();
+    await until(() => el.src.startsWith('blob:') && el.src !== beforeStop);
+    el.finish();
+    await until(() => done === 1);
+  });
+
+  it('revokes every object URL on stop()', async () => {
+    const engine = new FakeEngine(true);
+    let done = 0;
+    const player = createPlayer({ ...baseOptions, items: [items[0]!], engine, onDone: () => (done += 1) });
+    player.play();
+    const el = FakeAudio.instances[0]!;
+    await until(() => el.src.startsWith('blob:'));
+    player.stop();
+    expect(created.length).toBeGreaterThan(0);
+    expect([...revoked].sort()).toEqual([...created].sort());
     expect(done).toBe(0);
   });
 

@@ -1,32 +1,16 @@
-/**
- * Playback queue for one reading session.
- *
- * Two paths, chosen by the engine: engines that can render audio
- * (`synthesize`) get their clips cached by hash and played through an
- * HTMLAudioElement, which gives exact pause/resume/seek; streaming engines
- * (the system voices) are driven sentence by sentence through `speak`.
- *
- * All asynchronous work checks a generation counter, so a stop or seek during
- * a synth or a playback can never be resumed by the call it interrupted.
- */
 import type { AudioCacheRecord, TtsEngine } from '../core/types';
-import { cacheKey, getAudio, putAudio } from './cache';
+import { cacheKey, getAudio, putAudio, wavDurationMs } from './cache';
 import { expand, lexiconVersion } from './lexicon';
-
-export interface PlayerItem {
-  id: string;
-  text: string;
-}
 
 export interface PlayerOptions {
   engine: TtsEngine;
-  items: PlayerItem[];
-  startIndex: number;
+  items: { id: string; text: string }[];
+  startIndex?: number;
   voiceId?: string;
   rate: number;
-  onSentence(id: string): void;
-  onDone(): void;
-  onError(e: Error): void;
+  onSentence?(id: string): void;
+  onDone?(): void;
+  onError?(err: Error): void;
 }
 
 export interface Player {
@@ -37,185 +21,265 @@ export interface Player {
   seek(index: number): void;
 }
 
-/** Object URLs kept warm for back-to-back sentences; revoked when evicted. */
+/** Object URLs kept alive for retries/backtracking; each holds a whole clip. */
 const URL_LRU_SIZE = 6;
-/** How many upcoming sentences to render while the current one plays. */
 const PREFETCH_AHEAD = 2;
 
-type State = 'idle' | 'playing' | 'paused';
+/**
+ * 44-byte silent WAV. Played muted from the tap handler that starts playback:
+ * iOS and Android WebViews only allow later programmatic `play()` calls once
+ * one has succeeded from a user gesture, and our real clip only exists after
+ * an await (lexicon + cache + synthesis).
+ */
+const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
 
-/** Internal signal: a newer generation took over. Never surfaces to the user. */
-class AbortPlayback extends Error {}
+class AbortPlayback extends Error {
+  constructor() {
+    super('playback superseded');
+    this.name = 'AbortPlayback';
+  }
+}
+
+type Item = { id: string; text: string };
 
 export function createPlayer(options: PlayerOptions): Player {
-  const { engine, items, voiceId, rate } = options;
+  const { engine, items } = options;
   const canSynthesize = typeof engine.synthesize === 'function';
 
-  let state: State = 'idle';
-  let index = clamp(options.startIndex);
+  let state: 'idle' | 'playing' | 'paused' = 'idle';
+  let index = items.length === 0 ? 0 : Math.min(Math.max(0, Math.trunc(options.startIndex ?? 0)), items.length - 1);
   let generation = 0;
-  let audio: HTMLAudioElement | null = null;
+  let unlocked = false;
 
-  /** cache key → object URL, in least-recently-used order. */
+  let audio: HTMLAudioElement | null = null;
+  let audioUrl: string | null = null;
+  let audioKey: string | null = null;
+  let settleClip: (() => void) | null = null;
+
   const urls = new Map<string, string>();
   const inflight = new Map<string, Promise<string>>();
 
-  function clamp(i: number): number {
-    if (!Number.isFinite(i)) return 0;
-    return Math.min(Math.max(0, Math.trunc(i)), Math.max(0, items.length - 1));
+  function report(err: unknown): void {
+    options.onError?.(err instanceof Error ? err : new Error(String(err)));
   }
 
-  // -- object-URL cache ----------------------------------------------------
+  function ensureAudio(): HTMLAudioElement {
+    if (!audio) {
+      audio = new Audio();
+      audio.preload = 'auto';
+    }
+    return audio;
+  }
+
+  function startPlay(el: HTMLAudioElement): Promise<void> | undefined {
+    const played = el.play();
+    return played && typeof played.catch === 'function' ? played : undefined;
+  }
+
+  /** Must be called synchronously from the tap; see SILENT_WAV. */
+  function primeAudio(): void {
+    if (!canSynthesize || unlocked) return;
+    unlocked = true;
+    const el = ensureAudio();
+    el.muted = true;
+    el.src = SILENT_WAV;
+    const played = startPlay(el);
+    if (played) played.catch(() => {});
+  }
+
+  function detachClip(): void {
+    if (audio) {
+      audio.onended = null;
+      audio.onerror = null;
+      audio.pause();
+    }
+    // Whoever awaits a clip that will never fire ended/error must still wake up.
+    settleClip?.();
+    settleClip = null;
+  }
+
+  function revokeAll(): void {
+    for (const url of urls.values()) URL.revokeObjectURL(url);
+    urls.clear();
+    inflight.clear();
+    audioKey = null;
+    audioUrl = null;
+  }
+
+  function evictOne(): boolean {
+    for (const key of urls.keys()) {
+      // The element still points at this URL; revoking it is harmless while
+      // paused, but keeping it means a back/seek retry needs no synthesis.
+      if (key === audioKey) continue;
+      const url = urls.get(key);
+      if (url === undefined) continue;
+      urls.delete(key);
+      URL.revokeObjectURL(url);
+      return true;
+    }
+    return false;
+  }
 
   function remember(key: string, blob: Blob): string {
-    const existing = urls.get(key);
-    if (existing) {
-      touch(key, existing);
-      return existing;
+    const known = urls.get(key);
+    if (known !== undefined) {
+      urls.delete(key);
+      urls.set(key, known); // refresh its LRU position
+      return known;
     }
     const url = URL.createObjectURL(blob);
     urls.set(key, url);
-    while (urls.size > URL_LRU_SIZE) {
-      const oldestKey = urls.keys().next().value;
-      if (oldestKey === undefined) break;
-      const stale = urls.get(oldestKey);
-      urls.delete(oldestKey);
-      if (stale) URL.revokeObjectURL(stale);
+    while (urls.size > URL_LRU_SIZE && evictOne()) {
+      /* trim */
     }
     return url;
   }
 
-  function touch(key: string, url: string): void {
-    urls.delete(key);
-    urls.set(key, url);
-  }
-
-  function releaseAll(): void {
-    for (const url of urls.values()) URL.revokeObjectURL(url);
-    urls.clear();
-    inflight.clear();
-  }
-
-  // -- audio path ----------------------------------------------------------
-
-  async function audioUrlFor(item: PlayerItem, gen: number): Promise<string> {
+  async function audioUrlFor(item: Item, gen: number): Promise<{ key: string; url: string }> {
     const text = (await expand(item.text)) || item.text;
     if (gen !== generation) throw new AbortPlayback();
-
     const version = await lexiconVersion();
-    const key = await cacheKey(text, engine.id, voiceId, rate, version);
+    if (gen !== generation) throw new AbortPlayback();
+    const key = await cacheKey(text, engine.id, options.voiceId, options.rate, version);
+    if (gen !== generation) throw new AbortPlayback();
 
-    const ready = urls.get(key);
-    if (ready) {
-      touch(key, ready);
-      return ready;
+    const cached = urls.get(key);
+    if (cached !== undefined) return { key, url: cached };
+
+    const pending = inflight.get(key);
+    if (pending !== undefined) {
+      try {
+        return { key, url: await pending };
+      } catch {
+        // A prefetch may have died on a transient synth failure; the sentence
+        // we need right now deserves its own attempt.
+      }
+      if (gen !== generation) throw new AbortPlayback();
     }
 
-    // A prefetch may already be rendering this exact clip.
-    const pending = inflight.get(key);
-    if (pending) return pending;
-
     const job = (async () => {
-      const cached = await getAudio(key);
-      let blob: Blob;
-      if (cached) {
-        blob = cached.audio;
-      } else {
-        blob = await engine.synthesize!(text, { voiceId, rate });
-        const rec: AudioCacheRecord = {
-          key,
-          engine: engine.id,
-          audio: blob,
-          durationMs: 0, // filled in when the element reports its metadata
-          createdAt: Date.now(),
-        };
-        await putAudio(rec);
-      }
+      const stored = await getAudio(key);
+      if (gen !== generation) throw new AbortPlayback();
+      if (stored) return remember(key, stored.audio);
+      const blob = await engine.synthesize!(text, { voiceId: options.voiceId, rate: options.rate });
+      if (gen !== generation) throw new AbortPlayback();
+      const durationMs = await wavDurationMs(blob);
+      const record: AudioCacheRecord = {
+        key,
+        engine: engine.id,
+        audio: blob,
+        durationMs,
+        createdAt: Date.now(),
+      };
+      await putAudio(record);
       if (gen !== generation) throw new AbortPlayback();
       return remember(key, blob);
     })();
-
     inflight.set(key, job);
     try {
-      return await job;
+      return { key, url: await job };
     } finally {
-      inflight.delete(key);
+      if (inflight.get(key) === job) inflight.delete(key);
     }
   }
 
   function prefetch(from: number, gen: number): void {
-    if (!canSynthesize) return;
-    const end = Math.min(from + PREFETCH_AHEAD, items.length);
+    const end = Math.min(items.length, from + PREFETCH_AHEAD);
     for (let i = from; i < end; i++) {
       const item = items[i];
       if (!item) continue;
-      // Failures are retried when the sentence is actually reached.
       void audioUrlFor(item, gen).catch(() => {});
     }
   }
 
-  async function playAudioItem(item: PlayerItem, gen: number): Promise<void> {
-    const url = await audioUrlFor(item, gen);
+  function waitWhilePaused(gen: number): Promise<void> {
+    if (state !== 'paused') return Promise.resolve();
+    return new Promise((resolve) => {
+      const tick = () => {
+        if (gen !== generation || state !== 'paused') {
+          resolve();
+          return;
+        }
+        setTimeout(tick, 50);
+      };
+      setTimeout(tick, 50);
+    });
+  }
+
+  async function playAudioItem(item: Item, gen: number): Promise<void> {
+    const loaded = await audioUrlFor(item, gen);
     if (gen !== generation) throw new AbortPlayback();
     await waitWhilePaused(gen);
     if (gen !== generation) throw new AbortPlayback();
 
-    const el = new Audio(url);
-    audio = el;
+    const el = ensureAudio();
+    detachClip();
+    el.muted = false;
+    el.src = loaded.url;
+    audioKey = loaded.key;
+    audioUrl = loaded.url;
 
-    try {
-      await new Promise<void>((resolve, reject) => {
-        el.onended = () => resolve();
-        el.onerror = () => reject(new Error('The audio clip could not be played.'));
-        const started = el.play();
-        if (started && typeof started.catch === 'function') {
-          started.catch((err: unknown) => reject(err instanceof Error ? err : new Error(String(err))));
-        }
-      });
-    } finally {
-      if (audio === el) audio = null;
-      el.onended = null;
-      el.onerror = null;
-    }
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        settleClip = null;
+        audioUrl = null;
+        resolve();
+      };
+      settleClip = finish;
+      el.onended = finish;
+      el.onerror = () => {
+        if (settled) return;
+        settled = true;
+        settleClip = null;
+        audioUrl = null;
+        reject(new Error('Audio playback failed.'));
+      };
+      const played = startPlay(el);
+      if (played) {
+        played.catch((err: unknown) => {
+          if (settled) return;
+          settled = true;
+          settleClip = null;
+          audioUrl = null;
+          reject(err instanceof Error ? err : new Error(String(err)));
+        });
+      }
+    });
   }
 
-  // -- streaming path ------------------------------------------------------
-
-  async function speakItem(item: PlayerItem, gen: number): Promise<void> {
+  async function speakItem(item: Item, gen: number): Promise<void> {
     const text = (await expand(item.text)) || item.text;
     if (gen !== generation) throw new AbortPlayback();
     await waitWhilePaused(gen);
     if (gen !== generation) throw new AbortPlayback();
 
-    let failure: Error | undefined;
-    await engine.speak([{ id: item.id, text }], { voiceId, rate }, {
+    let failure: Error | null = null;
+    await engine.speak([{ id: item.id, text }], { voiceId: options.voiceId, rate: options.rate }, {
       onError: (err) => {
-        failure = err instanceof Error ? err : new Error(String(err));
+        failure = err;
       },
     });
+    if (gen !== generation) throw new AbortPlayback();
     if (failure) throw failure;
   }
 
-  /** Pause can land while a clip is still rendering; hold the queue there. */
-  async function waitWhilePaused(gen: number): Promise<void> {
-    while (state === 'paused' && gen === generation) {
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
-    }
+  function abort(): void {
+    generation++;
+    detachClip();
+    engine.stop();
   }
-
-  // -- queue ---------------------------------------------------------------
 
   async function run(start: number): Promise<void> {
     const gen = ++generation;
     state = 'playing';
-
     for (let i = start; i < items.length; i++) {
       if (gen !== generation) return;
-      const item = items[i];
-      if (!item) continue;
       index = i;
-      options.onSentence(item.id);
-      // Warm the next clips while this one is being rendered or is playing.
+      const item = items[i]!;
+      options.onSentence?.(item.id);
       prefetch(i + 1, gen);
       try {
         if (canSynthesize) await playAudioItem(item, gen);
@@ -223,41 +287,27 @@ export function createPlayer(options: PlayerOptions): Player {
       } catch (err) {
         if (gen !== generation || err instanceof AbortPlayback) return;
         state = 'idle';
-        engine.stop();
-        releaseAll();
-        options.onError(err instanceof Error ? err : new Error(String(err)));
+        abort();
+        revokeAll();
+        report(err);
         return;
       }
-      if (gen !== generation) return;
     }
-
-    if (gen === generation) {
-      state = 'idle';
-      options.onDone();
-    }
-  }
-
-  /** Drop the current clip/utterance without changing the queue position. */
-  function abort(): void {
-    generation++;
-    if (audio) {
-      const el = audio;
-      el.onended = null;
-      el.onerror = null;
-      el.pause();
-      audio = null;
-    }
-    engine.stop();
+    if (gen !== generation) return;
+    state = 'idle';
+    options.onDone?.();
   }
 
   function play(): void {
-    if (state === 'playing') return; // never stack a second queue
-    if (state === 'paused') {
-      resume();
+    if (items.length === 0) {
+      options.onDone?.();
       return;
     }
-    if (items.length === 0) {
-      options.onDone();
+    // Synchronous, inside the gesture: this is the autoplay unlock.
+    primeAudio();
+    if (state === 'playing') return;
+    if (state === 'paused') {
+      resume();
       return;
     }
     void run(index);
@@ -266,45 +316,56 @@ export function createPlayer(options: PlayerOptions): Player {
   function pause(): void {
     if (state !== 'playing') return;
     state = 'paused';
-    if (audio) audio.pause();
-    else engine.pause();
+    if (canSynthesize) {
+      if (audio && audioUrl) audio.pause();
+      // While a clip is still synthesising there is nothing to pause; the run
+      // loop parks in waitWhilePaused until resume().
+      return;
+    }
+    engine.pause();
   }
 
   function resume(): void {
     if (state !== 'paused') return;
     state = 'playing';
-    if (audio) {
-      const el = audio;
-      void el.play().catch((err: unknown) => {
-        state = 'idle';
-        engine.stop();
-        options.onError(err instanceof Error ? err : new Error(String(err)));
-      });
-    } else {
+    if (!canSynthesize) {
       engine.resume();
+      return;
     }
+    if (audio && audioUrl) {
+      audio.muted = false;
+      const played = startPlay(audio);
+      if (played) {
+        played.catch((err: unknown) => {
+          if (state !== 'playing') return;
+          state = 'idle';
+          abort();
+          revokeAll();
+          report(err);
+        });
+      }
+    }
+    // Else: a clip is being synthesised; run() continues when the poll wakes.
   }
 
   function stop(): void {
     state = 'idle';
     abort();
-    releaseAll();
+    revokeAll();
   }
 
   function seek(to: number): void {
-    const next = clamp(to);
+    if (items.length === 0) return;
+    const next = Math.min(Math.max(0, Math.trunc(to)), items.length - 1);
     const wasPlaying = state === 'playing';
+    abort();
     index = next;
-    if (!wasPlaying) {
-      // Idle or paused: drop what is sounding; play() starts at `next`.
-      if (state === 'paused') {
-        abort();
-        state = 'idle';
-      }
+    if (wasPlaying) {
+      void run(next);
       return;
     }
-    abort();
-    void run(next);
+    // Paused/stopped: the next play() starts at the requested sentence.
+    state = 'idle';
   }
 
   return { play, pause, resume, stop, seek };

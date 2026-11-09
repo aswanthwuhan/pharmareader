@@ -32,8 +32,44 @@ export async function getAudio(key: string): Promise<AudioCacheRecord | undefine
   return db.audioCache.get(key);
 }
 
-export async function putAudio(rec: AudioCacheRecord): Promise<void> {
+/** 300 MB: cheap phones and the PWA quota cannot afford more than this. */
+export const DEFAULT_MAX_CACHE_BYTES = 300 * 1024 * 1024;
+
+/**
+ * Store a clip, then evict the oldest ones until the cache is back under budget.
+ * Rows are keyed by lexicon hash, so an edited rule leaves the old row behind
+ * forever unless something prunes it; this is that something.
+ *
+ * Returns the record through unchanged so callers can await it as before.
+ */
+export async function putAudio(rec: AudioCacheRecord, maxBytes = DEFAULT_MAX_CACHE_BYTES): Promise<void> {
   await db.audioCache.put(rec);
+  // Storage pressure must never fail playback: the clip is already stored.
+  try {
+    await pruneAudio(maxBytes);
+  } catch {
+    /* IndexedDB quota/lock errors are not a reason to stop the sentence */
+  }
+}
+
+/**
+ * Evict least-recently-created clips until the cache is at or under `maxBytes`.
+ * `createdAt` is indexed in the core schema, so this is one index walk.
+ * Returns the number of bytes freed.
+ */
+export async function pruneAudio(maxBytes = DEFAULT_MAX_CACHE_BYTES): Promise<number> {
+  const total = await cacheSizeBytes();
+  if (total <= maxBytes) return 0;
+
+  let freed = 0;
+  const doomed: string[] = [];
+  for (const rec of await db.audioCache.orderBy('createdAt').toArray()) {
+    if (total - freed <= maxBytes) break;
+    doomed.push(rec.key);
+    freed += rec.audio.size ?? 0;
+  }
+  if (doomed.length > 0) await db.audioCache.bulkDelete(doomed);
+  return freed;
 }
 
 /** Drop cached audio for one engine, or everything when no engine is given. */
@@ -51,6 +87,36 @@ export async function cacheSizeBytes(): Promise<number> {
   let total = 0;
   for (const rec of await db.audioCache.toArray()) total += rec.audio.size ?? 0;
   return total;
+}
+
+/**
+ * Duration of a RIFF/WAVE clip from its header, or 0 when the blob is not a
+ * WAV we can parse (mp3/ogg encoders give no cheap duration). Used only to
+ * fill `durationMs` for UI progress; it never blocks playback differently.
+ */
+export async function wavDurationMs(blob: Blob): Promise<number> {
+  if (blob.size < 44) return 0;
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  if (buf.length < 12) return 0;
+  const tag = (o: number) => String.fromCharCode(buf[o]!, buf[o + 1]!, buf[o + 2]!, buf[o + 3]!);
+  if (tag(0) !== 'RIFF' || tag(8) !== 'WAVE') return 0;
+
+  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  let byteRate = 0;
+  let dataSize = 0;
+  for (let off = 12; off + 8 <= buf.length; ) {
+    const id = tag(off);
+    const size = view.getUint32(off + 4, true);
+    const body = off + 8;
+    if (id === 'fmt ' && size >= 12 && body + 12 <= buf.length) {
+      byteRate = view.getUint32(body + 8, true);
+    } else if (id === 'data' && size > 0) {
+      dataSize = size;
+    }
+    off = body + size + (size & 1);
+  }
+  if (byteRate <= 0 || dataSize <= 0) return 0;
+  return Math.round((dataSize / byteRate) * 1000);
 }
 
 function toHex(bytes: Uint8Array): string {

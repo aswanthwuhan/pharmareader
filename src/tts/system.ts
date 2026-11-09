@@ -4,8 +4,17 @@
  * Web: `speechSynthesis`. Each sentence gets its own utterance so the Chrome
  * bug that silences anything longer than ~15 seconds cannot swallow the
  * paragraph, and `boundary` events give us word highlighting for free.
+ *
+ * Pause is implemented by cancelling and remembering where we were: Chrome
+ * Android's `speechSynthesis.pause()` is unreliable, can leave `paused` stuck
+ * true, and often never resumes. The speak() promise stays pending across a
+ * pause, so a caller's sentence is never silently skipped.
+ *
  * Native (Capacitor): the `@capacitor-community/text-to-speech` plugin, which
- * speaks one string at a time and reports no word boundaries.
+ * speaks one string at a time, reports no word boundaries, and has no pause.
+ * Android's stop() clears its request map without ever resolving the pending
+ * `speak()` call, so every native utterance is raced against our own
+ * cancellation; pause = stop + remember the sentence, resume re-speaks it.
  */
 import type { SpeakEvents, TtsCapabilities, TtsEngine, TtsVoice } from '../core/types';
 
@@ -14,6 +23,12 @@ const MAX_UTTERANCE_CHARS = 300;
 
 const WEB_RATE_MIN = 0.1;
 const WEB_RATE_MAX = 10;
+
+/** Android `TextToSpeech.setSpeechRate()` documents 0.1–2.0. */
+const NATIVE_RATE_MIN = 0.1;
+const NATIVE_RATE_MAX = 2;
+
+const NATIVE_LANG = 'en-US';
 
 function isNative(): boolean {
   // Capacitor is only injected by the shell; Vite's web build must not touch it.
@@ -32,12 +47,13 @@ const capabilities: TtsCapabilities = {
   wordBoundaries: true,
 };
 
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 // ---------------------------------------------------------------------------
 // Web Speech
 // ---------------------------------------------------------------------------
 
 let webVoices: SpeechSynthesisVoice[] | null = null;
-let stopWeb: (() => void) | null = null;
 
 /** getVoices() is empty until the engine has loaded; wait for the event (1 s cap). */
 async function loadWebVoices(): Promise<SpeechSynthesisVoice[]> {
@@ -70,6 +86,26 @@ function webVoiceFor(voices: SpeechSynthesisVoice[], id: string | undefined): Sp
   return voices.find((v) => v.voiceURI === id) ?? voices.find((v) => v.name === id);
 }
 
+interface WebRun {
+  stopped: boolean;
+  paused: boolean;
+  /** Resolved by resume()/stop() while the loop is parked on a pause. */
+  pauseWaiters: (() => void)[];
+}
+
+let webRun: WebRun | null = null;
+
+function flushPauseWaiters(run: WebRun): void {
+  const waiters = run.pauseWaiters;
+  run.pauseWaiters = [];
+  for (const resolve of waiters) resolve();
+}
+
+/**
+ * Speak one chunk. Resolves `true` when it ended on its own, `false` when it
+ * was cancelled (by us) or failed; a failure is reported through onError
+ * unless the caller cancelled.
+ */
 function speakOne(
   s: SpeechSynthesis,
   text: string,
@@ -80,8 +116,8 @@ function speakOne(
   sentenceId: string,
   charOffset: number,
   cancelled: () => boolean,
-): Promise<void> {
-  return new Promise<void>((resolve) => {
+): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
     const u = new SpeechSynthesisUtterance(text);
     u.lang = voice?.lang ?? lang;
     if (voice) u.voice = voice;
@@ -91,14 +127,15 @@ function speakOne(
       if (e.name !== 'word' && e.name !== undefined) return;
       ev.onWord?.(sentenceId, charOffset + e.charIndex);
     };
-    u.onend = () => resolve();
+    u.onend = () => resolve(true);
     u.onerror = (e) => {
       // Cancelling fires "canceled"/"interrupted"; that is us stopping, not a fault.
       const reason = (e as SpeechSynthesisErrorEvent).error;
-      if (reason !== 'canceled' && reason !== 'interrupted' && !cancelled()) {
+      const expected = cancelled() || reason === 'canceled' || reason === 'interrupted';
+      if (!expected) {
         ev.onError?.(new Error(`speechSynthesis: ${reason ?? 'unknown error'}`));
       }
-      resolve();
+      resolve(false);
     };
     s.speak(u);
   });
@@ -149,41 +186,107 @@ const webEngine: TtsEngine = {
       ev.onError?.(new Error('This browser has no speech synthesis.'));
       return;
     }
-    s.cancel(); // drop anything queued by a previous call
-    let stopped = false;
-    stopWeb = () => {
-      stopped = true;
-      s.cancel();
-    };
-    const voices = await loadWebVoices();
-    const voice = webVoiceFor(voices, opts.voiceId);
-    for (const item of items) {
-      if (stopped) return;
-      const parts = chunks(item.text);
-      if (parts.length === 0) {
-        ev.onEnd?.(item.id);
-        continue;
-      }
-      let cursor = 0;
-      for (const part of parts) {
-        if (stopped) return;
+
+    // A previous run parked on a pause must end before it could wake up again.
+    const previous = webRun;
+    if (previous) {
+      previous.stopped = true;
+      previous.paused = false;
+      flushPauseWaiters(previous);
+      webRun = null;
+    }
+
+    // Some engines are left `paused` by an earlier cancel; speak() alone then
+    // silently queues nothing.
+    if (s.paused) s.resume();
+    const wasBusy = s.speaking === true || s.pending === true;
+    s.cancel();
+    if (wasBusy) {
+      // Chrome Android drops a speak() issued in the same tick as cancel().
+      await delay(50);
+    }
+
+    const run: WebRun = { stopped: false, paused: false, pauseWaiters: [] };
+    webRun = run;
+    try {
+      const voices = await loadWebVoices();
+      if (run.stopped) return;
+      const voice = webVoiceFor(voices, opts.voiceId);
+
+      for (const item of items) {
+        if (run.stopped) return;
+        const parts = chunks(item.text);
+        if (parts.length === 0) {
+          ev.onEnd?.(item.id);
+          continue;
+        }
         // Boundary offsets are per utterance; report them against the sentence.
-        const at = item.text.indexOf(part, cursor);
-        const offset = at >= 0 ? at : cursor;
-        cursor = offset + part.length;
-        await speakOne(s, part, voice, opts.rate, 'en-US', ev, item.id, offset, () => stopped);
+        const offsets: number[] = [];
+        let cursor = 0;
+        for (const part of parts) {
+          const at = item.text.indexOf(part, cursor);
+          const offset = at >= 0 ? at : cursor;
+          offsets.push(offset);
+          cursor = offset + part.length;
+        }
+
+        for (let p = 0; p < parts.length; p++) {
+          while (run.paused && !run.stopped) {
+            await new Promise<void>((resolve) => run.pauseWaiters.push(resolve));
+          }
+          if (run.stopped) return;
+
+          const completed = await speakOne(
+            s,
+            parts[p]!,
+            voice,
+            opts.rate,
+            'en-US',
+            ev,
+            item.id,
+            offsets[p]!,
+            () => run.stopped || run.paused,
+          );
+          if (run.stopped) return;
+          if (run.paused) {
+            // We cancelled mid-chunk: replay this chunk once resume() wakes us.
+            if (!completed) p--;
+            continue;
+          }
+          if (!completed) return; // a real error (reported) or an external cancel
+        }
+        if (!run.stopped) ev.onEnd?.(item.id);
       }
-      if (!stopped) ev.onEnd?.(item.id);
+    } finally {
+      // A finished, failed or superseded speak() must not stay registered as
+      // the live run: a later pause() would cancel a run that no longer exists.
+      if (webRun === run) webRun = null;
     }
   },
   stop() {
-    stopWeb?.();
+    const run = webRun;
+    if (run) {
+      run.stopped = true;
+      run.paused = false;
+      flushPauseWaiters(run);
+      webRun = null;
+    }
+    synth()?.cancel();
   },
   pause() {
-    synth()?.pause();
+    const run = webRun;
+    const s = synth();
+    if (!run || !s || run.stopped) return;
+    run.paused = true;
+    // Never speechSynthesis.pause(): it is unreliable on Chrome Android and
+    // can leave `paused` stuck after cancel(). Cancelling is honest.
+    s.cancel();
   },
   resume() {
-    synth()?.resume();
+    const run = webRun;
+    if (!run || run.stopped) return;
+    run.paused = false;
+    flushPauseWaiters(run);
   },
 };
 
@@ -191,17 +294,17 @@ const webEngine: TtsEngine = {
 // Native (Capacitor)
 // ---------------------------------------------------------------------------
 
-interface NativeTts {
-  speak(opts: { text: string; lang?: string; rate?: number; voice?: number }): Promise<void>;
-  stop(): Promise<void>;
-  getSupportedVoices(): Promise<{ voices: { name: string; lang: string; voiceURI: string }[] }>;
+interface NativeSpeakOptions {
+  text: string;
+  lang?: string;
+  rate?: number;
+  voice?: number;
 }
 
-let nativeModule: Promise<NativeTts> | null = null;
-
-function loadNative(): Promise<NativeTts> {
-  nativeModule ??= import('@capacitor-community/text-to-speech').then((m) => m.TextToSpeech as NativeTts);
-  return nativeModule;
+interface NativeTts {
+  speak(opts: NativeSpeakOptions): Promise<void>;
+  stop(): Promise<void>;
+  getSupportedVoices(): Promise<{ voices: { name: string; lang: string; voiceURI: string }[] }>;
 }
 
 interface NativeVoice {
@@ -210,7 +313,24 @@ interface NativeVoice {
   voiceURI: string;
 }
 
+interface NativeRun {
+  cancelled: boolean;
+  paused: boolean;
+  /** Flushed by pause()/stop(): Android never resolves a stopped speak(). */
+  speakWaiters: (() => void)[];
+  /** Flushed by resume()/stop() while the loop is parked on a pause. */
+  pauseWaiters: (() => void)[];
+}
+
+let nativeModule: Promise<NativeTts> | null = null;
+let nativeTts: NativeTts | null = null;
 let nativeVoices: NativeVoice[] | null = null;
+let nativeRun: NativeRun | null = null;
+
+function loadNative(): Promise<NativeTts> {
+  nativeModule ??= import('@capacitor-community/text-to-speech').then((m) => m.TextToSpeech as NativeTts);
+  return nativeModule;
+}
 
 async function loadNativeVoices(): Promise<NativeVoice[]> {
   if (nativeVoices) return nativeVoices;
@@ -218,6 +338,63 @@ async function loadNativeVoices(): Promise<NativeVoice[]> {
   const res = await tts.getSupportedVoices();
   nativeVoices = res.voices ?? [];
   return nativeVoices;
+}
+
+function clampNativeRate(rate: number): number {
+  return Math.min(NATIVE_RATE_MAX, Math.max(NATIVE_RATE_MIN, rate));
+}
+
+function flushSpeakWaiters(run: NativeRun): void {
+  const waiters = run.speakWaiters;
+  run.speakWaiters = [];
+  for (const wake of waiters) wake();
+}
+
+function flushPause(run: NativeRun): void {
+  const waiters = run.pauseWaiters;
+  run.pauseWaiters = [];
+  for (const resolve of waiters) resolve();
+}
+
+/** Stop the plugin without letting a rejected/never-settling stop() escape. */
+function stopNativePlugin(): void {
+  const tts = nativeTts;
+  if (!tts) return;
+  try {
+    void tts.stop().catch(() => {});
+  } catch {
+    /* plugin throws when its engine is not initialised */
+  }
+}
+
+/**
+ * Android's stop() clears the request map without resolving the pending
+ * speak() call, so the call is always raced with `run.speakWaiters`:
+ * `interrupted` means we stopped it (pause/stop), `done` means it finished.
+ */
+function speakNativeOnce(tts: NativeTts, opts: NativeSpeakOptions, run: NativeRun): Promise<'done' | 'interrupted'> {
+  return new Promise<'done' | 'interrupted'>((resolve, reject) => {
+    let settled = false;
+    const wake = () => finish('interrupted');
+    const finish = (outcome: 'done' | 'interrupted') => {
+      if (settled) return;
+      settled = true;
+      const at = run.speakWaiters.indexOf(wake);
+      if (at >= 0) run.speakWaiters.splice(at, 1);
+      resolve(outcome);
+    };
+    run.speakWaiters.push(wake);
+    tts.speak(opts).then(
+      () => finish('done'),
+      (err: unknown) => {
+        if (settled) return; // already flushed by a pause/stop
+        settled = true;
+        const at = run.speakWaiters.indexOf(wake);
+        if (at >= 0) run.speakWaiters.splice(at, 1);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      },
+    );
+  });
 }
 
 const nativeEngine: TtsEngine = {
@@ -239,40 +416,94 @@ const nativeEngine: TtsEngine = {
   },
   async speak(items, opts, ev) {
     const tts = await loadNative();
-    let stopped = false;
-    stopNative = () => {
-      stopped = true;
-      void tts.stop();
-    };
-    const voices = await loadNativeVoices();
-    const index = opts.voiceId ? voices.findIndex((v) => v.voiceURI === opts.voiceId || v.name === opts.voiceId) : -1;
-    for (const item of items) {
-      if (stopped) return;
-      ev.onStart?.(item.id);
-      // speak() resolves when the utterance finishes on both platforms.
-      await tts.speak({
-        text: item.text,
-        lang: 'en-US',
-        rate: opts.rate,
-        ...(index >= 0 ? { voice: index } : {}),
-      });
-      if (stopped) return;
-      ev.onEnd?.(item.id);
+    nativeTts = tts;
+
+    // Supersede any previous run still waiting on the plugin.
+    const previous = nativeRun;
+    if (previous) {
+      previous.cancelled = true;
+      previous.paused = false;
+      flushSpeakWaiters(previous);
+      flushPause(previous);
+    }
+
+    const run: NativeRun = { cancelled: false, paused: false, speakWaiters: [], pauseWaiters: [] };
+    nativeRun = run;
+    try {
+      // Voices are needed on both platforms: the plugin takes an array index.
+      const voices = await loadNativeVoices();
+      if (run.cancelled) return;
+      const voice = opts.voiceId
+        ? voices.findIndex((v) => v.voiceURI === opts.voiceId || v.name === opts.voiceId)
+        : -1;
+
+      for (const item of items) {
+        if (run.cancelled) return;
+        ev.onStart?.(item.id);
+
+        for (;;) {
+          if (run.cancelled) return;
+          if (run.paused) {
+            // Stopped by pause(): park until resume() (or stop()).
+            await new Promise<void>((resolve) => run.pauseWaiters.push(resolve));
+            if (run.cancelled) return;
+            continue; // re-speak the sentence that pause() interrupted
+          }
+          try {
+            const outcome = await speakNativeOnce(
+              tts,
+              {
+                text: item.text,
+                lang: NATIVE_LANG,
+                rate: clampNativeRate(opts.rate),
+                ...(voice >= 0 ? { voice } : {}),
+              },
+              run,
+            );
+            if (run.cancelled) return;
+            if (run.paused) continue;
+            if (outcome === 'interrupted') return; // stopped by a newer call
+            break;
+          } catch (err) {
+            if (run.cancelled) return;
+            if (run.paused) continue;
+            ev.onError?.(err instanceof Error ? err : new Error(String(err)));
+            return;
+          }
+        }
+        if (run.cancelled) return;
+        ev.onEnd?.(item.id);
+      }
+    } finally {
+      if (nativeRun === run) nativeRun = null;
     }
   },
   stop() {
-    stopNative?.();
+    const run = nativeRun;
+    if (run) {
+      run.cancelled = true;
+      run.paused = false;
+      flushSpeakWaiters(run);
+      flushPause(run);
+      nativeRun = null;
+    }
+    stopNativePlugin();
   },
   pause() {
-    // The plugin has no pause; stopping is the closest honest behaviour.
-    stopNative?.();
+    const run = nativeRun;
+    if (!run || run.cancelled || run.paused) return;
+    run.paused = true;
+    // The plugin has no pause: stop the utterance and remember where we were.
+    stopNativePlugin();
+    flushSpeakWaiters(run);
   },
   resume() {
-    /* nothing to resume: pause() stopped the queue */
+    const run = nativeRun;
+    if (!run || run.cancelled || !run.paused) return;
+    run.paused = false;
+    flushPause(run);
   },
 };
-
-let stopNative: (() => void) | null = null;
 
 export const systemEngine: TtsEngine = isNative() ? nativeEngine : webEngine;
 
@@ -285,5 +516,6 @@ export const __systemInternals = {
   resetVoices(): void {
     webVoices = null;
     nativeVoices = null;
+    nativeRun = null;
   },
 };

@@ -21,14 +21,13 @@ export const TEST_SENTENCE = 'The half-life of CYP3A4 substrates rises with keto
 export const VOICE_TIP =
   'For a more natural built-in voice: Android → Settings › Text-to-speech → Google › Install voice data (high quality). iPhone → Settings › Accessibility › Spoken Content › Voices → download an Enhanced/Premium voice.';
 
-type EngineChoice = 'auto' | 'system' | 'pocket' | 'kokoro' | 'kokoro-server';
+type EngineChoice = 'auto' | 'system' | 'pocket' | 'kokoro';
 
 const ENGINE_OPTIONS: { value: EngineChoice; label: string }[] = [
   { value: 'auto', label: 'Auto (best available)' },
   { value: 'system', label: 'System voices (free, offline)' },
   { value: 'pocket', label: 'Pocket TTS (on-device model)' },
   { value: 'kokoro', label: 'Kokoro (on-device model)' },
-  { value: 'kokoro-server', label: 'Kokoro server (LAN)' },
 ];
 
 const RATE_MIN = 0.5;

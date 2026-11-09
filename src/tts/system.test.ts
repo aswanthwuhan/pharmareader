@@ -4,12 +4,22 @@ import { __systemInternals, systemEngine } from './system';
 
 // The native branch is a dynamic import; the mock must be hoisted above it.
 const nativeMock = vi.hoisted(() => {
-  const calls: { text: string; lang?: string; rate?: number; voice?: number }[] = [];
+  type SpeakOpts = { text: string; lang?: string; rate?: number; voice?: number };
+  const calls: SpeakOpts[] = [];
+  // Each speak() stays pending until a test resolves it, like a real utterance.
+  const pending: (() => void)[] = [];
+  const state = { stops: 0 };
   const impl = {
-    async speak(opts: { text: string; lang?: string; rate?: number; voice?: number }) {
+    speak(opts: SpeakOpts): Promise<void> {
       calls.push(opts);
+      return new Promise<void>((resolve) => {
+        pending.push(resolve);
+      });
     },
-    async stop() {},
+    async stop(): Promise<void> {
+      // Android clears its request map without resolving the pending speak().
+      state.stops += 1;
+    },
     async getSupportedVoices() {
       return {
         voices: [
@@ -19,7 +29,20 @@ const nativeMock = vi.hoisted(() => {
       };
     },
   };
-  return { calls, impl };
+  const resolveAll = () => {
+    for (const resolve of pending.splice(0)) resolve();
+  };
+  return {
+    calls,
+    impl,
+    state,
+    resolveAll,
+    reset(): void {
+      calls.length = 0;
+      pending.length = 0;
+      state.stops = 0;
+    },
+  };
 });
 
 vi.mock('@capacitor-community/text-to-speech', () => ({ TextToSpeech: nativeMock.impl }));
@@ -45,8 +68,11 @@ class FakeUtterance {
 class FakeSynth {
   queue: FakeUtterance[] = [];
   cancels = 0;
-  paused = 0;
-  resumed = 0;
+  pauseCalls = 0;
+  resumeCalls = 0;
+  paused = false;
+  speaking = false;
+  pending = false;
   voices: { name: string; lang: string; voiceURI: string; default: boolean }[] = [
     { name: 'Samantha', lang: 'en-US', voiceURI: 'com.apple.samantha', default: true },
     { name: 'Anna', lang: 'de-DE', voiceURI: 'de.anna', default: false },
@@ -60,10 +86,12 @@ class FakeSynth {
     this.cancels += 1;
   }
   pause(): void {
-    this.paused += 1;
+    this.pauseCalls += 1;
+    this.paused = true;
   }
   resume(): void {
-    this.resumed += 1;
+    this.resumeCalls += 1;
+    this.paused = false;
   }
   getVoices() {
     return this.voices;
@@ -112,7 +140,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  systemEngine.stop();
   vi.unstubAllGlobals();
+  nativeMock.reset();
 });
 
 // ---------------------------------------------------------------------------
@@ -208,6 +238,46 @@ describe('systemEngine (web)', () => {
     expect(log).toEqual([]);
   });
 
+  it('pauses by cancelling, keeps the call pending, and replays the chunk on resume', async () => {
+    const { ev, log } = events();
+    const done = systemEngine.speak([{ id: 's1', text: 'Alpha beta.' }], { rate: 1 }, ev);
+
+    await until(() => synth.queue.length === 1);
+    synth.queue[0]!.onstart?.();
+    systemEngine.pause();
+    // Chrome Android's pause() is unreliable; we must never touch it.
+    expect(synth.pauseCalls).toBe(0);
+    expect(synth.cancels).toBeGreaterThan(0);
+
+    // Chrome reports our cancel as an error; the sentence promise must remain
+    // pending so the player does not run ahead while paused.
+    const settled: string[] = [];
+    void done.then(() => settled.push('done'));
+    synth.queue[0]!.onerror?.({ error: 'canceled' });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(settled).toEqual([]);
+    expect(log).toEqual(['start:s1']);
+
+    systemEngine.resume();
+    await until(() => synth.queue.length === 2);
+    expect(synth.queue[1]?.text).toBe('Alpha beta.');
+    synth.queue[1]!.onend?.();
+    await done;
+
+    expect(settled).toEqual(['done']);
+    expect(log).toEqual(['start:s1', 'end:s1']);
+  });
+
+  it('resumes an engine another page left paused', async () => {
+    synth.paused = true;
+    const { ev } = events();
+    const done = systemEngine.speak([{ id: 's1', text: 'Alpha.' }], { rate: 1 }, ev);
+    await until(() => synth.queue.length === 1);
+    expect(synth.resumeCalls).toBeGreaterThan(0);
+    synth.queue[0]!.onend?.();
+    await done;
+  });
+
   it('ignores a cancel error but reports a real one', async () => {
     const first = events();
     const doneA = systemEngine.speak([{ id: 's1', text: 'Alpha.' }], { rate: 1 }, first.ev);
@@ -240,13 +310,6 @@ describe('systemEngine (web)', () => {
     expect(voices).toEqual([{ id: 'daniel', name: 'Daniel', lang: 'en-GB' }]);
   });
 
-  it('forwards pause and resume', () => {
-    systemEngine.pause();
-    systemEngine.resume();
-    expect(synth.paused).toBe(1);
-    expect(synth.resumed).toBe(1);
-  });
-
   it('reports an absent speech engine instead of hanging', async () => {
     vi.stubGlobal('speechSynthesis', undefined);
     const { ev, errors } = events();
@@ -257,7 +320,7 @@ describe('systemEngine (web)', () => {
 
 describe('systemEngine (native)', () => {
   beforeEach(() => {
-    nativeMock.calls.length = 0;
+    nativeMock.reset();
     __systemInternals.resetVoices();
   });
 
@@ -267,7 +330,7 @@ describe('systemEngine (native)', () => {
 
   it('speaks sentences sequentially through the plugin', async () => {
     const { ev, log } = events();
-    await __systemInternals.nativeEngine.speak(
+    const done = __systemInternals.nativeEngine.speak(
       [
         { id: 's1', text: 'Alpha.' },
         { id: 's2', text: 'Beta.' },
@@ -276,14 +339,73 @@ describe('systemEngine (native)', () => {
       ev,
     );
 
-    expect(nativeMock.calls).toHaveLength(2);
+    await until(() => nativeMock.calls.length === 1);
+    nativeMock.resolveAll();
+    await until(() => nativeMock.calls.length === 2);
     expect(nativeMock.calls[0]).toMatchObject({ text: 'Alpha.', lang: 'en-US', rate: 1.2 });
+    nativeMock.resolveAll();
+    await done;
+
     expect(log).toEqual(['start:s1', 'end:s1', 'start:s2', 'end:s2']);
   });
 
   it('maps a voice id to the plugin voice index', async () => {
-    await __systemInternals.nativeEngine.speak([{ id: 's1', text: 'Hi.' }], { rate: 1, voiceId: 'de.anna' }, {});
+    const done = __systemInternals.nativeEngine.speak([{ id: 's1', text: 'Hi.' }], { rate: 1, voiceId: 'de.anna' }, {});
+    await until(() => nativeMock.calls.length === 1);
     expect(nativeMock.calls[0]?.voice).toBe(1);
+    __systemInternals.nativeEngine.stop();
+    await done;
+  });
+
+  it('clamps the rate to the Android 0.1–2.0 range', async () => {
+    const done = __systemInternals.nativeEngine.speak([{ id: 's1', text: 'Hi.' }], { rate: 99 }, {});
+    await until(() => nativeMock.calls.length === 1);
+    expect(nativeMock.calls[0]?.rate).toBe(2);
+    __systemInternals.nativeEngine.stop();
+    await done;
+
+    const doneSlow = __systemInternals.nativeEngine.speak([{ id: 's2', text: 'Hi.' }], { rate: 0.01 }, {});
+    await until(() => nativeMock.calls.length === 2);
+    expect(nativeMock.calls[1]?.rate).toBe(0.1);
+    __systemInternals.nativeEngine.stop();
+    await doneSlow;
+  });
+
+  it('pauses by stopping the plugin and re-speaks the sentence on resume', async () => {
+    const { ev, log } = events();
+    const done = __systemInternals.nativeEngine.speak([{ id: 's1', text: 'Alpha.' }], { rate: 1 }, ev);
+
+    await until(() => nativeMock.calls.length === 1);
+    const settled: string[] = [];
+    void done.then(() => settled.push('done'));
+
+    __systemInternals.nativeEngine.pause();
+    expect(nativeMock.state.stops).toBe(1);
+    // The plugin call never resolves on Android after stop; ours must not hang.
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(settled).toEqual([]);
+    expect(log).toEqual(['start:s1']);
+
+    __systemInternals.nativeEngine.resume();
+    await until(() => nativeMock.calls.length === 2);
+    expect(nativeMock.calls[1]?.text).toBe('Alpha.');
+    nativeMock.resolveAll();
+    await done;
+
+    expect(log).toEqual(['start:s1', 'end:s1']);
+  });
+
+  it('settles a hung plugin call when stopped', async () => {
+    const done = __systemInternals.nativeEngine.speak([{ id: 's1', text: 'Alpha.' }], { rate: 1 }, {});
+    await until(() => nativeMock.calls.length === 1);
+    __systemInternals.nativeEngine.stop();
+    // Android's stop() never resolves speak(); await would hang without our flush.
+    const outcome = await Promise.race([
+      done.then(() => 'settled'),
+      new Promise<string>((resolve) => setTimeout(() => resolve('hung'), 1000)),
+    ]);
+    expect(outcome).toBe('settled');
+    expect(nativeMock.state.stops).toBeGreaterThan(0);
   });
 
   it('lists English voices only', async () => {
