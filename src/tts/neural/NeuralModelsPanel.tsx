@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { setSetting, useSetting } from '../../core/settings';
 import type { TtsEngine, TtsVoice } from '../../core/types';
 import { measureRtf, rtfSettingKey, rtfVerdict } from './benchmark';
+import { copyText } from './clipboard';
 import {
   DEFAULT_KOKORO_VOICE,
   KOKORO_DTYPE_SETTING,
@@ -15,6 +16,7 @@ import {
 import type { KokoroDtype } from './kokoroProtocol';
 import KokoroNativePanel from './KokoroNativePanel';
 import { isModelDownloaded, isModelReadyFlag, kokoroSizeMb, deleteModel, POCKET_SIZE_MB } from './models';
+import { describeNeuralError, type NeuralErrorInfo } from './neuralError';
 import { POCKET_RATE_MAX, POCKET_RATE_MIN, pocketEngine, resetPocketEngine } from './pocket';
 import styles from './NeuralModelsPanel.module.css';
 
@@ -25,7 +27,7 @@ type ModelState =
   | { kind: 'absent' }
   | { kind: 'downloading'; fraction: number }
   | { kind: 'ready' }
-  | { kind: 'error'; message: string };
+  | { kind: 'error'; info: NeuralErrorInfo };
 
 const DTYPE_LABELS: Record<KokoroDtype, string> = {
   fp32: 'fp32 — best quality, ~320 MB',
@@ -80,6 +82,8 @@ function EngineCard(props: EngineCardProps) {
           aria-label={`${props.title} download progress`}
         />
       )}
+
+      {state.kind === 'error' && <ErrorDetails info={state.info} />}
 
       <div className={styles.actions}>
         <button
@@ -159,9 +163,59 @@ function describeState(state: ModelState): string {
     case 'ready':
       return 'Ready';
     case 'error':
-      return `Failed: ${state.message}`;
+      return `Failed: ${state.info.message}`;
   }
 }
+
+/**
+ * A failure the user can act on: the stage it died in, the message the library
+ * gave us, and the whole stack behind "Copy error details" (what a bug report
+ * needs — a real phone reported "not working" with nothing to go on).
+ */
+function ErrorDetails({ info }: { info: NeuralErrorInfo }) {
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const detailsRef = useRef<HTMLPreElement>(null);
+  const blockRef = useRef<HTMLDivElement>(null);
+
+  const copy = useCallback(() => {
+    // Report what actually happened: a WebView may refuse both clipboard paths,
+    // and a fake "Copied" is worse than none.
+    void copyText(info.details).then((ok) => {
+      setCopyState(ok ? 'copied' : 'failed');
+      if (!ok) selectDetails(blockRef.current, detailsRef.current);
+      window.setTimeout(() => setCopyState('idle'), 2500);
+    });
+  }, [info.details]);
+
+  return (
+    <div className={styles.errorBlock} ref={blockRef}>
+      <p className={styles.errorStage}>Failed while {info.stage}</p>
+      <p className={styles.error}>{info.message}</p>
+      <details className={styles.errorDetails} open={copyState === 'failed'}>
+        <summary>Technical details</summary>
+        <pre ref={detailsRef}>{info.details}</pre>
+      </details>
+      <button type="button" className={`${styles.secondary} ${styles.copyError}`} onClick={copy}>
+        {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy blocked — text selected, press and hold to copy' : 'Copy error details'}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * When a WebView refuses the clipboard, leave the text selected so the user can
+ * long-press (Android) or Ctrl+C instead of hunting for the details.
+ */
+function selectDetails(block: HTMLDivElement | null, pre: HTMLPreElement | null): void {
+  if (!block || !pre || typeof window.getSelection !== 'function') return;
+  const range = document.createRange();
+  range.selectNodeContents(pre);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+/** Folds the DOM selection helpers away from the render path. */
 
 export default function NeuralModelsPanel() {
   const [pocketState, setPocketState] = useState<ModelState>({ kind: 'loading' });
@@ -211,7 +265,12 @@ export default function NeuralModelsPanel() {
   }, [native]);
 
   const download = useCallback(
-    async (engine: TtsEngine, setState: (state: ModelState) => void, setVoices: (voices: TtsVoice[]) => void) => {
+    async (
+      model: ModelId,
+      engine: TtsEngine,
+      setState: (state: ModelState) => void,
+      setVoices: (voices: TtsVoice[]) => void
+    ) => {
       setState({ kind: 'downloading', fraction: 0 });
       try {
         await engine.prepare((fraction) => setState({ kind: 'downloading', fraction }));
@@ -220,7 +279,7 @@ export default function NeuralModelsPanel() {
         // 'auto' engine choice only picks a model with a stored RTF, so measure right away.
         void measureRtf(engine).catch(() => undefined);
       } catch (err) {
-        setState({ kind: 'error', message: messageOf(err) });
+        setState({ kind: 'error', info: describeNeuralError(model, err) });
       }
     },
     []
@@ -236,7 +295,7 @@ export default function NeuralModelsPanel() {
         setVoices([]);
         setState({ kind: 'absent' });
       } catch (err) {
-        setState({ kind: 'error', message: messageOf(err) });
+        setState({ kind: 'error', info: describeNeuralError(model, err) });
       }
     },
     []
@@ -249,7 +308,9 @@ export default function NeuralModelsPanel() {
       try {
         await measureRtf(engine, { voiceId: voiceId || undefined, rate: 1 });
       } catch (err) {
-        setError(messageOf(err));
+        // Synthesis failures are the ones that used to vanish into silence.
+        const info = describeNeuralError(model, err);
+        setError(`Failed while ${info.stage}: ${info.message}`);
       } finally {
         setMeasuring(null);
       }
@@ -279,7 +340,7 @@ export default function NeuralModelsPanel() {
         voices={pocketVoices}
         voiceId={pocketVoice}
         onVoiceChange={(voiceId) => void setSetting('tts.pocket.voice', voiceId)}
-        onDownload={() => void download(pocketEngine, setPocketState, setPocketVoices)}
+        onDownload={() => void download('pocket', pocketEngine, setPocketState, setPocketVoices)}
         onDelete={() => void remove('pocket', resetPocketEngine, setPocketState, setPocketVoices)}
         onMeasure={() => void measure('pocket', pocketEngine, pocketVoice, setPocketError)}
         measuring={measuring === 'pocket'}
@@ -304,7 +365,7 @@ export default function NeuralModelsPanel() {
           voices={kokoroVoices}
           voiceId={kokoroVoice}
           onVoiceChange={(voiceId) => void setKokoroVoice(voiceId)}
-          onDownload={() => void download(kokoroEngine, setKokoroState, setKokoroVoices)}
+          onDownload={() => void download('kokoro', kokoroEngine, setKokoroState, setKokoroVoices)}
           onDelete={() => void remove('kokoro', resetKokoroEngine, setKokoroState, setKokoroVoices)}
           onMeasure={() => void measure('kokoro', kokoroEngine, kokoroVoice, setKokoroError)}
           measuring={measuring === 'kokoro'}
@@ -350,6 +411,3 @@ function defaultDtype(): KokoroDtype {
   return typeof navigator !== 'undefined' && 'gpu' in navigator ? 'fp32' : 'q8';
 }
 
-function messageOf(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}

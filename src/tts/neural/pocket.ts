@@ -10,7 +10,8 @@
 import { PocketTTS, type GenerationMetrics, type ProgressInfo } from 'pocket-tts-js';
 import { getSetting } from '../../core/settings';
 import type { SpeakEvents, TtsEngine, TtsVoice } from '../../core/types';
-import { setModelReady } from './models';
+import { POCKET_SIZE_MB, isModelDownloaded, setModelReady } from './models';
+import { NEURAL_STAGES, neuralError } from './neuralError';
 import { ORT_BASE_URL } from './ort';
 import { FloatPlayer } from './playback';
 import { createProgressAggregator } from './progress';
@@ -54,6 +55,13 @@ class PocketEngine implements TtsEngine {
   private loading: Promise<PocketTTS> | null = null;
   private readonly voices = new Map<string, Promise<string>>();
   private readonly player = new FloatPlayer();
+  /**
+   * `tts.generate()` is not re-entrant: the worker runs one job at a time and a
+   * second concurrent call comes back with no audio chunks at all (a 44-byte,
+   * zero-length WAV). The player prefetches two sentences ahead, so every
+   * generation is chained on this promise instead.
+   */
+  private queue: Promise<unknown> = Promise.resolve();
   private stopped = false;
   /** Bumped by `speak`/`stop` so a superseded utterance cannot resume playback. */
   private generation = 0;
@@ -61,7 +69,12 @@ class PocketEngine implements TtsEngine {
   private epoch = 0;
 
   async isReady(): Promise<boolean> {
-    return this.tts?.ready === true;
+    if (this.tts?.ready === true) return true;
+    // A reload drops the in-memory model but keeps the 178 MB download, so the
+    // engine must still count as ready: the reader picks it and prepare() loads the
+    // cached files. Reporting false here made every reload silently fall back to the
+    // system voice even though Settings showed "Ready".
+    return isModelDownloaded('pocket');
   }
 
   async prepare(onProgress?: (fraction: number) => void): Promise<void> {
@@ -81,20 +94,34 @@ class PocketEngine implements TtsEngine {
       language: LANGUAGE,
       quantized: true, // INT8: the phone-sized variant
       voiceCloning: false, // built-in voices only, skips the ~21 MB encoder
-      cache: true, // Cache Storage: later loads are offline
+      cache: hasCacheStorage(), // Cache Storage: later loads are offline
       ortBaseUrl: ORT_BASE_URL, // onnxruntime-web from public/ort, never jsDelivr
     });
-    const report = createProgressAggregator(onProgress);
+    const report = createProgressAggregator(onProgress, POCKET_SIZE_MB * 1e6);
+    let sawProgress = false;
     try {
-      await tts.load((info: ProgressInfo) => report(info));
+      await tts.load((info: ProgressInfo) => {
+        sawProgress = true;
+        report(info);
+      });
     } catch (err) {
       tts.destroy();
-      throw err;
+      // Before the first progress event the worker itself failed to start.
+      throw neuralError('pocket', sawProgress ? NEURAL_STAGES.files : NEURAL_STAGES.worker, err);
     }
     if (epoch !== this.epoch) {
       // `reset()` ran while the weights were downloading: do not keep them.
       tts.destroy();
       throw new Error('Pocket TTS download was cancelled');
+    }
+    // `voices.bin` (52 MB) is fetched by the first `loadVoice()`. Doing it here
+    // means "Ready" means speakable: the first Play would otherwise stall for a
+    // minute on a phone, silently, because nothing reports that download.
+    try {
+      await this.voiceRef(tts);
+    } catch (err) {
+      tts.destroy();
+      throw neuralError('pocket', NEURAL_STAGES.voices, err);
     }
     this.tts = tts;
     await setModelReady('pocket', true);
@@ -129,7 +156,7 @@ class PocketEngine implements TtsEngine {
       if (this.stopped || generation !== this.generation) return;
       voice = await this.voiceRef(tts, opts.voiceId);
     } catch (err) {
-      if (!this.stopped && generation === this.generation) ev.onError?.(asError(err));
+      if (!this.stopped && generation === this.generation) ev.onError?.(neuralError('pocket', NEURAL_STAGES.model, err));
       return;
     }
     // `stop()` can land while the model downloads or a voice is prepared.
@@ -146,7 +173,7 @@ class PocketEngine implements TtsEngine {
       try {
         pcm = await next;
       } catch (err) {
-        if (!this.stopped && generation === this.generation) ev.onError?.(asError(err));
+        if (!this.stopped && generation === this.generation) ev.onError?.(neuralError('pocket', NEURAL_STAGES.synth, err));
         return;
       }
       if (this.stopped || generation !== this.generation) return;
@@ -160,7 +187,7 @@ class PocketEngine implements TtsEngine {
       try {
         await this.player.play(pcm.data, pcm.sampleRate, rate);
       } catch (err) {
-        if (!this.stopped && generation === this.generation) ev.onError?.(asError(err));
+        if (!this.stopped && generation === this.generation) ev.onError?.(neuralError('pocket', NEURAL_STAGES.play, err));
         return;
       }
       ev.onEnd?.(items[i].id);
@@ -169,14 +196,18 @@ class PocketEngine implements TtsEngine {
   }
 
   async synthesize(text: string, opts: { voiceId?: string; rate: number }): Promise<Blob> {
-    const tts = await this.ensure();
-    const voice = await this.voiceRef(tts, opts.voiceId);
-    const pcm = await this.render(tts, text, voice);
-    if (pcm.stopped) throw new Error('Pocket TTS synthesis was stopped');
-    // The model has no speed input, so `rate` is baked into the samples here —
-    // the shared player plays cached clips at 1x, so the file must already be
-    // at the requested speed.
-    return encodeWav(changeSpeed(pcm.data, clampPocketRate(opts.rate)), pcm.sampleRate);
+    try {
+      const tts = await this.ensure();
+      const voice = await this.voiceRef(tts, opts.voiceId);
+      const pcm = await this.render(tts, text, voice);
+      if (pcm.stopped) throw new Error('Pocket TTS synthesis was stopped');
+      // The model has no speed input, so `rate` is baked into the samples here —
+      // the shared player plays cached clips at 1x, so the file must already be
+      // at the requested speed.
+      return encodeWav(changeSpeed(pcm.data, clampPocketRate(opts.rate)), pcm.sampleRate);
+    } catch (err) {
+      throw neuralError('pocket', NEURAL_STAGES.synth, err);
+    }
   }
 
   stop(): void {
@@ -202,6 +233,7 @@ class PocketEngine implements TtsEngine {
     this.tts = null;
     this.loading = null;
     this.voices.clear();
+    this.queue = Promise.resolve();
     void this.player.dispose();
   }
 
@@ -227,18 +259,36 @@ class PocketEngine implements TtsEngine {
     return ref;
   }
 
-  private async render(tts: PocketTTS, text: string, voice: string): Promise<Pcm> {
+  private render(tts: PocketTTS, text: string, voice: string): Promise<Pcm> {
+    const run = this.queue.then(() => this.renderNow(tts, text, voice));
+    // The chain must never reject, or one failed sentence would poison the queue.
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async renderNow(tts: PocketTTS, text: string, voice: string): Promise<Pcm> {
     const chunks: Float32Array[] = [];
     const metrics: GenerationMetrics = await tts.generate(text, { voice, onChunk: (audio) => chunks.push(audio) });
-    return { data: concatFloat32(chunks), sampleRate: tts.sampleRate, stopped: metrics.stopped === true };
+    const data = concatFloat32(chunks);
+    if (data.length === 0 && metrics.stopped !== true) {
+      // Never hand the player an empty clip: it would "end" instantly at 0:00 and
+      // the reader would advance through the book in silence with no error.
+      throw new Error('Pocket TTS produced no audio for this text');
+    }
+    return { data, sampleRate: tts.sampleRate, stopped: metrics.stopped === true };
   }
 }
 
-function asError(err: unknown): Error {
-  return err instanceof Error ? err : new Error(String(err));
-}
-
 export const pocketEngine: TtsEngine = new PocketEngine();
+
+/**
+ * Cache Storage is what makes the second launch offline, but it is missing in
+ * private mode and in some old Android WebViews: asking the library to use it
+ * there turns a working download into "TypeError: caches is undefined".
+ */
+export function hasCacheStorage(): boolean {
+  return typeof caches !== 'undefined';
+}
 
 /** Reset the loaded model (the panel calls this after deleting the download). */
 export function resetPocketEngine(): void {

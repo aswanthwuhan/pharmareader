@@ -2,6 +2,7 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { kokoroEngine, resetKokoroEngine } from './kokoro';
+import { setModelReady } from './models';
 import type { KokoroRequest, KokoroResponse } from './kokoroProtocol';
 
 class FakeWorker {
@@ -110,6 +111,8 @@ describe('KokoroEngine', () => {
   });
 
   it('rejects prepare instead of hanging when the engine is reset mid-load', async () => {
+    // isReady() also honours a cached download, so make sure nothing is cached here.
+    await setModelReady('kokoro', false);
     const preparing = kokoroEngine.prepare();
     await waitFor(() => FakeWorker.instances.length === 1);
     const worker = lastWorker();
@@ -120,6 +123,17 @@ describe('KokoroEngine', () => {
     await expect(preparing).rejects.toThrow('Kokoro engine was reset');
     expect(worker.terminated).toBe(true);
     await expect(kokoroEngine.isReady()).resolves.toBe(false);
+  });
+
+  it('still reports ready after a reload when the model is already downloaded', async () => {
+    // A page reload destroys the worker but not the 90–178 MB in Cache Storage; the
+    // reader must keep using the on-device voice instead of silently going to the
+    // system voice (what the phone bug report showed).
+    await setModelReady('kokoro', true);
+    resetKokoroEngine();
+
+    await expect(kokoroEngine.isReady()).resolves.toBe(true);
+    await setModelReady('kokoro', false);
   });
 
   it('surfaces a worker failure to prepare and recovers with a new worker', async () => {

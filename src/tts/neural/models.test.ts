@@ -50,16 +50,47 @@ describe('models download bookkeeping', () => {
   });
 
   it('detects Kokoro weights and ignores unrelated transformers models', async () => {
+    const kokoro = 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX';
     const { storage, buckets } = fakeCacheStorage({
-      [TRANSFORMERS_CACHE]: ['https://huggingface.co/other-model/onnx/model.onnx', 'https://huggingface.co/onnx-community/embed-model/model.onnx'],
+      [TRANSFORMERS_CACHE]: [
+        'https://huggingface.co/other-model/onnx/model.onnx',
+        'https://huggingface.co/onnx-community/embed-model/model.onnx',
+        `${kokoro}/config.json`,
+        `${kokoro}/tokenizer.json`,
+      ],
       [KOKORO_VOICES_CACHE]: [],
     });
     vi.stubGlobal('caches', storage);
     await setSetting('tts.model.kokoro.ready', false);
+    // Tokenizer + config alone are not a model.
     await expect(isModelDownloaded('kokoro')).resolves.toBe(false);
 
-    buckets[TRANSFORMERS_CACHE].push('https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/onnx/model.onnx');
+    buckets[TRANSFORMERS_CACHE].push(`${kokoro}/onnx/model_quantized.onnx`);
     await expect(isModelDownloaded('kokoro')).resolves.toBe(true);
+  });
+
+  it('a partial Pocket download is not "downloaded"', async () => {
+    // The real failure: an aborted download left bundle.json + tokenizer in the
+    // bucket, the panel said "Ready", and Play then did nothing at all.
+    const base = 'https://huggingface.co/vlapky/pocket-tts-onnx/resolve/main/onnx/english_2026-04';
+    const { storage, buckets } = fakeCacheStorage({
+      [POCKET_CACHE]: [`${base}/bundle.json`, `${base}/tokenizer.model`],
+    });
+    vi.stubGlobal('caches', storage);
+    await setSetting('tts.model.pocket.ready', false);
+    await expect(isModelDownloaded('pocket')).resolves.toBe(false);
+
+    buckets[POCKET_CACHE].push(
+      `${base}/text_conditioner_int8.onnx`,
+      `${base}/flow_lm_main_int8.onnx`,
+      `${base}/flow_lm_flow_int8.onnx`,
+      `${base}/mimi_decoder_int8.onnx`
+    );
+    // Still missing voices.bin: the model cannot speak yet.
+    await expect(isModelDownloaded('pocket')).resolves.toBe(false);
+
+    buckets[POCKET_CACHE].push(`${base}/voices.bin`);
+    await expect(isModelDownloaded('pocket')).resolves.toBe(true);
   });
 
   it('deletes a library-private bucket whole', async () => {

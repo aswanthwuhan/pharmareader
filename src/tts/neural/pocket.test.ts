@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setModelReady } from './models';
 import { ORT_BASE_URL } from './ort';
 import {
   POCKET_RATE_MAX,
@@ -15,6 +16,10 @@ const lib = vi.hoisted(() => ({
   instance: null as null | { options: Record<string, unknown> },
   stopped: false,
   destroyed: 0,
+  /** How many generate() calls were in flight at once (the library allows one). */
+  active: 0,
+  maxActive: 0,
+  empty: false,
 }));
 
 vi.mock('pocket-tts-js', () => {
@@ -43,7 +48,11 @@ vi.mock('pocket-tts-js', () => {
       _text: string,
       opts: { onChunk?: (audio: Float32Array) => void }
     ): Promise<{ rtfx: number; genTime: number; audioDuration: number; stopped?: boolean }> {
-      opts.onChunk?.(new Float32Array([0.1, 0.2, 0.3, 0.4, 0.5]));
+      lib.active++;
+      lib.maxActive = Math.max(lib.maxActive, lib.active);
+      await new Promise((resolve) => setTimeout(resolve, 5)); // inference takes a moment
+      if (!lib.empty) opts.onChunk?.(new Float32Array([0.1, 0.2, 0.3, 0.4, 0.5]));
+      lib.active--;
       return { rtfx: 1, genTime: 1, audioDuration: 1, stopped: lib.stopped };
     }
 
@@ -96,6 +105,9 @@ beforeEach(() => {
   lib.instance = null;
   lib.stopped = false;
   lib.destroyed = 0;
+  lib.active = 0;
+  lib.maxActive = 0;
+  lib.empty = false;
   vi.stubGlobal('AudioContext', FakeAudioContext);
 });
 
@@ -138,8 +150,38 @@ describe('PocketEngine', () => {
     expect(startedSources).toBe(0);
   });
 
+  it('serialises overlapping generations', async () => {
+    // The player prefetches two sentences ahead; two concurrent generate() calls
+    // made pocket-tts-js return an empty clip for the second one, which the
+    // reader then "played" in 0 ms — silence, with no error anywhere.
+    await pocketEngine.prepare();
+    const [first, second] = await Promise.all([
+      pocketEngine.synthesize!('first', { rate: 1 }),
+      pocketEngine.synthesize!('second', { rate: 1 }),
+    ]);
+
+    expect(lib.maxActive).toBe(1);
+    expect((await first.arrayBuffer()).byteLength).toBe(44 + 5 * 2);
+    expect((await second.arrayBuffer()).byteLength).toBe(44 + 5 * 2);
+  });
+
+  it('fails loudly when the model returns no audio', async () => {
+    lib.empty = true;
+    await expect(pocketEngine.synthesize!('silence', { rate: 1 })).rejects.toThrow('produced no audio');
+  });
+
   it('rejects synthesis that the library cut short', async () => {
     lib.stopped = true;
     await expect(pocketEngine.synthesize!('metformin', { rate: 1 })).rejects.toThrow('stopped');
+  });
+
+  it('still reports ready after a reload when the model is already downloaded', async () => {
+    // isReady() used to mean "loaded in this JS context", so every reload made the
+    // reader fall back to the system voice while Settings still said Ready.
+    await setModelReady('pocket', true);
+    resetPocketEngine();
+    await expect(pocketEngine.isReady()).resolves.toBe(true);
+    await setModelReady('pocket', false);
+    await expect(pocketEngine.isReady()).resolves.toBe(false);
   });
 });

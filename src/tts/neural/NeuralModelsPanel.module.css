@@ -148,3 +148,42 @@
   font-size: 0.75rem;
   line-height: 1.4;
 }
+
+.errorBlock {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid #e7b4b0;
+  border-radius: 8px;
+  background: #fdf3f2;
+}
+
+.errorStage {
+  margin: 0;
+  color: #8c1d18;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.errorDetails {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.errorDetails summary {
+  cursor: pointer;
+}
+
+.errorDetails pre {
+  margin: 0.35rem 0 0;
+  max-height: 12rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.copyError {
+  justify-self: start;
+}

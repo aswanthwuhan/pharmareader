@@ -4,6 +4,7 @@ import { act, createElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import NeuralModelsPanel from './NeuralModelsPanel';
+import { NEURAL_STAGES, neuralError } from './neuralError';
 
 /** Lets each test choose the platform before the component renders. */
 const platform = vi.hoisted(() => ({ native: false }));
@@ -13,6 +14,23 @@ vi.mock('@capacitor/core', () => ({
 }));
 // The native panel has its own plugin dependencies; only its presence matters here.
 vi.mock('./KokoroNativePanel', () => ({ default: () => null }));
+
+/** Pocket's download fails on demand, like a blocked phone connection. */
+const pocket = vi.hoisted(() => ({ failWith: null as Error | null }));
+vi.mock('./pocket', () => ({
+  POCKET_RATE_MIN: 0.8,
+  POCKET_RATE_MAX: 1.25,
+  resetPocketEngine: () => undefined,
+  pocketEngine: {
+    id: 'pocket',
+    label: 'Pocket TTS',
+    capabilities: { streaming: true, prerender: true, wordBoundaries: false, needsDownload: true },
+    isReady: () => false,
+    prepare: () => (pocket.failWith ? Promise.reject(pocket.failWith) : Promise.resolve()),
+    listVoices: () => Promise.resolve([]),
+    synthesize: () => Promise.resolve(new Blob()),
+  },
+}));
 
 let root: Root | null = null;
 let container: HTMLDivElement;
@@ -70,5 +88,27 @@ describe('NeuralModelsPanel', () => {
     expect(text).not.toContain('Kokoro-82M');
     expect(text).not.toContain('Precision');
     expect(text).not.toContain('Kokoro server');
+  });
+
+  it('shows the failing stage and a copy button when a download fails', async () => {
+    // The real engine wraps download failures with their stage; mirror that here.
+    pocket.failWith = neuralError('pocket', NEURAL_STAGES.files, new Error('Failed to fetch'));
+    await renderPanel();
+
+    const download = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Download'
+    );
+    expect(download).toBeDefined();
+    await act(async () => {
+      download!.click();
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    });
+
+    expect(container.textContent).toContain('Failed while downloading model files');
+    expect(container.textContent).toContain('Failed to fetch');
+    expect(container.querySelector('details pre')?.textContent).toContain('stage: downloading model files');
+    expect(
+      [...container.querySelectorAll('button')].some((button) => button.textContent === 'Copy error details')
+    ).toBe(true);
   });
 });

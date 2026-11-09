@@ -7,8 +7,20 @@ import { KokoroTTS, env } from 'kokoro-js';
 import type { KokoroDevice, KokoroDtype, KokoroRequest, KokoroResponse } from './kokoroProtocol';
 import { createProgressAggregator } from './progress';
 import { ORT_BASE_URL } from './ort';
+import { kokoroSizeMb } from './sizes';
 
 const MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
+
+/**
+ * The worker's own URL is the base for the ORT runtime. Transformers.js imports
+ * the Emscripten glue (`ort-wasm-simd-threaded.jsep.mjs`) dynamically at run
+ * time; when the specifier is a root-relative path, Vite's dev server resolves
+ * it into `public/` and refuses to serve it (`?import` → 500 "This file is in
+ * /public ... should not be imported from source code"). Passing an absolute
+ * URL — same bytes, same origin — keeps Vite's transform pipeline out of the
+ * way and works identically in a production build, on Capacitor and on Pages.
+ */
+const ORT_WASM_BASE = new URL(ORT_BASE_URL, self.location.href).href;
 
 /**
  * `env.wasmPaths` is the kokoro-js alias for `env.backends.onnx.wasm.wasmPaths`
@@ -18,7 +30,16 @@ const MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
  * live in Cache Storage (`transformers-cache`, `kokoro-voices`), so a second
  * launch is fully offline.
  */
-env.wasmPaths = ORT_BASE_URL;
+env.wasmPaths = ORT_WASM_BASE;
+
+/**
+ * transformers.js caches the weights in Cache Storage (`transformers-cache`).
+ * That is unavailable in private mode and in some old Android WebViews, where it
+ * throws instead of downloading — opt out there and simply re-fetch. The flag is
+ * on transformers.js' `env`; kokoro-js re-exports a narrower type for it.
+ */
+const transformersEnv = env as typeof env & { useBrowserCache: boolean };
+transformersEnv.useBrowserCache = typeof caches !== 'undefined';
 
 interface WorkerScope {
   postMessage(message: KokoroResponse, transfer?: Transferable[]): void;
@@ -63,7 +84,12 @@ async function init(dtype: KokoroDtype, device: KokoroDevice): Promise<void> {
     post({ type: 'ready', voices: Object.keys(tts.voices) });
     return;
   }
-  const report = createProgressAggregator((fraction) => post({ type: 'progress', fraction }));
+  const report = createProgressAggregator(
+    (fraction) => post({ type: 'progress', fraction }),
+    // The tokenizer lands first; without a known total the bar would read 99%
+    // for the whole 92 MB weights download.
+    kokoroSizeMb(dtype) * 1e6
+  );
   try {
     tts = await load(dtype, device, report);
   } catch (err) {

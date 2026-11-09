@@ -8,7 +8,8 @@
 import { getSetting, setSetting } from '../../core/settings';
 import type { SpeakEvents, TtsEngine, TtsVoice } from '../../core/types';
 import type { KokoroDevice, KokoroDtype, KokoroRequest, KokoroResponse } from './kokoroProtocol';
-import { setModelReady } from './models';
+import { isModelDownloaded, setModelReady } from './models';
+import { NEURAL_STAGES, neuralError } from './neuralError';
 import { FloatPlayer } from './playback';
 import { encodeWav } from './wav';
 
@@ -91,7 +92,10 @@ class KokoroEngine implements TtsEngine {
   private generation = 0;
 
   async isReady(): Promise<boolean> {
-    return this.ready;
+    if (this.ready) return true;
+    // Same reload problem as Pocket: the cached model survives the reload, the worker
+    // does not. Without this the reader fell back to the system voice after every reload.
+    return isModelDownloaded('kokoro');
   }
 
   async prepare(onProgress?: (fraction: number) => void): Promise<void> {
@@ -119,7 +123,17 @@ class KokoroEngine implements TtsEngine {
         this.pendingInit = { resolve, reject };
       });
       worker.postMessage({ type: 'init', dtype, device } satisfies KokoroRequest);
-      await done;
+      try {
+        await done;
+      } catch (err) {
+        // Say which build failed: "no available backend found" is only actionable
+        // together with the device/dtype the worker was asked for.
+        throw neuralError(
+          'kokoro',
+          `${NEURAL_STAGES.model} (Kokoro-82M ${dtype}, ${device})`,
+          err
+        );
+      }
 
       this.ready = true;
       onProgress?.(1);

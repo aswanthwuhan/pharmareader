@@ -38,4 +38,23 @@ describe('createProgressAggregator', () => {
     report({ label: 'a', loaded: 100, total: 100 });
     expect(seen).toEqual([0.25, 0.5, 0.99]);
   });
+
+  it('uses the known download size so the small first file cannot read 99%', () => {
+    // The real Pocket download starts with bundle.json (24 KB) of ~180 MB.
+    const seen: number[] = [];
+    const report = createProgressAggregator((fraction) => seen.push(fraction), 180e6);
+    report({ label: 'bundle.json', loaded: 24381, total: 24381 });
+    expect(seen[0]).toBeLessThan(0.001);
+    // The big file then drives the bar, still without reaching 100%.
+    report({ label: 'flow_lm_main_int8.onnx', loaded: 76341079, total: 76341079 });
+    expect(seen[1]).toBeCloseTo(76365460 / 180e6, 4);
+    expect(seen[1]).toBeLessThan(0.5);
+  });
+
+  it('falls back to the started files when the expected size is unknown', () => {
+    const seen: number[] = [];
+    const report = createProgressAggregator((fraction) => seen.push(fraction), 0);
+    report({ label: 'a', loaded: 50, total: 100 });
+    expect(seen).toEqual([0.5]);
+  });
 });
