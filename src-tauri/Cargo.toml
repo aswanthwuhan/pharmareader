@@ -1,0 +1,20 @@
+[package]
+name = "pharmareader"
+version = "0.1.0"
+description = "PharmaReader desktop shell (offline reader for MD Pharmacology study material)"
+authors = ["AuraPharmLab"]
+license = "GPL-3.0-only"
+edition = "2024"
+rust-version = "1.90"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "pharmareader_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.5", features = [] }

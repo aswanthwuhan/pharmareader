@@ -14,7 +14,9 @@
     "android:sync": "pnpm android:libs && pnpm build:native && cap sync android",
     "android:apk": "cd android && gradlew assembleDebug",
     "android:libs": "node scripts/fetch-android-libs.mjs",
-    "copy-ort": "node scripts/copy-ort.mjs"
+    "copy-ort": "node scripts/copy-ort.mjs",
+    "tauri": "tauri",
+    "win:build": "tauri build"
   },
   "dependencies": {
     "@capacitor-community/text-to-speech": "^8.0.2",
@@ -37,6 +39,7 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^8.6.0",
+    "@tauri-apps/cli": "^2.12.4",
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
