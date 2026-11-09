@@ -1,31 +1,239 @@
-:root {
-  --bg: #f7f6f2;
-  --surface: #ffffff;
-  --text: #17211f;
-  --muted: #5b6b69;
-  --accent: #0f4c5c;
-  --accent-text: #ffffff;
-  --border: #d9dedb;
-  --nav-h: 60px;
-  color-scheme: light dark;
+/* ============================================================================
+   PharmaReader — design tokens and shared components
+   Single source of truth for colour, type, space, shape and motion.
+   Documented in DESIGN.md; every name here is public API for page styles.
+   ========================================================================== */
+
+/* --- Reading face: Literata (SIL OFL 1.1, see public/fonts/OFL.txt) ---------
+   Self-hosted so the app can read with no network. Latin subset, variable
+   weight 200–900. Only ever used for long-form reading text. */
+@font-face {
+  font-family: 'Literata';
+  font-style: normal;
+  font-weight: 200 900;
+  font-display: swap;
+  src: url('/fonts/literata-latin-wght-normal.woff2') format('woff2');
 }
 
+@font-face {
+  font-family: 'Literata';
+  font-style: italic;
+  font-weight: 200 900;
+  font-display: swap;
+  src: url('/fonts/literata-latin-wght-italic.woff2') format('woff2');
+}
+
+/* ============================================================================
+   TOKENS — light (default)
+   ========================================================================== */
+:root {
+  color-scheme: light;
+
+  /* Colour: neutrals. Paper ground, warm ink, hairline rules. */
+  --bg: #f7f5ef;
+  --surface: #fffdf9;
+  --surface-sunken: #eeeae2;
+  --surface-raised: #fffdf9;
+  --text: #16211f;
+  --muted: #5a6863;
+  --border: #dcd7cb;
+  --border-control: #928d81;
+
+  /* Colour: brand. Teal ink, used for action and selection, never as decor. */
+  --accent: #0f4c5c;
+  --accent-hover: #0b3d4a;
+  --accent-soft: #e3edee;
+  --accent-text: #ffffff;
+  --link: var(--accent);
+  --selection-bg: #cfe4e7;
+  --caret: var(--accent);
+  /* The only translucency in the system: the scrim behind a sheet. */
+  --scrim: rgba(8, 20, 24, 0.44);
+
+  /* Colour: semantic. Text on tint, never tint on tint. */
+  --success: #1c6b45;
+  --success-bg: #e7f2ea;
+  --success-border: #b9d9c4;
+  --warning: #7a4a00;
+  --warning-bg: #fbf0d4;
+  --warning-border: #e6cd97;
+  --danger: #a3231d;
+  --danger-bg: #fbe8e5;
+  --danger-border: #edbdb7;
+  --danger-solid: #a3231d;
+  --danger-solid-hover: #871d18;
+  --danger-solid-text: #fff8f6;
+  --info: #12587e;
+  --info-bg: #e5eff7;
+  --info-border: #b7d3e6;
+
+  /* Colour: study highlights. A marker over paper; ink variants are the
+     ≥3:1 edge for card rules, underlines and legends. */
+  --hl-yellow: #ffe9a0;
+  --hl-yellow-ink: #7a5c00;
+  --hl-green: #c8ecc0;
+  --hl-green-ink: #1f6b3a;
+  --hl-blue: #cbe3fb;
+  --hl-blue-ink: #14547f;
+  --hl-pink: #ffd2e4;
+  --hl-pink-ink: #8a2350;
+
+  /* Type */
+  --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-read: 'Literata', 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+
+  --fs-2xs: 0.6875rem; /* 11px — nav labels, badges */
+  --fs-xs: 0.75rem; /* 12px — captions, metadata */
+  --fs-sm: 0.875rem; /* 14px — secondary UI text */
+  --fs-base: 1rem; /* 16px — UI body */
+  --fs-md: 1.0625rem; /* 17px — reading body */
+  --fs-lg: 1.1875rem; /* 19px — section heading */
+  --fs-xl: 1.375rem; /* 22px — card title */
+  --fs-2xl: 1.625rem; /* 26px — page title */
+  --fs-3xl: 2rem; /* 32px — rare, empty-state headline */
+
+  --fw-normal: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  --lh-tight: 1.2;
+  --lh-snug: 1.35;
+  --lh-base: 1.5;
+  --lh-read: 1.7;
+
+  --ls-tight: -0.011em;
+  --ls-wide: 0.06em;
+
+  --measure: 66ch; /* reading column, 65–75ch */
+  --measure-ui: 68ch; /* prose on UI pages */
+
+  /* Space — 4px rhythm */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Shape */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 999px;
+
+  /* Elevation — flat at rest, shadow only for things that float */
+  --shadow-raise: 0 1px 2px rgba(12, 28, 32, 0.06);
+  --shadow-pop: 0 12px 32px -14px rgba(12, 28, 32, 0.3), 0 2px 6px -2px rgba(12, 28, 32, 0.12);
+  --shadow-sheet: 0 -14px 40px -18px rgba(6, 20, 24, 0.36);
+
+  /* Focus — one ring, everywhere, accent coloured, offset off the element */
+  --focus-width: 2px;
+  --focus-offset: 2px;
+  --focus-color: var(--accent);
+
+  /* Motion — short, quiet, and always skippable via prefers-reduced-motion */
+  --dur-1: 120ms;
+  --dur-2: 180ms;
+  --dur-3: 240ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Layout */
+  --app-max: 720px;
+  --nav-h: 64px;
+  --rail-w: 88px;
+  --tap: 44px;
+  --tap-comfort: 48px;
+  --z-nav: 20;
+  --z-sheet: 40;
+}
+
+/* ============================================================================
+   TOKENS — dark. Same structure, no sizes re-declared.
+   ========================================================================== */
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #10171a;
-    --surface: #172227;
-    --text: #eef3f2;
-    --muted: #9fb0ae;
-    --accent: #4fb3c4;
-    --accent-text: #08272d;
-    --border: #2b3a3e;
+    color-scheme: dark;
+
+    --bg: #0e1618;
+    --surface: #162124;
+    --surface-sunken: #0a1113;
+    --surface-raised: #1c282b;
+    --text: #e9eeec;
+    --muted: #9aaba7;
+    --border: #35494d;
+    --border-control: #5f767a;
+
+    --accent: #66c2d2;
+    --accent-hover: #8ad4e0;
+    --accent-soft: #14333b;
+    --accent-text: #04232a;
+    --selection-bg: #24454d;
+
+    --success: #7ed3a3;
+    --success-bg: #12291f;
+    --success-border: #2c5440;
+    --warning: #f2c56b;
+    --warning-bg: #2b2313;
+    --warning-border: #574426;
+    --danger: #ff9f97;
+    --danger-bg: #311816;
+    --danger-border: #64302b;
+    --danger-solid: #c94a42;
+    --danger-solid-hover: #da6058;
+    --danger-solid-text: #1b0705;
+    --info: #8ec8ea;
+    --info-bg: #10252f;
+    --info-border: #2b4f63;
+
+    --hl-yellow: rgba(242, 197, 107, 0.26);
+    --hl-yellow-ink: #f2c56b;
+    --hl-green: rgba(126, 211, 163, 0.24);
+    --hl-green-ink: #7ed3a3;
+    --hl-blue: rgba(142, 200, 234, 0.26);
+    --hl-blue-ink: #8ec8ea;
+    --hl-pink: rgba(255, 163, 199, 0.24);
+    --hl-pink-ink: #ffa3c7;
+
+    --shadow-raise: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-pop: 0 16px 40px -18px rgba(0, 0, 0, 0.7), 0 2px 8px -2px rgba(0, 0, 0, 0.4);
+    --shadow-sheet: 0 -16px 44px -18px rgba(0, 0, 0, 0.75);
   }
 }
 
+/* ============================================================================
+   Legacy aliases — held so page styles written against the old vocabulary keep
+   working while they migrate. Nothing new should use these names.
+   ========================================================================== */
+:root {
+  --rd-yellow: var(--hl-yellow);
+  --rd-green: var(--hl-green);
+  --rd-blue: var(--hl-blue);
+  --rd-pink: var(--hl-pink);
+  --hl: var(--hl-yellow);
+}
+
+/* ============================================================================
+   BASE
+   ========================================================================== */
 *,
 *::before,
 *::after {
   box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scrollbar-color: var(--border-control) transparent;
+  scrollbar-width: thin;
 }
 
 html,
@@ -33,14 +241,108 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  -webkit-text-size-adjust: 100%;
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body {
   min-height: 100dvh;
+  text-rendering: optimizeLegibility;
 }
 
+::selection {
+  background: var(--selection-bg);
+  color: var(--text);
+}
+
+input,
+textarea,
+select {
+  caret-color: var(--caret);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0 0 var(--space-2);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-tight);
+  color: var(--text);
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: var(--fs-2xl);
+}
+
+h2 {
+  font-size: var(--fs-lg);
+  margin-top: var(--space-6);
+}
+
+h3 {
+  font-size: var(--fs-base);
+  margin-top: var(--space-4);
+}
+
+p {
+  text-wrap: pretty;
+}
+
+a {
+  color: var(--link);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* A <select> reports its widest <option> as its minimum width, which drags a
+   1fr grid track (and the whole page) past the viewport on a phone. Letting
+   controls shrink is a page-level rule, not a per-form rule: without it every
+   screen with a select scrolls sideways at 360px. */
+input,
+select,
+textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled,
+[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+img,
+svg {
+  max-width: 100%;
+}
+
+:focus-visible {
+  outline: var(--focus-width) solid var(--focus-color);
+  outline-offset: var(--focus-offset);
+  border-radius: var(--radius-xs);
+}
+
+/* ============================================================================
+   SHELL
+   ========================================================================== */
 .app {
   display: flex;
   min-height: 100dvh;
@@ -49,65 +351,729 @@ body {
 
 .app-main {
   flex: 1;
-  padding: max(16px, env(safe-area-inset-top)) 16px calc(var(--nav-h) + 24px);
+  padding: max(var(--space-4), env(safe-area-inset-top)) var(--space-4)
+    calc(var(--nav-h) + var(--space-6) + env(safe-area-inset-bottom, 0px));
 }
 
 .page {
-  max-width: 720px;
+  max-width: var(--app-max);
   margin: 0 auto;
 }
 
-h1 {
-  margin: 0 0 8px;
-  font-size: 1.6rem;
-  line-height: 1.25;
-  color: var(--accent);
+.page + .page {
+  margin-top: var(--space-6);
 }
 
-.muted {
+.app-bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-4);
+}
+
+.app-bar h1 {
+  margin: 0;
+}
+
+.app-bar-sub {
+  margin: var(--space-1) 0 0;
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
 }
 
-.todo {
-  color: var(--muted);
-  font-size: 0.9rem;
-  border-left: 3px solid var(--border);
-  padding-left: 10px;
+.app-bar-actions {
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+  padding-top: 2px;
 }
 
+/* Bottom navigation (phone) — becomes a rail at ≥900px. */
+.app-nav,
 .bottom-nav {
   position: fixed;
   inset: auto 0 0 0;
+  z-index: var(--z-nav);
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 4px;
-  padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  gap: var(--space-1);
+  height: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
+  padding: 0 var(--space-2) env(safe-area-inset-bottom, 0px);
   background: var(--surface);
   border-top: 1px solid var(--border);
 }
 
 .nav-link {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 44px;
-  border-radius: 10px;
-  padding: 0 6px;
+  gap: 3px;
+  min-height: var(--tap);
+  margin: var(--space-1) 0;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-md);
   color: var(--muted);
-  font-size: 0.85rem;
-  font-weight: 600;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.01em;
+  line-height: 1.1;
   text-decoration: none;
+  transition:
+    background-color var(--dur-1) var(--ease-standard),
+    color var(--dur-1) var(--ease-standard);
+}
+
+.nav-link svg {
+  display: block;
+  width: 22px;
+  height: 22px;
+  flex: none;
+}
+
+/* Labels stay on one line in the 88px rail; a longer name ellipsises instead of
+   reflowing the rail. */
+.nav-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-link:hover {
+  color: var(--text);
 }
 
 .nav-link.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.skip-link {
+  position: absolute;
+  top: -100px;
+  left: var(--space-2);
+  z-index: calc(var(--z-sheet) + 1);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+.skip-link:focus {
+  top: var(--space-2);
+}
+
+/* ============================================================================
+   COMPONENTS
+   ========================================================================== */
+
+/* --- Button ---------------------------------------------------------------
+   <button class="btn btn-primary">Import</button>
+   Variants: .btn-primary .btn-secondary .btn-ghost .btn-danger .btn-icon
+   ------------------------------------------------------------------------ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--tap);
+  padding: 0 var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  transition:
+    background-color var(--dur-1) var(--ease-standard),
+    border-color var(--dur-1) var(--ease-standard),
+    color var(--dur-1) var(--ease-standard);
+}
+
+.btn svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+.btn-primary {
   background: var(--accent);
+  border-color: var(--accent);
   color: var(--accent-text);
 }
 
-.nav-link:focus-visible,
-button:focus-visible,
-a:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.btn-primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.btn-secondary {
+  background: var(--surface);
+  border-color: var(--border-control);
+  color: var(--text);
+}
+
+.btn-secondary:hover {
+  background: var(--surface-sunken);
+}
+
+.btn-ghost {
+  color: var(--muted);
+}
+
+.btn-ghost:hover {
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+
+/* A ghost button that owns an open panel reads as latched, not hovered. */
+.btn-ghost[aria-expanded='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.btn-ghost[aria-expanded='true']:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.btn-danger {
+  background: var(--danger-solid);
+  border-color: var(--danger-solid);
+  color: var(--danger-solid-text);
+}
+
+.btn-danger:hover {
+  background: var(--danger-solid-hover);
+  border-color: var(--danger-solid-hover);
+}
+
+.btn-icon {
+  width: var(--tap);
+  min-width: var(--tap);
+  padding: 0;
+}
+
+.btn-block {
+  width: 100%;
+}
+
+/* --- Card -----------------------------------------------------------------
+   <div class="card"> … </div>
+   ------------------------------------------------------------------------ */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+}
+
+.card-tight {
+  padding: var(--space-3) var(--space-4);
+}
+
+.card-title {
+  margin: 0 0 var(--space-1);
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+}
+
+.card-body {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+
+/* --- Banner ---------------------------------------------------------------
+   <div class="banner banner-warning">
+     <div><p class="banner-title">Scanned PDF</p><p>No text layer found.</p></div>
+   </div>
+   ------------------------------------------------------------------------ */
+.banner {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+
+.banner > svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  margin-top: 2px;
+  color: var(--muted);
+}
+
+.banner p {
+  margin: 0;
+}
+
+.banner p + p {
+  margin-top: var(--space-1);
+}
+
+.banner-title {
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
+.banner-info {
+  background: var(--info-bg);
+  border-color: var(--info-border);
+}
+
+.banner-info > svg,
+.banner-info .banner-title {
+  color: var(--info);
+}
+
+.banner-warning {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+}
+
+.banner-warning > svg,
+.banner-warning .banner-title {
+  color: var(--warning);
+}
+
+.banner-error {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+}
+
+.banner-error > svg,
+.banner-error .banner-title {
+  color: var(--danger);
+}
+
+.banner-success {
+  background: var(--success-bg);
+  border-color: var(--success-border);
+}
+
+.banner-success > svg,
+.banner-success .banner-title {
+  color: var(--success);
+}
+
+/* --- Chip / badge ---------------------------------------------------------
+   <button class="chip chip-tap" aria-pressed="true">Basic</button>
+   <span class="badge">EPUB</span>
+   ------------------------------------------------------------------------ */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  text-decoration: none;
+}
+
+.chip-tap {
+  min-height: var(--tap);
+}
+
+.chip:hover {
+  background: var(--surface-sunken);
+}
+
+.chip[aria-pressed='true'],
+.chip.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: var(--fw-semibold);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--surface-sunken);
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-wide);
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.badge-accent {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* --- Field ----------------------------------------------------------------
+   <label class="field">
+     <span class="field-label">Article address</span>
+     <input class="input" type="url" />
+     <span class="field-hint">Paste the address of a page you can already open.</span>
+   </label>
+   ------------------------------------------------------------------------ */
+.field {
+  display: block;
+  min-width: 0;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+}
+
+.field-hint {
+  display: block;
+  margin-top: var(--space-2);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+}
+
+.input,
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  min-height: var(--tap);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  line-height: var(--lh-snug);
+  transition:
+    border-color var(--dur-1) var(--ease-standard),
+    background-color var(--dur-1) var(--ease-standard);
+}
+
+.input::placeholder,
+.field input::placeholder,
+.field textarea::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+.field textarea,
+textarea.input {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.input:focus,
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  border-color: var(--accent);
+}
+
+/* --- Progress -------------------------------------------------------------
+   <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+        aria-valuenow="42"><span style="width:42%"></span></div>
+   ------------------------------------------------------------------------ */
+.progress {
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+
+.progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width var(--dur-2) var(--ease-standard);
+}
+
+.progress-lg {
+  height: 6px;
+}
+
+/* --- List -----------------------------------------------------------------
+   <ul class="list"><li class="list-row"> … </li></ul>
+   ------------------------------------------------------------------------ */
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--border);
+}
+
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 56px;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+/* --- Empty state ----------------------------------------------------------
+   <div class="empty-state">
+     <svg class="empty-state-mark" …></svg>
+     <h2>Your shelf is empty</h2>
+     <p>…</p>
+     <div class="empty-state-actions"> … </div>
+   </div>
+   ------------------------------------------------------------------------ */
+/* An empty state is the page speaking in its own voice, so it is set as text,
+   not dropped into a floating card: the column already gives it an edge. Add
+   .card alongside it when a bordered block is genuinely wanted. */
+/* 32rem holds the body copy at ~70 characters at 14px: the Measure Rule applies
+   to teaching copy as much as to reading text, and the rule sits inside the
+   text block, so the container stops where the paragraph stops. */
+.empty-state {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+  max-width: 32rem;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.card.empty-state {
+  padding: var(--space-6) var(--space-5);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.empty-state-mark {
+  width: 48px;
+  height: 48px;
+  color: var(--accent);
+}
+
+.empty-state h2 {
+  margin: 0;
+  font-size: var(--fs-lg);
+}
+
+.empty-state p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+
+.empty-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.empty-state ol,
+.empty-state ul {
+  margin: 0;
+  padding-left: var(--space-5);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+
+.empty-state li + li {
+  margin-top: var(--space-1);
+}
+
+/* --- Sheet ----------------------------------------------------------------
+   <div class="sheet-backdrop"></div>
+   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-t">
+     <h2 id="sheet-t" class="sheet-title">Delete this book?</h2>
+     <p>…</p>
+     <div class="sheet-actions"> … </div>
+   </div>
+   ------------------------------------------------------------------------ */
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-sheet) - 1);
+  background: var(--scrim);
+}
+
+.sheet {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: var(--z-sheet);
+  max-height: 85dvh;
+  overflow-y: auto;
+  padding: var(--space-5) var(--space-4) calc(var(--space-6) + env(safe-area-inset-bottom, 0px));
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: var(--shadow-sheet);
+  animation: sheet-in var(--dur-3) var(--ease-out);
+}
+
+.sheet-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-lg);
+}
+
+.sheet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+
+.sheet-actions > .btn {
+  flex: 1 1 8rem;
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateY(12px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+/* ============================================================================
+   UTILITIES
+   ========================================================================== */
+.muted {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+.stack {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.spread {
+  justify-content: space-between;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.divider {
+  height: 1px;
+  margin: var(--space-4) 0;
+  border: 0;
+  background: var(--border);
+}
+
+.visually-hidden,
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ============================================================================
+   WIDE VIEWPORT — ≥900px: the bottom bar becomes a left rail, and the reading
+   route keeps the full width to itself (no global navigation while reading).
+   ========================================================================== */
+@media (min-width: 900px) {
+  :root {
+    --nav-h: 0px;
+  }
+
+  .app-main {
+    padding-left: calc(var(--rail-w) + var(--space-8));
+    padding-right: var(--space-8);
+    padding-bottom: var(--space-12);
+  }
+
+  .app-nav,
+  .bottom-nav {
+    inset: 0 auto 0 0;
+    grid-template-columns: 1fr;
+    grid-auto-rows: min-content;
+    gap: var(--space-1);
+    width: var(--rail-w);
+    height: 100dvh;
+    padding: var(--space-4) var(--space-2);
+    border-top: 0;
+    border-right: 1px solid var(--border);
+  }
+
+  .nav-link {
+    margin: 0;
+    padding: var(--space-2) var(--space-1);
+    min-height: 56px;
+    gap: var(--space-1);
+  }
+
+  /* Reading is a focused surface: the rail is not shown, and the reader's own
+     toolbar is the way back. */
+  .app--reading .app-nav {
+    display: none;
+  }
+
+  .app--reading .app-main {
+    padding-left: var(--space-6);
+    padding-right: var(--space-6);
+  }
+}
+
+/* ============================================================================
+   MOTION PREFERENCE
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

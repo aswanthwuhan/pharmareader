@@ -1,0 +1,325 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-09T12:38:43+05:30",
+  "title": "Design System: PharmaReader",
+  "extensions": {
+    "colorMeta": {
+      "clinical-teal": {
+        "role": "primary",
+        "displayName": "Clinical Teal",
+        "canonical": "#0f4c5c",
+        "tonalRamp": ["#001a21", "#133843", "#2b5a68", "#477d8e", "#73a1af", "#98bfcc", "#bddee9", "#d8f4fe"]
+      },
+      "teal-deep": {
+        "role": "primary",
+        "displayName": "Deep Teal",
+        "canonical": "#0b3d4a",
+        "tonalRamp": ["#041920", "#1a3841", "#335965", "#4f7c8a", "#799fac", "#9dbec9", "#c1dde6", "#dbf3fb"]
+      },
+      "teal-wash": {
+        "role": "primary",
+        "displayName": "Teal Wash",
+        "canonical": "#e3edee",
+        "tonalRamp": ["#131717", "#2f3435", "#4d5455", "#6e7677", "#929a9b", "#b2b9b9", "#d3d9d9", "#ebf0f0"]
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "Paper",
+        "canonical": "#f7f5ef",
+        "tonalRamp": ["#171614", "#34332f", "#54524e", "#76746f", "#9a9894", "#b9b7b3", "#d8d7d4", "#efeeeb"]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Sheet",
+        "canonical": "#fffdf9",
+        "tonalRamp": ["#171614", "#343330", "#54524f", "#767471", "#9a9895", "#b8b7b4", "#d8d7d5", "#efeeec"]
+      },
+      "surface-sunken": {
+        "role": "neutral",
+        "displayName": "Sunken",
+        "canonical": "#eeeae2",
+        "tonalRamp": ["#171613", "#35332e", "#55524c", "#78746d", "#9b9892", "#bab7b2", "#d9d7d2", "#f0eeea"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#16211f",
+        "tonalRamp": ["#121716", "#2d3533", "#4b5553", "#6b7875", "#909b99", "#b0bab8", "#d1dad8", "#e9f0ef"]
+      },
+      "ink-muted": {
+        "role": "neutral",
+        "displayName": "Muted Ink",
+        "canonical": "#5a6863",
+        "tonalRamp": ["#111815", "#2c3532", "#4a5651", "#6a7873", "#8f9c97", "#afbab6", "#d1dad6", "#e9f1ee"]
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#dcd7cb",
+        "tonalRamp": ["#181611", "#35332c", "#565249", "#797469", "#9c988e", "#bab7af", "#dad7d0", "#f1eee8"]
+      },
+      "control-edge": {
+        "role": "neutral",
+        "displayName": "Control Edge",
+        "canonical": "#928d81",
+        "tonalRamp": ["#181611", "#36332b", "#565249", "#797469", "#9c988e", "#bbb7ae", "#dad7d0", "#f1eee8"]
+      },
+      "success": {
+        "role": "success",
+        "displayName": "Herb Green",
+        "canonical": "#1c6b45",
+        "tonalRamp": ["#001d0c", "#083d25", "#216040", "#3c855e", "#6ca885", "#92c5a6", "#b9e4c9", "#d4f9e2"]
+      },
+      "warning": {
+        "role": "warning",
+        "displayName": "Ochre",
+        "canonical": "#7a4a00",
+        "tonalRamp": ["#261000", "#4a2b00", "#714813", "#9a692d", "#bb8f5f", "#d6af86", "#f2d1af", "#ffe9cc"]
+      },
+      "danger": {
+        "role": "danger",
+        "displayName": "Sealing Wax",
+        "canonical": "#a3231d",
+        "tonalRamp": ["#350000", "#610d0a", "#912720", "#c24439", "#e17467", "#fa9a8d", "#ffbfb4", "#ffdad0"]
+      },
+      "info": {
+        "role": "info",
+        "displayName": "Slate Blue",
+        "canonical": "#12587e",
+        "tonalRamp": ["#00182a", "#0a3750", "#225879", "#3d7ba3", "#6b9fc2", "#91bedc", "#b8ddf7", "#d4f4ff"]
+      },
+      "highlight-yellow": {
+        "role": "accent",
+        "displayName": "Marker Yellow",
+        "canonical": "#ffe9a0",
+        "tonalRamp": ["#1e1500", "#3f3100", "#625112", "#87732c", "#a9985e", "#c6b786", "#e4d7ae", "#f9efcb"]
+      },
+      "highlight-green": {
+        "role": "accent",
+        "displayName": "Marker Green",
+        "canonical": "#c8ecc0",
+        "tonalRamp": ["#0c1a09", "#253920", "#405b3b", "#5f7f58", "#86a27f", "#a7c0a2", "#cadfc5", "#e3f5df"]
+      },
+      "highlight-blue": {
+        "role": "accent",
+        "displayName": "Marker Blue",
+        "canonical": "#cbe3fb",
+        "tonalRamp": ["#0d1720", "#273442", "#435566", "#62778c", "#889bad", "#a9baca", "#cbd9e7", "#e4f0fc"]
+      },
+      "highlight-pink": {
+        "role": "accent",
+        "displayName": "Marker Pink",
+        "canonical": "#ffd2e4",
+        "tonalRamp": ["#211017", "#432a35", "#684855", "#8e6778", "#b08d9b", "#cdaeba", "#eacfd9", "#fee7f0"]
+      }
+    },
+    "typographyMeta": {
+      "page-title": { "displayName": "Page title", "purpose": "One per screen, at the top, ink. 26px/600 with balanced wrapping." },
+      "section-title": { "displayName": "Section title", "purpose": "Card groups and settings sections, 19px/600, 24px above." },
+      "body": { "displayName": "UI body", "purpose": "Instructions and prose on UI pages, 16px/1.5, capped at 68ch." },
+      "label": { "displayName": "Label", "purpose": "Buttons, field labels, list-row primary text. 14px/600 sentence case." },
+      "meta": { "displayName": "Meta", "purpose": "Author, chapter count, timestamps, hints. 12px muted ink." },
+      "reading-body": { "displayName": "Reading body", "purpose": "The book itself. Literata 17px/1.7 at a 66ch measure; only place the serif is allowed." }
+    },
+    "shadows": [
+      { "name": "raise", "value": "0 1px 2px rgba(12, 28, 32, 0.06)", "purpose": "Resting chip, sticky bar top edge. Dark: 0 1px 2px rgba(0,0,0,0.4)." },
+      { "name": "pop", "value": "0 12px 32px -14px rgba(12, 28, 32, 0.3), 0 2px 6px -2px rgba(12, 28, 32, 0.12)", "purpose": "Menus and popovers anchored above content." },
+      { "name": "sheet", "value": "0 -14px 40px -18px rgba(6, 20, 24, 0.36)", "purpose": "Bottom sheet only, cast upward." }
+    ],
+    "motion": [
+      { "name": "ease-standard", "value": "cubic-bezier(0.2, 0, 0, 1)", "purpose": "Default easing for state transitions (colour, background, border)." },
+      { "name": "ease-out", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Entrances: sheets, panels." },
+      { "name": "dur-1", "value": "120ms", "purpose": "Hover and focus colour changes." },
+      { "name": "dur-2", "value": "180ms", "purpose": "Progress fill width, small layout shifts." },
+      { "name": "dur-3", "value": "240ms", "purpose": "Sheet and panel entrance. Nothing in the system is longer." }
+    ],
+    "breakpoints": [
+      { "name": "rail", "value": "900px", "purpose": "Bottom bar becomes an 88px left rail; --nav-h drops to 0." }
+    ],
+    "darkTheme": {
+      "note": "Dark mode is a second complete token set under @media (prefers-color-scheme: dark), not an inversion.",
+      "colors": {
+        "paper": "#0e1618",
+        "surface": "#162124",
+        "surface-sunken": "#0a1113",
+        "surface-raised": "#1c282b",
+        "ink": "#e9eeec",
+        "ink-muted": "#9aaba7",
+        "hairline": "#35494d",
+        "control-edge": "#5f767a",
+        "clinical-teal": "#66c2d2",
+        "teal-deep": "#8ad4e0",
+        "teal-wash": "#14333b",
+        "on-teal": "#04232a",
+        "selection": "#24454d",
+        "success": "#7ed3a3",
+        "success-wash": "#12291f",
+        "warning": "#f2c56b",
+        "warning-wash": "#2b2313",
+        "danger": "#ff9f97",
+        "danger-wash": "#311816",
+        "danger-solid": "#c94a42",
+        "danger-solid-hover": "#da6058",
+        "info": "#8ec8ea",
+        "info-wash": "#10252f",
+        "highlight-yellow": "rgba(242, 197, 107, 0.26)",
+        "highlight-green": "rgba(126, 211, 163, 0.24)",
+        "highlight-blue": "rgba(142, 200, 234, 0.26)",
+        "highlight-pink": "rgba(255, 163, 199, 0.24)"
+      }
+    },
+    "focus": {
+      "value": "outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px",
+      "purpose": "One ring for the whole product. Never the browser default, never red, never a shadow."
+    },
+    "touchTargets": {
+      "min": "44px",
+      "comfortable": "48px",
+      "navItem": "44px (56px in the wide-viewport rail)",
+      "note": "Chips are 36px unless they are filters on touch, then .chip-tap raises them to 44px."
+    }
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one action a screen exists for. Filled Clinical Teal, white text, 44px tall.",
+      "html": "<button class=\"ds-btn ds-btn-primary\">Import</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 16px; border: 1px solid transparent; border-radius: 10px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; font-weight: 600; line-height: 1.2; cursor: pointer; transition: background-color 120ms cubic-bezier(0.2,0,0,1), border-color 120ms cubic-bezier(0.2,0,0,1); } .ds-btn:focus-visible { outline: 2px solid var(--accent, #0f4c5c); outline-offset: 2px; } .ds-btn-primary { background: var(--accent, #0f4c5c); border-color: var(--accent, #0f4c5c); color: var(--accent-text, #ffffff); } .ds-btn-primary:hover { background: var(--accent-hover, #0b3d4a); border-color: var(--accent-hover, #0b3d4a); } .ds-btn-primary:active { background: var(--accent-hover, #0b3d4a); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "The alternative to the primary action: sheet fill, visible control edge, ink label.",
+      "html": "<button class=\"ds-btn ds-btn-secondary\">Settings</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 16px; border: 1px solid transparent; border-radius: 10px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; font-weight: 600; line-height: 1.2; cursor: pointer; transition: background-color 120ms cubic-bezier(0.2,0,0,1), border-color 120ms cubic-bezier(0.2,0,0,1); } .ds-btn:focus-visible { outline: 2px solid var(--accent, #0f4c5c); outline-offset: 2px; } .ds-btn-secondary { background: var(--surface, #fffdf9); border-color: var(--border-control, #928d81); color: var(--text, #16211f); } .ds-btn-secondary:hover { background: var(--surface-sunken, #eeeae2); }"
+    },
+    {
+      "name": "Ghost Toggle Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Low-emphasis toggle that owns a panel; turns into a teal wash pill while its panel is open.",
+      "html": "<button class=\"ds-btn ds-btn-ghost\" aria-expanded=\"true\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" width=\"18\" height=\"18\"><path d=\"M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1\"/><path d=\"M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1\"/></svg>Add from web</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 16px; border: 1px solid transparent; border-radius: 10px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; font-weight: 600; line-height: 1.2; cursor: pointer; transition: background-color 120ms cubic-bezier(0.2,0,0,1), color 120ms cubic-bezier(0.2,0,0,1); } .ds-btn:focus-visible { outline: 2px solid var(--accent, #0f4c5c); outline-offset: 2px; } .ds-btn svg { flex: none; } .ds-btn-ghost { background: transparent; color: var(--muted, #5a6863); } .ds-btn-ghost:hover { background: var(--surface-sunken, #eeeae2); color: var(--text, #16211f); } .ds-btn-ghost[aria-expanded='true'] { background: var(--accent-soft, #e3edee); color: var(--accent, #0f4c5c); }"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Destructive confirmation only. Sealing Wax red, near-white text, never used as a hover colour.",
+      "html": "<button class=\"ds-btn ds-btn-danger\">Delete book</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 16px; border: 1px solid transparent; border-radius: 10px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; font-weight: 600; line-height: 1.2; cursor: pointer; transition: background-color 120ms cubic-bezier(0.2,0,0,1); } .ds-btn:focus-visible { outline: 2px solid var(--accent, #0f4c5c); outline-offset: 2px; } .ds-btn-danger { background: var(--danger-solid, #a3231d); border-color: var(--danger-solid, #a3231d); color: var(--danger-solid-text, #fff8f6); } .ds-btn-danger:hover { background: var(--danger-solid-hover, #871d18); border-color: var(--danger-solid-hover, #871d18); }"
+    },
+    {
+      "name": "Field + Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Label wraps the control so the whole block is tappable. Focus shows a teal border and the global ring.",
+      "html": "<label class=\"ds-field\"><span class=\"ds-field-label\">Article address</span><input class=\"ds-input\" type=\"url\" value=\"https://example.org/review\" /><span class=\"ds-field-hint\">Paste the address of a page you can already open.</span></label>",
+      "css": ".ds-field { display: block; } .ds-field-label { display: block; margin-bottom: 8px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; font-weight: 600; line-height: 1.35; color: var(--text, #16211f); } .ds-field-hint { display: block; margin-top: 8px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; line-height: 1.35; color: var(--muted, #5a6863); } .ds-input { width: 100%; min-height: 44px; padding: 8px 12px; border: 1px solid var(--border-control, #928d81); border-radius: 10px; background: var(--surface, #fffdf9); color: var(--text, #16211f); font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 16px; line-height: 1.35; transition: border-color 120ms cubic-bezier(0.2,0,0,1); } .ds-input::placeholder { color: var(--muted, #5a6863); opacity: 1; } .ds-input:focus { border-color: var(--accent, #0f4c5c); outline: 2px solid var(--accent, #0f4c5c); outline-offset: 2px; }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "One step lighter than paper with a hairline edge. No shadow: a card sits in the page, it does not float.",
+      "html": "<div class=\"ds-card\"><h3 class=\"ds-card-title\">On-device voice models</h3><p class=\"ds-card-body\">Kokoro runs locally. Download once, then it works offline.</p></div>",
+      "css": ".ds-card { background: var(--surface, #fffdf9); border: 1px solid var(--border, #dcd7cb); border-radius: 14px; padding: 16px; } .ds-card-title { margin: 0 0 4px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 16px; font-weight: 600; line-height: 1.35; color: var(--text, #16211f); } .ds-card-body { margin: 0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; line-height: 1.35; color: var(--muted, #5a6863); }"
+    },
+    {
+      "name": "Warning Banner",
+      "kind": "custom",
+      "refersTo": "banner-warning",
+      "description": "In-flow status with an icon that carries the status colour. No left stripe; the wash plus the icon is the signal.",
+      "html": "<div class=\"ds-banner ds-banner-warning\" role=\"status\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" width=\"18\" height=\"18\"><path d=\"M12 3.8 2.7 19.4h18.6L12 3.8Z\"/><path d=\"M12 9.6v4.2\"/><path d=\"M12 16.6h.01\"/></svg><div><p class=\"ds-banner-title\">Looks scanned</p><p>This file has no text layer, so there is nothing to read or listen to.</p></div></div>",
+      "css": ".ds-banner { display: flex; gap: 12px; padding: 12px 16px; border: 1px solid var(--border, #dcd7cb); border-radius: 10px; background: var(--surface, #fffdf9); color: var(--text, #16211f); font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; line-height: 1.35; } .ds-banner p { margin: 0; } .ds-banner p + p { margin-top: 4px; } .ds-banner svg { flex: none; margin-top: 2px; } .ds-banner-title { font-weight: 600; } .ds-banner-warning { background: var(--warning-bg, #fbf0d4); border-color: var(--warning-border, #e6cd97); } .ds-banner-warning svg, .ds-banner-warning .ds-banner-title { color: var(--warning, #7a4a00); }"
+    },
+    {
+      "name": "Filter Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Selected state reads as held down (teal wash), not as a link.",
+      "html": "<button class=\"ds-chip\" aria-pressed=\"true\">Pharmacology</button> <button class=\"ds-chip\" aria-pressed=\"false\">Pathology</button>",
+      "css": ".ds-chip { display: inline-flex; align-items: center; gap: 4px; min-height: 36px; padding: 0 12px; border: 1px solid var(--border-control, #928d81); border-radius: 999px; background: var(--surface, #fffdf9); color: var(--text, #16211f); font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; font-weight: 500; line-height: 1; cursor: pointer; transition: background-color 120ms cubic-bezier(0.2,0,0,1), color 120ms cubic-bezier(0.2,0,0,1); } .ds-chip:hover { background: var(--surface-sunken, #eeeae2); } .ds-chip:focus-visible { outline: 2px solid var(--accent, #0f4c5c); outline-offset: 2px; } .ds-chip[aria-pressed='true'] { background: var(--accent-soft, #e3edee); border-color: var(--accent, #0f4c5c); color: var(--accent, #0f4c5c); font-weight: 600; }"
+    },
+    {
+      "name": "Progress",
+      "kind": "custom",
+      "refersTo": "progress",
+      "description": "4px teal track on Sunken, always paired with a numeric value in tabular figures.",
+      "html": "<div class=\"ds-progress\"><div class=\"ds-progress-track\" role=\"progressbar\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-valuenow=\"42\"><span style=\"width: 42%\"></span></div><span class=\"ds-progress-value\">42%</span></div>",
+      "css": ".ds-progress { display: flex; align-items: center; gap: 12px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; } .ds-progress-track { flex: 1 1 auto; max-width: 120px; height: 4px; border-radius: 999px; background: var(--surface-sunken, #eeeae2); overflow: hidden; } .ds-progress-track > span { display: block; height: 100%; border-radius: inherit; background: var(--accent, #0f4c5c); transition: width 180ms cubic-bezier(0.2,0,0,1); } .ds-progress-value { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted, #5a6863); }"
+    },
+    {
+      "name": "Book Row",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Library row: format badge, title, meta line, optional progress, delete icon. The row itself is the link.",
+      "html": "<ul class=\"ds-list\"><li class=\"ds-row\"><a class=\"ds-row-open\" href=\"#\"><span class=\"ds-row-top\"><span class=\"ds-badge\">EPUB</span><span class=\"ds-row-title\">Notes on Nursing</span></span><span class=\"ds-row-meta\">Florence Nightingale · 22 chapters · Not started</span></a><button class=\"ds-row-delete\" aria-label=\"Delete Notes on Nursing\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" width=\"18\" height=\"18\"><path d=\"M4 7h16\"/><path d=\"M9 7V5h6v2\"/><path d=\"M6 7l1 13h10l1-13\"/></svg></button></li></ul>",
+      "css": ".ds-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--border, #dcd7cb); } .ds-row { display: flex; align-items: center; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--border, #dcd7cb); font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; } .ds-row-open { flex: 1 1 auto; min-width: 0; display: grid; gap: 4px; color: inherit; text-decoration: none; } .ds-row-top { display: flex; align-items: center; gap: 8px; min-width: 0; } .ds-badge { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border: 1px solid var(--border, #dcd7cb); border-radius: 4px; background: var(--surface-sunken, #eeeae2); color: var(--muted, #5a6863); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; } .ds-row-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 600; color: var(--text, #16211f); } .ds-row-open:hover .ds-row-title { color: var(--accent, #0f4c5c); } .ds-row-meta { font-size: 12px; color: var(--muted, #5a6863); } .ds-row-delete { display: inline-flex; align-items: center; justify-content: center; width: 44px; min-width: 44px; height: 44px; border: 0; border-radius: 10px; background: transparent; color: var(--muted, #5a6863); cursor: pointer; } .ds-row-delete:hover { background: var(--danger-bg, #fbe8e5); color: var(--danger, #a3231d); } .ds-row-open:focus-visible, .ds-row-delete:focus-visible { outline: 2px solid var(--accent, #0f4c5c); outline-offset: 2px; }"
+    },
+    {
+      "name": "Bottom Navigation",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "Four labelled items, 22px line icons over 11px labels, active item in a teal wash pill. Becomes a left rail at 900px.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Main\"><a class=\"ds-nav-item ds-nav-item-active\" href=\"#\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" width=\"22\" height=\"22\"><path d=\"M12 6.6C9.9 5.2 7.3 4.6 4.6 4.6H3v13h1.6c2.7 0 5.3.6 7.4 2 2.1-1.4 4.7-2 7.4-2H21v-13h-1.6c-2.7 0-5.3.6-7.4 2Z\"/></svg><span>Library</span></a><a class=\"ds-nav-item\" href=\"#\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" width=\"22\" height=\"22\"><rect x=\"3\" y=\"5\" width=\"13\" height=\"14\" rx=\"2\"/><path d=\"M8 3h13v13\"/></svg><span>Review</span></a></nav>",
+      "css": ".ds-nav { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; height: 64px; padding: 0 8px; background: var(--surface, #fffdf9); border-top: 1px solid var(--border, #dcd7cb); } .ds-nav-item { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-height: 44px; margin: 4px 0; padding: 0 4px; border-radius: 10px; color: var(--muted, #5a6863); font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 11px; font-weight: 600; line-height: 1.1; text-decoration: none; transition: background-color 120ms cubic-bezier(0.2,0,0,1), color 120ms cubic-bezier(0.2,0,0,1); } .ds-nav-item svg { display: block; flex: none; } .ds-nav-item:hover { color: var(--text, #16211f); } .ds-nav-item-active { background: var(--accent-soft, #e3edee); color: var(--accent, #0f4c5c); } .ds-nav-item:focus-visible { outline: 2px solid var(--accent, #0f4c5c); outline-offset: 2px; }"
+    },
+    {
+      "name": "Empty State",
+      "kind": "custom",
+      "refersTo": "card",
+      "description": "Borderless teaching block: teal mark, title, one paragraph, numbered steps, actions. Add .card only when a bounded block is wanted.",
+      "html": "<div class=\"ds-empty\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" width=\"48\" height=\"48\"><path d=\"M12 6.6C9.9 5.2 7.3 4.6 4.6 4.6H3v13h1.6c2.7 0 5.3.6 7.4 2 2.1-1.4 4.7-2 7.4-2H21v-13h-1.6c-2.7 0-5.3.6-7.4 2Z\"/></svg><h2>Your shelf is empty</h2><p>PharmaReader reads the books you already own. Import a PDF or EPUB and it stays on this device.</p><div class=\"ds-empty-actions\"><button class=\"ds-btn ds-btn-primary\">Import a file</button></div></div>",
+      "css": ".ds-empty { display: grid; justify-items: start; gap: 12px; max-width: 36rem; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; } .ds-empty svg { color: var(--accent, #0f4c5c); } .ds-empty h2 { margin: 0; font-size: 19px; font-weight: 600; line-height: 1.2; color: var(--text, #16211f); } .ds-empty p { margin: 0; max-width: 68ch; font-size: 14px; line-height: 1.35; color: var(--muted, #5a6863); } .ds-empty-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; } .ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 16px; border: 1px solid transparent; border-radius: 10px; font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer; } .ds-btn-primary { background: var(--accent, #0f4c5c); border-color: var(--accent, #0f4c5c); color: var(--accent-text, #ffffff); } .ds-btn-primary:hover { background: var(--accent-hover, #0b3d4a); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Reading Desk",
+    "overview": "PharmaReader is a desk, not an app store product. Paper underneath, ink on top, one lamp. A resident opens it at 11pm with a chapter they have already read twice and a viva on Thursday; nothing on screen competes with the paragraph in front of them. The surface is warm paper, text is near-black ink with a green cast, and the only saturated colour on most screens is the teal of an action the reader actually chose.\n\nThe system is two-faced in one body. UI chrome is the platform's own sans, because a study tool shouldn't cost a font download to say \"Import\". Long-form text is Literata, self-hosted so the reader works with the network off. The two never mix inside one sentence; the boundary is exactly the boundary between this app and the book.\n\nDepth is nearly absent. Paper does not float. Shadows appear only where a thing genuinely leaves the page, and hierarchy comes from size, weight, colour temperature and hairline rules. The mood is quiet clinical competence: the tool of someone precise who does not need to impress you.",
+    "keyCharacteristics": [
+      "Warm paper ground, ink text, one teal voice per screen.",
+      "Flat surfaces; hairline rules instead of shadows; depth reserved for sheets.",
+      "Sans for chrome, Literata for text — never both in one block.",
+      "4px spacing rhythm, 44px minimum touch target, generous tap padding on phones.",
+      "Complete light and dark themes; both are first-class, not an inverted afterthought.",
+      "Motion is 120–240ms, eased, and always skippable via prefers-reduced-motion."
+    ],
+    "rules": [
+      { "name": "The One Voice Rule", "body": "Teal is the reader's voice, not decoration. One teal element per screen region: the primary action, or the active nav item, or the current selection. If two things are teal and only one can be pressed, the other is wrong. Headings are ink, never teal.", "section": "colors" },
+      { "name": "The Paper Not Glass Rule", "body": "Surfaces are opaque paper. No translucency, no backdrop blur, no gradients behind text. A surface earns its edge from a one-step lighter fill and a hairline, not from a glow.", "section": "colors" },
+      { "name": "The Ink On Tint Rule", "body": "Semantic colour is applied as text/icon on a wash, never as a wash on a wash. A warning banner is warning-coloured text on a warning wash; it is never a saturated amber slab with white text.", "section": "colors" },
+      { "name": "The Native Chrome Rule", "body": "UI text is the platform's sans at a fixed rem scale. No web font is loaded to render \"Import\". If a glyph is missing, the platform's fallback is correct by definition.", "section": "typography" },
+      { "name": "The Two Voices Rule", "body": "Literata appears only inside reading content. It never appears in a button, label, banner, nav item, or heading. A serif button is a costume.", "section": "typography" },
+      { "name": "The Measure Rule", "body": "Reading text stops at 66ch, UI prose at 68ch, regardless of how wide the window is. On a 1280px screen the column is centred and the margin is the point.", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "Shadows are for things that float over content, not for things that sit in it. If a shadow is doing the work a hairline could do, remove the shadow.", "section": "elevation" },
+      { "name": "The No Glass Rule", "body": "No backdrop-filter, no semi-transparent surfaces, no frosted panels. The one translucency in the system is the sheet's scrim, and that is a scrim, not a surface.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep one teal action per screen region and let headings stay ink (One Voice Rule).",
+      "Do reach for a hairline or a one-step tonal shift before reaching for a shadow.",
+      "Do give every tappable thing 44px of height and, on touch, 48px for the primary.",
+      "Do use rem for type and spacing so 200% text zoom reflows instead of clipping.",
+      "Do put a leading 18px icon in ghost buttons that toggle a panel; bare ghost text reads as a link.",
+      "Do pair a progress bar with its numeric value, and show no bar at all when a book is unstarted.",
+      "Do write empty states that teach the next action and name the constraint.",
+      "Do check both themes at 390px before calling a screen done; dark is not an afterthought.",
+      "Do respect prefers-reduced-motion — the global block already collapses all animation to 0.01ms."
+    ],
+    "donts": [
+      "Don't use teal for headings, decoration, or two competing actions on one screen.",
+      "Don't add a coloured border-left stripe to cards, callouts, or banners — status is the fill plus the icon.",
+      "Don't use glass, blur, translucency, or gradient text anywhere.",
+      "Don't put a kicker/eyebrow line above a heading; the heading is enough.",
+      "Don't use clamp() type scales for product UI; the scale is fixed rem steps (11, 12, 14, 16, 17, 19, 22, 26, 32).",
+      "Don't use Literata for UI chrome, or a display face anywhere (Two Voices Rule).",
+      "Don't stack cards inside cards, or give a card a shadow to separate it from paper.",
+      "Don't use emoji, icon fonts, or filled icon styles as interface icons.",
+      "Don't animate longer than 240ms or bounce; a page turn is the reference motion.",
+      "Don't let body text run wider than 68ch just because the window is wide."
+    ]
+  }
+}
