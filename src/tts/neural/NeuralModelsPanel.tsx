@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { setSetting, useSetting } from '../../core/settings';
 import type { TtsEngine, TtsVoice } from '../../core/types';
-import { measureRtf, rtfSettingKey, rtfVerdict } from './benchmark';
+import { measureRtf, rtfSettingKey } from './benchmark';
 import { copyText } from './clipboard';
 import {
   DEFAULT_KOKORO_VOICE,
@@ -42,7 +42,9 @@ interface EngineCardProps {
   model: ModelId;
   engine: TtsEngine;
   title: string;
-  sizeLabel: string;
+  /** What this model is for, next to its name: "best quality", "faster". */
+  qualifier: string;
+  sizeMb: number;
   state: ModelState;
   voices: TtsVoice[];
   voiceId: string;
@@ -59,89 +61,100 @@ interface EngineCardProps {
 function EngineCard(props: EngineCardProps) {
   const { state, engine } = props;
   const busy = state.kind === 'downloading' || props.measuring;
-  const status = describeState(state);
+  const chip = chipFor(state);
+  const speed = speedLine(props.rtf);
 
   return (
     <section className={styles.card} aria-labelledby={`tts-${props.model}-title`}>
-      <header className={styles.cardHeader}>
-        <h3 id={`tts-${props.model}-title`} className={styles.cardTitle}>
+      <header className={styles.head}>
+        <h3 id={`tts-${props.model}-title`} className={styles.title}>
           {props.title}
         </h3>
-        <span className={styles.size}>{props.sizeLabel}</span>
+        <span className={styles.qualifier}>· {props.qualifier}</span>
+        <div className={styles.actions}>
+          {state.kind !== 'ready' && (
+            <button type="button" className="btn btn-primary" onClick={props.onDownload} disabled={busy || state.kind === 'loading'}>
+              Download
+            </button>
+          )}
+          {/* Delete only when there is something on disk (or a failed attempt
+              left a partial cache behind). */}
+          {(state.kind === 'ready' || state.kind === 'error') && (
+            <button type="button" className="btn btn-ghost" onClick={props.onDelete} disabled={busy}>
+              Delete
+            </button>
+          )}
+        </div>
       </header>
 
-      <p className={styles.status} role="status" aria-live="polite">
-        {status}
-      </p>
+      <div className={styles.meta}>
+        <span className={chip.tone ? `status-chip ${chip.tone}` : 'status-chip'} role="status" aria-live="polite">
+          <span className="status-dot" aria-hidden="true" />
+          {chip.label}
+        </span>
+        <span className={styles.size}>
+          ~{props.sizeMb} MB · use Wi-Fi
+        </span>
+      </div>
 
       {state.kind === 'downloading' && (
-        <progress
-          className={styles.progress}
-          value={Math.round(state.fraction * 100)}
-          max={100}
-          aria-label={`${props.title} download progress`}
-        />
+        <div className={styles.download}>
+          <div className="progress" aria-hidden="true">
+            <span style={{ width: `${Math.round(state.fraction * 100)}%` }} />
+          </div>
+          <p className={styles.downloadText} role="status" aria-live="polite">
+            {Math.round(state.fraction * props.sizeMb)} of {props.sizeMb} MB
+          </p>
+        </div>
       )}
 
       {state.kind === 'error' && <ErrorDetails info={state.info} />}
 
-      <div className={styles.actions}>
-        <button
-          type="button"
-          className={styles.primary}
-          onClick={props.onDownload}
-          disabled={busy || state.kind === 'ready'}
-        >
-          Download
-        </button>
-        <button
-          type="button"
-          className={styles.secondary}
-          onClick={props.onDelete}
-          disabled={busy || state.kind === 'absent'}
-        >
-          Delete
-        </button>
-      </div>
-
       {props.children}
 
-      <label className={styles.field}>
-        <span>Voice</span>
-        <select
-          value={props.voiceId}
-          onChange={(event) => props.onVoiceChange(event.target.value)}
-          disabled={props.voices.length === 0}
-        >
-          {props.voices.length === 0 && <option value="">Download or load the model to list voices</option>}
-          {props.voices.map((voice) => (
-            <option key={voice.id} value={voice.id}>
-              {voice.name} ({voice.lang})
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <button
-        type="button"
-        className={styles.secondary}
-        onClick={props.onMeasure}
-        // Measuring synthesises with the real model, so it must already be here;
-        // otherwise the click would silently start a 90–150 MB download.
-        disabled={busy || state.kind !== 'ready'}
-      >
-        {props.measuring ? 'Measuring…' : 'Measure speed'}
-      </button>
-
-      {props.measureError ? (
-        <p className={styles.error}>{props.measureError}</p>
-      ) : (
-        props.rtf > 0 && (
-          <p className={styles.rtf}>
-            Real-time factor {props.rtf.toFixed(2)} · {rtfVerdict(props.rtf)}
-          </p>
-        )
+      {/* A voice list belongs to a model that is here; before that it is a
+          disabled control explaining nothing. */}
+      {props.voices.length > 0 && (
+        <label className={styles.field}>
+          <span className="field-label">Voice</span>
+          <select
+            className="input"
+            value={props.voiceId}
+            onChange={(event) => props.onVoiceChange(event.target.value)}
+          >
+            {props.voices.map((voice) => (
+              <option key={voice.id} value={voice.id}>
+                {voice.name} ({voice.lang})
+              </option>
+            ))}
+          </select>
+        </label>
       )}
+
+      <div className={styles.speed}>
+        <p className={styles.speedResult}>
+          {props.measureError ? (
+            <span className={styles.measureError}>{props.measureError}</span>
+          ) : speed.value ? (
+            <>
+              <span className={styles.speedValue}>{speed.value}</span>{' '}
+              <span className={speed.ok ? styles.speedOk : styles.speedSlow}>{speed.verdict}</span>
+            </>
+          ) : (
+            <span>Speed not measured yet</span>
+          )}
+        </p>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={props.onMeasure}
+          // Measuring synthesises with the real model, so it must already be here;
+          // otherwise the click would silently start a 90–150 MB download.
+          disabled={busy || state.kind !== 'ready'}
+        >
+          {props.measuring ? 'Measuring…' : 'Measure speed'}
+        </button>
+      </div>
 
       <p className={styles.hint}>
         {engine.capabilities.prerender
@@ -152,19 +165,28 @@ function EngineCard(props: EngineCardProps) {
   );
 }
 
-function describeState(state: ModelState): string {
+/** The status chip: a word, a tone, and nothing the user has to interpret. */
+function chipFor(state: ModelState): { label: string; tone: string } {
   switch (state.kind) {
     case 'loading':
-      return 'Checking download…';
+      return { label: 'Checking…', tone: 'is-busy' };
     case 'absent':
-      return 'Not downloaded';
+      return { label: 'Not downloaded', tone: '' };
     case 'downloading':
-      return `Downloading ${Math.round(state.fraction * 100)}%`;
+      return { label: `Downloading ${Math.round(state.fraction * 100)}%`, tone: 'is-busy' };
     case 'ready':
-      return 'Ready';
+      return { label: 'Ready', tone: 'is-ready' };
     case 'error':
-      return `Failed: ${state.info.message}`;
+      return { label: 'Error', tone: 'is-error' };
   }
+}
+
+/** How this engine's measured speed compares with playback. */
+function speedLine(rtf: number): { value: string; verdict: string; ok: boolean } {
+  if (!Number.isFinite(rtf) || rtf <= 0) return { value: '', verdict: '', ok: false };
+  return rtf < 1
+    ? { value: `${rtf.toFixed(2)}× real-time`, verdict: '✓ faster than playback', ok: true }
+    : { value: `${rtf.toFixed(2)}× real-time`, verdict: 'slower than playback — save the chapter ahead', ok: false };
 }
 
 /**
@@ -188,16 +210,18 @@ function ErrorDetails({ info }: { info: NeuralErrorInfo }) {
   }, [info.details]);
 
   return (
-    <div className={styles.errorBlock} ref={blockRef}>
-      <p className={styles.errorStage}>Failed while {info.stage}</p>
-      <p className={styles.error}>{info.message}</p>
-      <details className={styles.errorDetails} open={copyState === 'failed'}>
-        <summary>Technical details</summary>
-        <pre ref={detailsRef}>{info.details}</pre>
-      </details>
-      <button type="button" className={`${styles.secondary} ${styles.copyError}`} onClick={copy}>
-        {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy blocked — text selected, press and hold to copy' : 'Copy error details'}
-      </button>
+    <div className="banner banner-error" role="alert">
+      <div className={styles.errorBlock} ref={blockRef}>
+        <p className={styles.errorStage}>Failed while {info.stage}</p>
+        <p className={styles.errorMessage}>{info.message}</p>
+        <details className={styles.errorDetails} open={copyState === 'failed'}>
+          <summary>Technical details</summary>
+          <pre ref={detailsRef}>{info.details}</pre>
+        </details>
+        <button type="button" className={`btn btn-ghost ${styles.copyError}`} onClick={copy}>
+          {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy blocked — text selected, press and hold to copy' : 'Copy error details'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -214,8 +238,6 @@ function selectDetails(block: HTMLDivElement | null, pre: HTMLPreElement | null)
   selection?.removeAllRanges();
   selection?.addRange(range);
 }
-
-/** Folds the DOM selection helpers away from the render path. */
 
 export default function NeuralModelsPanel() {
   const [pocketState, setPocketState] = useState<ModelState>({ kind: 'loading' });
@@ -335,7 +357,8 @@ export default function NeuralModelsPanel() {
         model="pocket"
         engine={pocketEngine}
         title="Pocket TTS"
-        sizeLabel={`~${POCKET_SIZE_MB} MB · INT8`}
+        qualifier="faster"
+        sizeMb={POCKET_SIZE_MB}
         state={pocketState}
         voices={pocketVoices}
         voiceId={pocketVoice}
@@ -360,7 +383,8 @@ export default function NeuralModelsPanel() {
           model="kokoro"
           engine={kokoroEngine}
           title="Kokoro-82M"
-          sizeLabel={`~${kokoroSizeMb(dtype)} MB · ${dtype}`}
+          qualifier="best quality"
+          sizeMb={kokoroSizeMb(dtype)}
           state={kokoroState}
           voices={kokoroVoices}
           voiceId={kokoroVoice}
@@ -372,23 +396,28 @@ export default function NeuralModelsPanel() {
           rtf={kokoroRtf}
           measureError={kokoroError}
         >
-          <label className={styles.field}>
-            <span>Precision</span>
-            <select
-              value={dtype}
-              onChange={(event) => void setSetting(KOKORO_DTYPE_SETTING, event.target.value as KokoroDtype)}
-            >
-              {(Object.keys(DTYPE_LABELS) as KokoroDtype[]).map((option) => (
-                <option key={option} value={option}>
-                  {DTYPE_LABELS[option]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <p className={styles.hint}>
-            {gpuHint}. Changing precision takes effect on the next download or reload. All 28 Kokoro voices are
-            English (af_* and am_* US, bf_* and bm_* UK).
-          </p>
+          {/* A download-size decision, not a daily one: it stays folded away. */}
+          <details className={styles.disclosure}>
+            <summary>Precision</summary>
+            <div className={styles.disclosureBody}>
+              <select
+                className="input"
+                aria-label="Precision"
+                value={dtype}
+                onChange={(event) => void setSetting(KOKORO_DTYPE_SETTING, event.target.value as KokoroDtype)}
+              >
+                {(Object.keys(DTYPE_LABELS) as KokoroDtype[]).map((option) => (
+                  <option key={option} value={option}>
+                    {DTYPE_LABELS[option]}
+                  </option>
+                ))}
+              </select>
+              <p className={styles.hint}>
+                {gpuHint}. Changing precision takes effect on the next download or reload. All 28 Kokoro voices are
+                English (af_* and am_* US, bf_* and bm_* UK).
+              </p>
+            </div>
+          </details>
         </EngineCard>
       )}
 
@@ -410,4 +439,3 @@ async function loadVoices(engine: TtsEngine, setVoices: (voices: TtsVoice[]) => 
 function defaultDtype(): KokoroDtype {
   return typeof navigator !== 'undefined' && 'gpu' in navigator ? 'fp32' : 'q8';
 }
-

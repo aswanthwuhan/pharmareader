@@ -106,19 +106,23 @@ export default function App() {
         </Routes>
       </main>
 
-      <nav className="app-nav" aria-label="Main">
-        {NAV.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.end}
-            className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
-          >
-            <NavIcon name={item.icon} />
-            <span className="nav-label">{item.label}</span>
-          </NavLink>
-        ))}
-      </nav>
+      {/* Reading owns the whole screen: the reader's app bar is the way back, and
+          its player sheet sits where the tab bar would be. */}
+      {reading ? null : (
+        <nav className="app-nav" aria-label="Main">
+          {NAV.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
+            >
+              <NavIcon name={item.icon} />
+              <span className="nav-label">{item.label}</span>
+            </NavLink>
+          ))}
+        </nav>
+      )}
     </div>
   );
 }

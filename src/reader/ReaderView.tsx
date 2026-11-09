@@ -54,8 +54,23 @@ const DEFAULT_FONT = 18;
 const FONT_MIN = 14;
 const FONT_MAX = 32;
 const LINE_HEIGHTS = [1.5, 1.7, 1.9];
+const LINE_LABELS = ['Tight', 'Normal', 'Relaxed'];
 const SAVE_POS_MS = 700;
 const RATE_RESTART_MS = 350;
+
+/**
+ * What the player calls the voice in her ear. Engine ids and class names mean
+ * nothing to a reader, and "System voices · fallback" reads like an error she
+ * has to fix before she can listen — so a fallback is simply the phone voice,
+ * told apart by its dot and fixed (if she wants) in Settings.
+ */
+function engineName(info: EngineInfo | null): string {
+  if (!info) return 'Resolving voice…';
+  if (!info.preferred || info.engine.id === 'system') return 'Phone voice';
+  if (info.engine.id === 'kokoro') return 'Kokoro';
+  if (info.engine.id === 'pocket') return 'Pocket TTS';
+  return 'Phone voice';
+}
 
 /**
  * Reading position lives in settings, not in the book record: a book carries
@@ -87,7 +102,7 @@ export default function ReaderView() {
   const [topicIds, setTopicIds] = useState<string[]>([]);
 
   const fontSize = useSetting<number>(FONT_KEY, DEFAULT_FONT);
-  const lineHeight = useSetting<number>(LINE_KEY, LINE_HEIGHTS[0] ?? 1.5);
+  const lineHeight = useSetting<number>(LINE_KEY, 1.7); // DESIGN.md reading rhythm; 1.5 felt cramped in Literata
   const rate = useSetting<number>(RATE_KEY, 1);
   const voiceId = useSetting<string>(VOICE_KEY, '');
   const engineChoice = useSetting<string>(ENGINE_SETTING, 'auto');
@@ -95,10 +110,10 @@ export default function ReaderView() {
   const [cursor, setCursor] = useState<Pos | null>(null);
   const [mode, setMode] = useState<'text' | 'page'>('text');
   const [pdfPage, setPdfPage] = useState(1);
-  const [drawer, setDrawer] = useState<'none' | 'toc' | 'notes'>('none');
+  const [drawer, setDrawer] = useState<'none' | 'toc' | 'notes' | 'topics'>('none');
+  const [typeOpen, setTypeOpen] = useState(false);
   const [selection, setSelection] = useState<Picked | null>(null);
   const [aiText, setAiText] = useState<string | null>(null);
-  const [topicOpen, setTopicOpen] = useState(false);
   const [playState, setPlayState] = useState<PlayState>('idle');
   const [engineInfo, setEngineInfo] = useState<EngineInfo | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -426,12 +441,6 @@ export default function ReaderView() {
     void setSetting(FONT_KEY, next);
   }
 
-  function cycleLineHeight(): void {
-    const current = LINE_HEIGHTS.indexOf(lineHeight);
-    const next = LINE_HEIGHTS[(current + 1) % LINE_HEIGHTS.length] ?? LINE_HEIGHTS[0] ?? 1.5;
-    void setSetting(LINE_KEY, next);
-  }
-
   async function preRender(): Promise<void> {
     if (!index || !cursor) return;
     const items = chapterItems(cursor.chapterIndex);
@@ -608,18 +617,18 @@ export default function ReaderView() {
   // -- sheets: Escape + focus ----------------------------------------------
 
   useEffect(() => {
-    const open = drawer !== 'none' || topicOpen || aiText !== null;
+    const open = drawer !== 'none' || typeOpen || aiText !== null;
     if (!open) return;
     sheetBody.current?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       if (aiText !== null) setAiText(null);
-      else if (topicOpen) setTopicOpen(false);
+      else if (typeOpen) setTypeOpen(false);
       else setDrawer('none');
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [drawer, topicOpen, aiText]);
+  }, [drawer, typeOpen, aiText]);
 
   // -- unmount / app hidden ------------------------------------------------
 
@@ -667,62 +676,53 @@ export default function ReaderView() {
 
   return (
     <section className="page rd-page">
-      <header className="rd-head">
-        <div className="rd-head-row">
-          <Link to="/" className="btn btn-ghost btn-icon" aria-label="Back to library">
-            <Glyph>{icons.back}</Glyph>
-          </Link>
-          <h1 className="rd-title" title={book.title}>
-            {book.title}
-          </h1>
-          <button type="button" className="btn btn-secondary rd-head-action" onClick={() => setDrawer('toc')}>
-            <Glyph>{icons.chapters}</Glyph>
-            Chapters
-          </button>
-        </div>
-      </header>
-
-      <div className="rd-tools">
-        <button
-          type="button"
-          className="btn btn-ghost btn-icon"
-          aria-label="Smaller text"
-          onClick={() => changeFont(-1)}
-        >
-          <Glyph>{icons.textSmall}</Glyph>
-        </button>
-        <button
-          type="button"
-          className="btn btn-ghost btn-icon"
-          aria-label="Larger text"
-          onClick={() => changeFont(1)}
-        >
-          <Glyph>{icons.textLarge}</Glyph>
-        </button>
-        <button
-          type="button"
-          className="btn btn-ghost rd-tool"
-          onClick={cycleLineHeight}
-          aria-label="Change line spacing"
-        >
-          <Glyph>{icons.spacing}</Glyph>
-          Spacing
-        </button>
+      <header className="rd-bar">
+        <Link to="/" className="rd-bar-btn" aria-label="Back to library">
+          <Glyph>{icons.back}</Glyph>
+        </Link>
+        <h1 className="rd-bar-title" title={book.title}>
+          {book.title}
+        </h1>
         {isPdf ? (
-          <button
-            type="button"
-            className="btn btn-ghost btn-icon"
-            onClick={() => setMode(showPage ? 'text' : 'page')}
-            aria-label={showPage ? 'Text view' : 'Page view'}
-            title={showPage ? 'Text view' : 'Page view'}
-          >
-            <Glyph>{icons.page}</Glyph>
-          </button>
+          <div className="rd-seg" role="group" aria-label="View mode">
+            <button
+              type="button"
+              className="rd-seg-btn"
+              aria-pressed={!showPage}
+              onClick={() => setMode('text')}
+            >
+              Text
+            </button>
+            <button type="button" className="rd-seg-btn" aria-pressed={showPage} onClick={() => setMode('page')}>
+              Page
+            </button>
+          </div>
         ) : null}
-        <button type="button" className="btn btn-ghost rd-tool" onClick={() => setTopicOpen(true)}>
-          Topics{topicIds.length ? ` (${topicIds.length})` : ''}
+        <button
+          type="button"
+          className="rd-bar-btn"
+          aria-label="Contents"
+          aria-expanded={drawer !== 'none'}
+          onClick={() => {
+            setTypeOpen(false);
+            setDrawer(drawer === 'none' ? 'toc' : 'none');
+          }}
+        >
+          <Glyph>{icons.chapters}</Glyph>
         </button>
-      </div>
+        <button
+          type="button"
+          className="rd-bar-text"
+          aria-label="Text size and spacing"
+          aria-expanded={typeOpen}
+          onClick={() => {
+            setDrawer('none');
+            setTypeOpen(!typeOpen);
+          }}
+        >
+          Aa
+        </button>
+      </header>
 
       <ModelStatusBanner context="reader" />
 
@@ -752,6 +752,7 @@ export default function ReaderView() {
         <ReflowView
           key={chapter.id}
           chapter={chapter}
+          eyebrow={`Chapter ${chapterIndex + 1} of ${index.chapters.length}`}
           sentences={index.chapters[chapterIndex] ?? []}
           readingId={readingId}
           highlights={highlights}
@@ -796,12 +797,14 @@ export default function ReaderView() {
 
       <PlayerBar
         state={playState}
-        engineLabel={engineInfo?.engine.label ?? 'Resolving voice…'}
-        fallback={engineInfo ? !engineInfo.preferred : false}
+        engineName={engineName(engineInfo)}
+        fallback={Boolean(engineInfo && !engineInfo.preferred)}
         rate={rate}
         canPrerender={Boolean(engineInfo?.engine.capabilities.prerender)}
         progress={progress}
         cached={Boolean(cachedChapter && cachedChapter === chapter?.id)}
+        sentenceNumber={reading ? reading.index + 1 : 0}
+        sentenceTotal={index.chapters[chapterIndex]?.length ?? 0}
         onToggle={togglePlay}
         onStop={stopPlayback}
         onPrev={() => step(-1)}
@@ -849,26 +852,64 @@ export default function ReaderView() {
         </div>
       ) : null}
 
-      {topicOpen ? (
+      {typeOpen ? (
         <div
           className="rd-sheet"
           role="dialog"
           aria-modal="true"
-          aria-label="Book topics"
+          aria-label="Text size and spacing"
           onClick={(event) => {
-            if (event.target === event.currentTarget) setTopicOpen(false);
+            if (event.target === event.currentTarget) setTypeOpen(false);
           }}
         >
-          <div className="rd-sheet-body sheet" ref={sheetBody} tabIndex={-1}>
-            <TopicPicker
-              label="Topics for this book"
-              value={topicIds}
-              onChange={(ids) => {
-                setTopicIds(ids);
-                void db.books.update(book.id, { topicIds: ids });
-              }}
-            />
-            <button type="button" className="btn btn-primary rd-sheet-done" onClick={() => setTopicOpen(false)}>
+          <div className="rd-sheet-body sheet rd-type" ref={sheetBody} tabIndex={-1}>
+            <div className="rd-type-row">
+              <span className="field-label" id="rd-size-label">
+                Text size
+              </span>
+              <div className="rd-stepper" role="group" aria-labelledby="rd-size-label">
+                <button
+                  type="button"
+                  className="rd-icon-btn"
+                  aria-label="Smaller text"
+                  disabled={fontSize <= FONT_MIN}
+                  onClick={() => changeFont(-1)}
+                >
+                  <Glyph>{icons.textSmall}</Glyph>
+                </button>
+                <output className="rd-type-value">{Math.round(fontSize)}px</output>
+                <button
+                  type="button"
+                  className="rd-icon-btn"
+                  aria-label="Larger text"
+                  disabled={fontSize >= FONT_MAX}
+                  onClick={() => changeFont(1)}
+                >
+                  <Glyph>{icons.textLarge}</Glyph>
+                </button>
+              </div>
+            </div>
+
+            <div className="rd-type-row">
+              <span className="field-label" id="rd-spacing-label">
+                Line spacing
+              </span>
+              <div className="rd-seg rd-seg-wide" role="group" aria-labelledby="rd-spacing-label">
+                {LINE_HEIGHTS.map((value, i) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className="rd-seg-btn"
+                    aria-pressed={Math.abs(lineHeight - value) < 0.01}
+                    onClick={() => void setSetting(LINE_KEY, value)}
+                  >
+                    {LINE_LABELS[i]}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button type="button" className="btn btn-primary btn-block" onClick={() => setTypeOpen(false)}>
               Done
             </button>
           </div>
@@ -880,7 +921,7 @@ export default function ReaderView() {
           className="rd-sheet"
           role="dialog"
           aria-modal="true"
-          aria-label="Chapters and notes"
+          aria-label="Chapters, notes and topics"
           onClick={(event) => {
             if (event.target === event.currentTarget) setDrawer('none');
           }}
@@ -907,6 +948,15 @@ export default function ReaderView() {
               </button>
               <button
                 type="button"
+                role="tab"
+                aria-selected={drawer === 'topics'}
+                className={drawer === 'topics' ? 'rd-tab active' : 'rd-tab'}
+                onClick={() => setDrawer('topics')}
+              >
+                Topics{topicIds.length ? ` (${topicIds.length})` : ''}
+              </button>
+              <button
+                type="button"
                 className="btn btn-ghost btn-icon rd-tab-close"
                 aria-label="Close"
                 onClick={() => setDrawer('none')}
@@ -928,8 +978,22 @@ export default function ReaderView() {
                   </li>
                 ))}
               </ol>
-            ) : (
+            ) : drawer === 'notes' ? (
               <HighlightList bookId={book.id} onJump={jumpTo} />
+            ) : (
+              <>
+                <TopicPicker
+                  label="Topics for this book"
+                  value={topicIds}
+                  onChange={(ids) => {
+                    setTopicIds(ids);
+                    void db.books.update(book.id, { topicIds: ids });
+                  }}
+                />
+                <button type="button" className="btn btn-primary btn-block" onClick={() => setDrawer('none')}>
+                  Done
+                </button>
+              </>
             )}
           </div>
         </div>

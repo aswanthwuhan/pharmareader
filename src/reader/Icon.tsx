@@ -41,6 +41,14 @@ export const icons = {
       <path d="M17.5 6.5 6.5 17.5" />
     </>
   ),
+  /** More options: the same three dots everywhere, filled so they read at 16px. */
+  more: (
+    <>
+      <circle cx="6" cy="12" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="18" cy="12" r="1.3" fill="currentColor" stroke="none" />
+    </>
+  ),
   alert: (
     <>
       <circle cx="12" cy="12" r="8.5" />

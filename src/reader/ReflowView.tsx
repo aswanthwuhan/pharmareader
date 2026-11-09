@@ -14,6 +14,8 @@ import { windowRange, type FlatSentence } from './sentences';
 
 interface Props {
   chapter: Chapter;
+  /** Where this chapter sits in the book: the quiet line above its title. */
+  eyebrow: string;
   sentences: FlatSentence[];
   readingId: string | null;
   highlights: Map<string, Highlight>;
@@ -35,6 +37,7 @@ const GROW_AHEAD = 20;
 
 export default function ReflowView({
   chapter,
+  eyebrow,
   sentences,
   readingId,
   highlights,
@@ -226,6 +229,7 @@ export default function ReflowView({
       onTouchEnd={handleSelection}
       onContextMenu={(event) => event.preventDefault()}
     >
+      <p className="rd-eyebrow">{eyebrow}</p>
       <h2 className="rd-chapter-title">{chapter.title}</h2>
       {before ? (
         <button
