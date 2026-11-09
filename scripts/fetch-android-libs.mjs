@@ -6,6 +6,9 @@ const dir = new URL('../android/app/libs/', import.meta.url);
 const libs = [
   ['sherpa-onnx-1.13.8.aar', 'https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-1.13.8.aar', '633c24321e06b1fe79feafa03ea16cbc0f8a286641e2da3559bac91bdb13bd96'],
   ['commons-compress-1.26.2.jar', 'https://repo1.maven.org/maven2/org/apache/commons/commons-compress/1.26.2/commons-compress-1.26.2.jar', '9168a03141d8fc7eda21a2360d83cc0412bcbb1d6204d992bd48c2573cb3c6b8'],
+  // commons-compress' bzip2/tar code needs these at runtime; a vendored jar brings no transitive deps (issue #1).
+  ['commons-io-2.16.1.jar', 'https://repo1.maven.org/maven2/commons-io/commons-io/2.16.1/commons-io-2.16.1.jar', 'f41f7baacd716896447ace9758621f62c1c6b0a91d89acee488da26fc477c84f'],
+  ['commons-lang3-3.14.0.jar', 'https://repo1.maven.org/maven2/org/apache/commons/commons-lang3/3.14.0/commons-lang3-3.14.0.jar', '7b96bf3ee68949abb5bc465559ac270e0551596fa34523fddf890ec418dde13c'],
 ];
 const sha = (buf) => createHash('sha256').update(buf).digest('hex');
 

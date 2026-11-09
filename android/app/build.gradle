@@ -10,8 +10,9 @@ android {
         versionCode 1
         versionName "0.1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-        // sherpa-onnx ships x86/x86_64 ONNX runtime builds too, but this app only ever runs
-        // on a real phone: dropping the emulator ABIs saves ~70 MB of APK.
+        // sherpa-onnx ships x86/x86_64 ONNX runtime builds too, but release only ever runs
+        // on a real phone: dropping the emulator ABIs saves ~70 MB of APK. Debug adds
+        // x86_64 back (see buildTypes.debug) so the app is testable on the x86_64 emulator.
         ndk {
             abiFilters 'arm64-v8a', 'armeabi-v7a'
         }
@@ -22,6 +23,13 @@ android {
         }
     }
     buildTypes {
+        debug {
+            // Union with defaultConfig's filters: debug APKs also carry x86_64 natives so
+            // the whole app (incl. sherpa-onnx Kokoro) can be exercised on the emulator.
+            ndk {
+                abiFilters 'x86_64'
+            }
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
@@ -46,7 +54,8 @@ dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:2.0.21"
     // bzip2 + tar for the runtime model download (Apache-2.0). The jar is vendored in
     // libs/ rather than pulled from Maven Central, which this build machine cannot reach
-    // for this artifact; it has no runtime dependencies of its own.
+    // for this artifact. Its runtime deps commons-io + commons-lang3 come in via the
+    // fileTree('libs') line above (issue #1: NoClassDefFoundError CountingInputStream).
     implementation files('libs/commons-compress-1.26.2.jar')
 
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
