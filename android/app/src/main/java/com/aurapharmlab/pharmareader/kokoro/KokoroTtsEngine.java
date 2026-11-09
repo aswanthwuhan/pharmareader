@@ -25,9 +25,14 @@ import kotlin.jvm.functions.Function1;
  *
  * <p>sherpa-onnx's Kokoro model is a 310&nbsp;MiB ONNX graph; constructing the runtime and
  * running inference are both CPU-bound and multi-second, so this class is a lazy
- * singleton that the plugin only touches from its background executor. Generation is
- * {@code synchronized}: one sentence at a time, never two ONNX sessions fighting for the
- * same four threads.
+ * singleton that the plugin only touches from its background executor. Loading, generating
+ * and releasing are all {@code synchronized}: one sentence at a time, never two ONNX
+ * sessions fighting for the same four threads, and never a release racing a generation.
+ *
+ * <p>The read-only accessors ({@link #isLoaded()}, {@link #threads()},
+ * {@link #sampleRate()}, {@link #voiceCount()}) read {@code volatile} fields instead of
+ * entering the monitor, so the plugin's {@code status()} call answers immediately even
+ * while a ten-second sentence is being generated.
  *
  * <p>The frontend is configured exactly as the sherpa-onnx 1.13.x docs prescribe for
  * {@code kokoro-multi-lang-v1_0}: the English lexicon drives pronunciation and
@@ -38,6 +43,7 @@ public final class KokoroTtsEngine {
 
     private static final String TAG = "KokoroTts";
     private static final int MAX_CACHED_WAVS = 8;
+    private static final int DEFAULT_SAMPLE_RATE = 24000;
 
     /** Cooperative cancellation for a generation already running inside sherpa-onnx. */
     public interface StopSignal {
@@ -53,13 +59,17 @@ public final class KokoroTtsEngine {
         public int sampleCount;
         public long elapsedMs;
         public double rtf;
+        /** True when {@link StopSignal} cut the generation short; no WAV was written. */
+        public boolean cancelled;
     }
 
     private static KokoroTtsEngine instance;
 
-    private OfflineTts tts;
-    private int threads;
-    private String modelDirPath;
+    private volatile OfflineTts tts;
+    private volatile int threads;
+    private volatile int sampleRate = DEFAULT_SAMPLE_RATE;
+    private volatile int voiceCount;
+    private volatile String modelDirPath;
     private int sequence;
 
     private KokoroTtsEngine() {}
@@ -71,20 +81,20 @@ public final class KokoroTtsEngine {
         return instance;
     }
 
-    public synchronized boolean isLoaded() {
+    public boolean isLoaded() {
         return tts != null;
     }
 
-    public synchronized int threads() {
+    public int threads() {
         return threads;
     }
 
-    public synchronized int sampleRate() {
-        return tts == null ? 24000 : tts.sampleRate();
+    public int sampleRate() {
+        return sampleRate;
     }
 
-    public synchronized int voiceCount() {
-        return tts == null ? 0 : tts.numSpeakers();
+    public int voiceCount() {
+        return voiceCount;
     }
 
     /**
@@ -122,25 +132,30 @@ public final class KokoroTtsEngine {
 
         Log.i(TAG, String.format(Locale.US,
                 "Loading Kokoro from %s with %d threads", path, wanted));
+        // A null AssetManager makes the Kotlin constructor read the model from files.
         OfflineTts created = new OfflineTts((AssetManager) null, config);
-        tts = created;
         this.threads = wanted;
+        this.sampleRate = created.sampleRate() > 0 ? created.sampleRate() : DEFAULT_SAMPLE_RATE;
+        this.voiceCount = created.numSpeakers();
         this.modelDirPath = path;
+        this.tts = created;
         Log.i(TAG, String.format(Locale.US,
-                "Kokoro ready: %d Hz, %d speakers", created.sampleRate(),
-                created.numSpeakers()));
+                "Kokoro ready: %d Hz, %d speakers", sampleRate, voiceCount));
     }
 
     public synchronized void release() {
-        if (tts != null) {
+        OfflineTts current = tts;
+        tts = null;
+        modelDirPath = null;
+        voiceCount = 0;
+        sampleRate = DEFAULT_SAMPLE_RATE;
+        if (current != null) {
             try {
-                tts.release();
+                current.release();
             } catch (Throwable t) {
                 Log.w(TAG, "release() failed", t);
             }
-            tts = null;
         }
-        modelDirPath = null;
     }
 
     /**
@@ -152,14 +167,15 @@ public final class KokoroTtsEngine {
     public synchronized SynthResult synthesize(
             File audioCacheDir, String text, int sid, float speed, StopSignal stop)
             throws IOException {
-        if (tts == null) {
+        OfflineTts current = tts;
+        if (current == null) {
             throw new IOException("Kokoro model is not loaded");
         }
         String trimmed = text == null ? "" : text.trim();
         if (trimmed.isEmpty()) {
             throw new IOException("Nothing to synthesize");
         }
-        int speakers = tts.numSpeakers();
+        int speakers = current.numSpeakers();
         int speaker = sid;
         if (speakers > 0) {
             speaker = Math.max(0, Math.min(speakers - 1, sid));
@@ -175,22 +191,29 @@ public final class KokoroTtsEngine {
                     return stop.isStopped() ? 0 : 1;
                 }
             };
-            audio = tts.generateWithCallback(trimmed, speaker, rate, callback);
+            audio = current.generateWithCallback(trimmed, speaker, rate, callback);
         } else {
-            audio = tts.generate(trimmed, speaker, rate);
+            audio = current.generate(trimmed, speaker, rate);
         }
         long elapsedMs = (SystemClock.elapsedRealtimeNanos() - startNanos) / 1_000_000L;
+
+        // stop() flips the signal mid-generation; the partial waveform is useless, and writing
+        // it to the cache would only make the next sentence slower.
+        if (stop != null && stop.isStopped()) {
+            return cancelledResult();
+        }
         if (audio == null) {
             throw new IOException("sherpa-onnx returned no audio");
         }
 
         float[] samples = audio.getSamples();
-        int sampleRate = audio.getSampleRate() > 0 ? audio.getSampleRate() : tts.sampleRate();
+        int generatedRate =
+                audio.getSampleRate() > 0 ? audio.getSampleRate() : current.sampleRate();
         if (samples == null || samples.length == 0) {
             throw new IOException("sherpa-onnx generated an empty waveform");
         }
 
-        byte[] wav = WavWriter.toBytes(samples, sampleRate);
+        byte[] wav = WavWriter.toBytes(samples, generatedRate);
         if (!audioCacheDir.isDirectory() && !audioCacheDir.mkdirs()
                 && !audioCacheDir.isDirectory()) {
             throw new IOException("Cannot create " + audioCacheDir.getAbsolutePath());
@@ -205,9 +228,9 @@ public final class KokoroTtsEngine {
         SynthResult result = new SynthResult();
         result.path = file.getAbsolutePath();
         result.wav = wav;
-        result.sampleRate = sampleRate;
+        result.sampleRate = generatedRate;
         result.sampleCount = samples.length;
-        result.durationMs = WavWriter.durationMs(samples.length, sampleRate);
+        result.durationMs = WavWriter.durationMs(samples.length, generatedRate);
         result.elapsedMs = elapsedMs;
         result.rtf = result.durationMs > 0 ? (elapsedMs / (double) result.durationMs) : 0.0;
         Log.i(TAG, String.format(Locale.US,
@@ -215,6 +238,13 @@ public final class KokoroTtsEngine {
                 trimmed.length(), speaker, rate, elapsedMs, result.durationMs, result.rtf));
 
         pruneCache(audioCacheDir);
+        return result;
+    }
+
+    private SynthResult cancelledResult() {
+        SynthResult result = new SynthResult();
+        result.cancelled = true;
+        result.sampleRate = sampleRate;
         return result;
     }
 

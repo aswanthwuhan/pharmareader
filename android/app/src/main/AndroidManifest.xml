@@ -4,6 +4,8 @@
     <!-- largeHeap: Kokoro/ONNX TTS peaks near 800 MB; hardwareAccelerated: WebView WebGL/WebGPU path. -->
     <application
         android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:hardwareAccelerated="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
@@ -41,4 +43,6 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Read-only network type, so the Kokoro settings panel can warn before a 334 MB download on mobile data. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 </manifest>

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android <= 11: keep the 334 MB Kokoro model out of cloud backup; it re-downloads. -->
+<full-backup-content>
+    <exclude domain="file" path="kokoro/" />
+</full-backup-content>

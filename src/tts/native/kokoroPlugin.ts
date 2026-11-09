@@ -17,6 +17,12 @@ export interface KokoroStatus {
   loaded: boolean;
   sizeBytes: number;
   freeBytes?: number;
+  /** Bytes of a partial archive kept on disk; the next download resumes from here. */
+  partialBytes?: number;
+  /** Free storage the download needs (archive plus the unpacked model). */
+  requiredBytes?: number;
+  /** The active connection is mobile data, so the 334 MB download should wait for Wi-Fi. */
+  metered?: boolean;
   modelId?: string;
   modelUrl?: string;
   archiveBytes?: number;

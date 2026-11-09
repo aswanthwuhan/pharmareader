@@ -1,5 +1,9 @@
 package com.aurapharmlab.pharmareader.kokoro;
 
+import android.content.Context;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.util.Base64;
 import android.util.Log;
 
@@ -20,22 +24,29 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * Capacitor bridge for on-device Kokoro speech.
  *
- * <p>All heavy work runs on two dedicated background threads — {@code kokoro-io} for the
- * model download/extraction and {@code kokoro-synth} for ONNX inference — because a
- * 4-thread ONNX session on the WebView's main thread would freeze the reader.
+ * <p>All heavy work runs on dedicated background threads — {@code kokoro-io} for the model
+ * download/extraction, {@code kokoro-synth} for ONNX inference and {@code kokoro-status} for
+ * the cheap file probes — because a 4-thread ONNX session on the WebView's main thread would
+ * freeze the reader. Status has its own thread on purpose: a 334&nbsp;MiB download holds the
+ * io thread for many minutes, and the settings panel must still be able to ask whether the
+ * model is present.
  *
- * <p>The model itself is downloaded at runtime (333 MiB) rather than shipped in the APK.
+ * <p>The model itself is downloaded at runtime (334 MiB) rather than shipped in the APK.
  */
 @CapacitorPlugin(name = "Kokoro")
 public class KokoroPlugin extends Plugin {
 
     private static final String TAG = "KokoroPlugin";
     private static final int DEFAULT_THREADS = 4;
+    /** Longer text is a caller bug: one ONNX call per sentence, not per chapter. */
+    private static final int MAX_TEXT_CHARS = 4000;
 
     private final ExecutorService ioExecutor =
             Executors.newSingleThreadExecutor(new NamedThreadFactory("kokoro-io"));
     private final ExecutorService synthExecutor =
             Executors.newSingleThreadExecutor(new NamedThreadFactory("kokoro-synth"));
+    private final ExecutorService statusExecutor =
+            Executors.newSingleThreadExecutor(new NamedThreadFactory("kokoro-status"));
     private final AtomicBoolean downloading = new AtomicBoolean(false);
     /**
      * Bumped by {@link #stop} and {@link #unload}: queued and running synthesis from an
@@ -51,10 +62,16 @@ public class KokoroPlugin extends Plugin {
 
     @Override
     protected void handleOnDestroy() {
+        // Flip the epoch first: a generation running inside sherpa-onnx returns 0 from its
+        // callback at the next chunk and unwinds, so the release below does not wait long.
         epoch++;
         ioExecutor.shutdownNow();
+        statusExecutor.shutdownNow();
         synthExecutor.shutdownNow();
-        KokoroTtsEngine.getInstance().release();
+        // release() takes the engine monitor, so it must never run on the UI thread.
+        Thread releaser = new Thread(KokoroTtsEngine.getInstance()::release, "kokoro-release");
+        releaser.setDaemon(true);
+        releaser.start();
     }
 
     // ------------------------------------------------------------------ status
@@ -62,25 +79,55 @@ public class KokoroPlugin extends Plugin {
     @PluginMethod
     public void status(PluginCall call) {
         try {
-            ioExecutor.execute(() -> {
-                KokoroTtsEngine engine = KokoroTtsEngine.getInstance();
-                JSObject result = new JSObject();
-                result.put("downloaded", store.isDownloaded());
-                result.put("loaded", engine.isLoaded());
-                result.put("sizeBytes", store.sizeBytes());
-                result.put("freeBytes", store.freeBytes());
-                result.put("modelId", KokoroModel.ID);
-                result.put("modelUrl", KokoroModel.SOURCE_URL);
-                result.put("archiveBytes", KokoroModel.ARCHIVE_BYTES);
-                result.put("attribution", KokoroModel.ATTRIBUTION);
-                result.put("sampleRate", engine.isLoaded() ? engine.sampleRate() : 0);
-                result.put("threads", engine.threads());
-                result.put("defaultSid", KokoroModel.DEFAULT_SID);
-                result.put("voiceCount", KokoroModel.count());
-                call.resolve(result);
+            statusExecutor.execute(() -> {
+                try {
+                    KokoroTtsEngine engine = KokoroTtsEngine.getInstance();
+                    JSObject result = new JSObject();
+                    result.put("downloaded", store.isDownloaded());
+                    result.put("loaded", engine.isLoaded());
+                    result.put("sizeBytes", store.sizeBytes());
+                    result.put("freeBytes", store.freeBytes());
+                    result.put("partialBytes", store.partialBytes());
+                    result.put("requiredBytes", KokoroModel.REQUIRED_FREE_BYTES);
+                    result.put("metered", isMetered());
+                    result.put("modelId", KokoroModel.ID);
+                    result.put("modelUrl", KokoroModel.SOURCE_URL);
+                    result.put("archiveBytes", KokoroModel.ARCHIVE_BYTES);
+                    result.put("attribution", KokoroModel.ATTRIBUTION);
+                    result.put("sampleRate", engine.sampleRate());
+                    result.put("threads", engine.threads());
+                    result.put("defaultSid", KokoroModel.DEFAULT_SID);
+                    result.put("voiceCount", KokoroModel.count());
+                    call.resolve(result);
+                } catch (Throwable t) {
+                    Log.e(TAG, "status failed", t);
+                    safeReject(call, "Could not read the Kokoro model status: " + describe(t),
+                            "STATUS_FAILED");
+                }
             });
         } catch (RejectedExecutionException e) {
             call.reject("Kokoro plugin is shutting down", "SHUTDOWN");
+        }
+    }
+
+    /** True when the active connection is mobile data (or another metered link). */
+    private boolean isMetered() {
+        try {
+            ConnectivityManager manager =
+                    (ConnectivityManager) getContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (manager == null) {
+                return false;
+            }
+            Network network = manager.getActiveNetwork();
+            if (network == null) {
+                return false; // offline: a "use Wi-Fi" hint would be misleading
+            }
+            NetworkCapabilities capabilities = manager.getNetworkCapabilities(network);
+            return capabilities == null
+                    || !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
+        } catch (Throwable t) {
+            Log.w(TAG, "could not read the network state", t);
+            return false;
         }
     }
 
@@ -113,9 +160,16 @@ public class KokoroPlugin extends Plugin {
                     result.put("downloaded", true);
                     result.put("sizeBytes", size);
                     call.resolve(result);
+                } catch (OutOfMemoryError e) {
+                    Log.e(TAG, "download ran out of memory", e);
+                    safeReject(call, MEMORY_MESSAGE, "OUT_OF_MEMORY");
                 } catch (Throwable t) {
                     Log.e(TAG, "download failed", t);
-                    safeReject(call, "Download failed: " + describe(t), "DOWNLOAD_FAILED");
+                    String message = describe(t);
+                    if (!message.startsWith("Model download")) {
+                        message = "Download failed: " + message;
+                    }
+                    safeReject(call, message, "DOWNLOAD_FAILED");
                 } finally {
                     downloading.set(false);
                 }
@@ -128,6 +182,13 @@ public class KokoroPlugin extends Plugin {
 
     @PluginMethod
     public void deleteModel(PluginCall call) {
+        if (downloading.get()) {
+            call.reject(
+                    "The model is still downloading. Wait for it to finish, or close and reopen "
+                            + "the app to discard it.",
+                    "BUSY");
+            return;
+        }
         try {
             ioExecutor.execute(() -> {
                 try {
@@ -169,6 +230,10 @@ public class KokoroPlugin extends Plugin {
                     result.put("sampleRate", engine.sampleRate());
                     result.put("voiceCount", engine.voiceCount());
                     call.resolve(result);
+                } catch (OutOfMemoryError e) {
+                    Log.e(TAG, "load ran out of memory", e);
+                    KokoroTtsEngine.getInstance().release();
+                    safeReject(call, MEMORY_MESSAGE, "OUT_OF_MEMORY");
                 } catch (Throwable t) {
                     Log.e(TAG, "load failed", t);
                     safeReject(call, "Could not load the Kokoro model: " + describe(t),
@@ -185,10 +250,16 @@ public class KokoroPlugin extends Plugin {
         epoch++;
         try {
             synthExecutor.execute(() -> {
-                KokoroTtsEngine.getInstance().release();
-                JSObject result = new JSObject();
-                result.put("loaded", false);
-                call.resolve(result);
+                try {
+                    KokoroTtsEngine.getInstance().release();
+                    JSObject result = new JSObject();
+                    result.put("loaded", false);
+                    call.resolve(result);
+                } catch (Throwable t) {
+                    Log.e(TAG, "unload failed", t);
+                    safeReject(call, "Could not unload the Kokoro model: " + describe(t),
+                            "UNLOAD_FAILED");
+                }
             });
         } catch (RejectedExecutionException e) {
             call.reject("Kokoro plugin is shutting down", "SHUTDOWN");
@@ -223,6 +294,13 @@ public class KokoroPlugin extends Plugin {
             call.reject("No text to synthesize", "EMPTY_TEXT");
             return;
         }
+        if (text.length() > MAX_TEXT_CHARS) {
+            call.reject(
+                    "That sentence is too long to speak in one piece (" + text.length()
+                            + " characters, limit " + MAX_TEXT_CHARS + ").",
+                    "TEXT_TOO_LONG");
+            return;
+        }
         int sid = call.getInt("sid", KokoroModel.DEFAULT_SID);
         Float speedArg = call.getFloat("speed", 1.0f);
         float speed = speedArg == null || speedArg <= 0f ? 1.0f : speedArg;
@@ -232,9 +310,7 @@ public class KokoroPlugin extends Plugin {
         try {
             synthExecutor.execute(() -> {
                 if (myEpoch != epoch) {
-                    JSObject cancelled = new JSObject();
-                    cancelled.put("cancelled", true);
-                    call.resolve(cancelled);
+                    resolveCancelled(call);
                     return;
                 }
                 try {
@@ -256,6 +332,10 @@ public class KokoroPlugin extends Plugin {
                             speed,
                             () -> myEpoch != epoch);
 
+                    if (synth.cancelled || synth.wav == null) {
+                        resolveCancelled(call);
+                        return;
+                    }
                     JSObject result = new JSObject();
                     result.put("path", synth.path);
                     result.put("durationMs", synth.durationMs);
@@ -265,6 +345,9 @@ public class KokoroPlugin extends Plugin {
                     result.put("bytes", (long) synth.wav.length);
                     result.put("wavBase64", Base64.encodeToString(synth.wav, Base64.NO_WRAP));
                     call.resolve(result);
+                } catch (OutOfMemoryError e) {
+                    Log.e(TAG, "synthesis ran out of memory", e);
+                    safeReject(call, MEMORY_MESSAGE, "OUT_OF_MEMORY");
                 } catch (Throwable t) {
                     Log.e(TAG, "synthesize failed", t);
                     safeReject(call, "Synthesis failed: " + describe(t), "SYNTH_FAILED");
@@ -289,9 +372,19 @@ public class KokoroPlugin extends Plugin {
 
     // ----------------------------------------------------------------- helpers
 
+    private static final String MEMORY_MESSAGE =
+            "This phone ran out of memory running Kokoro. Choose 2 threads in Settings, close "
+                    + "other apps, or use the system voice instead.";
+
     private static int defaultThreads() {
         int cores = Runtime.getRuntime().availableProcessors();
         return Math.max(2, Math.min(DEFAULT_THREADS, cores));
+    }
+
+    private static void resolveCancelled(PluginCall call) {
+        JSObject cancelled = new JSObject();
+        cancelled.put("cancelled", true);
+        call.resolve(cancelled);
     }
 
     private static void safeReject(PluginCall call, String message, String code) {
@@ -306,6 +399,11 @@ public class KokoroPlugin extends Plugin {
         String message = t.getMessage();
         if (message == null || message.isEmpty()) {
             return t.getClass().getSimpleName();
+        }
+        // Download/storage failures already read as full sentences; a class name would only
+        // make the message shown in the panel harder to read.
+        if (t instanceof java.io.IOException) {
+            return message;
         }
         return String.format(Locale.US, "%s (%s)", message, t.getClass().getSimpleName());
     }

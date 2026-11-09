@@ -94,9 +94,21 @@ async function voiceSetting(): Promise<string> {
   return typeof saved === 'string' && saved.length > 0 ? saved : String(DEFAULT_KOKORO_SID);
 }
 
-/** Base64 (plugin emits no line breaks) to a WAV Blob, in chunks the browser likes. */
+/**
+ * Base64 (the plugin emits no line breaks) to a WAV Blob.
+ *
+ * A sentence is 1-3 s of 24 kHz mono 16-bit audio, so ~50-150 KB of base64: `atob` plus a
+ * typed-array fill costs well under a millisecond and keeps this synchronous, which the
+ * sentence pipeline below relies on. `fetch('data:audio/wav;base64,…')` would add a
+ * promise hop and a parser round-trip for no gain at this size.
+ */
 export function base64ToWavBlob(base64: string): Blob {
-  const binary = atob(base64);
+  let binary: string;
+  try {
+    binary = atob(base64);
+  } catch {
+    throw new Error('Kokoro returned audio that could not be decoded.');
+  }
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return new Blob([bytes], { type: 'audio/wav' });
@@ -128,7 +140,6 @@ class KokoroNativeEngine implements TtsEngine {
   private generation = 0;
   private paused = false;
   private current: CurrentAudio | null = null;
-  private loadedThreads: number | null = null;
 
   async isReady(): Promise<boolean> {
     if (!isKokoroNativeAvailable()) return false;
@@ -158,9 +169,10 @@ class KokoroNativeEngine implements TtsEngine {
     if (!status.downloaded) throw new Error('Kokoro model files are missing after the download.');
 
     const threads = await threadsSetting();
-    if (status.loaded && this.loadedThreads === threads) return;
-    const loaded = await Kokoro.load({ threads });
-    this.loadedThreads = loaded.threads;
+    // status.threads is read from the loaded session, so an engine that is already warm in
+    // this process (a second reader mount) is reused instead of reloading the model.
+    if (status.loaded && status.threads === threads) return;
+    await Kokoro.load({ threads });
   }
 
   async listVoices(): Promise<TtsVoice[]> {
@@ -195,7 +207,9 @@ class KokoroNativeEngine implements TtsEngine {
 
   /** Speak the sentences in order, synthesising the next one during playback. */
   async speak(items: { id: string; text: string }[], opts: SpeakOptions, ev: SpeakEvents): Promise<void> {
-    if (items.length === 0) return;
+    // Blank items would synthesise nothing and end the run early; drop them up front.
+    const sentences = items.filter((item) => item.text.trim().length > 0);
+    if (sentences.length === 0) return;
     this.generation += 1;
     const generation = this.generation;
     this.paused = false;
@@ -217,18 +231,22 @@ class KokoroNativeEngine implements TtsEngine {
       };
 
       // Kick off sentence 0, then always keep one synthesis ahead of playback.
-      let pending: Promise<Blob | null> = synthesize(items[0].text);
-      for (let index = 0; index < items.length; index += 1) {
+      let pending: Promise<Blob | null> = synthesize(sentences[0].text);
+      for (let index = 0; index < sentences.length; index += 1) {
         const blob = await pending;
         if (!alive()) return;
         if (!blob) return; // cancelled: stop() already reset the generation
 
         const next =
-          index + 1 < items.length ? synthesize(items[index + 1].text) : null;
-        ev.onStart?.(items[index].id);
+          index + 1 < sentences.length ? synthesize(sentences[index + 1].text) : null;
+        // The prefetch is only awaited after playback. If it rejects in the meantime the
+        // browser reports an unhandled rejection (and a page-level error handler fires), so
+        // mark it handled now; awaiting it below still rethrows.
+        if (next) void next.catch(() => undefined);
+        ev.onStart?.(sentences[index].id);
         await this.play(blob);
         if (!alive()) return;
-        ev.onEnd?.(items[index].id);
+        ev.onEnd?.(sentences[index].id);
         if (!next) return;
         pending = next;
       }
@@ -267,7 +285,6 @@ class KokoroNativeEngine implements TtsEngine {
 
   /** Drop the loaded model (used after deleting the download). */
   async release(): Promise<void> {
-    this.loadedThreads = null;
     if (!isKokoroNativeAvailable()) return;
     await Kokoro.unload().catch(() => undefined);
   }

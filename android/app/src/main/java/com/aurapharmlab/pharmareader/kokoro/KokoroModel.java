@@ -36,6 +36,12 @@ public final class KokoroModel {
     /** Rough size of the extracted model directory, for the "no space" pre-check (bytes). */
     public static final long EXTRACTED_BYTES = 420_000_000L;
 
+    /**
+     * Free storage the download needs: the archive is kept on disk (for resume) while it is
+     * unpacked, so both exist at peak. ~734 MiB, i.e. "about 750 MB" in the UI.
+     */
+    public static final long REQUIRED_FREE_BYTES = ARCHIVE_BYTES + EXTRACTED_BYTES;
+
     /** Shown in the UI and in the license notice. */
     public static final String ATTRIBUTION =
             "Kokoro-82M by hexgrad (Apache-2.0) via sherpa-onnx (Apache-2.0)";
