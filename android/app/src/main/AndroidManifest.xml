@@ -45,4 +45,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Read-only network type, so the Kokoro settings panel can warn before a 334 MB download on mobile data. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Android 11+ package visibility: without this the app cannot see the phone's TTS engine, so the system voice is silent. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
 </manifest>

@@ -1,3 +1,4 @@
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { db, newId } from '../core/db';
 import type { BookRecord, DocFormat, ParsedDoc } from '../core/types';
 import { normaliseText } from './blocks';
@@ -175,11 +176,20 @@ export async function importUrl(url: string): Promise<string> {
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), 20_000);
   try {
-    const response = await fetch(target.toString(), { signal: abort.signal });
-    if (!response.ok) {
-      throw new Error(`That page returned ${response.status}; paste the text instead.`);
+    if (Capacitor.isNativePlatform()) {
+      // Native HTTP sidesteps CORS for article pages; global fetch patching is off so model downloads stay streamed.
+      const response = await CapacitorHttp.get({ url: target.toString(), responseType: 'text', connectTimeout: 20_000, readTimeout: 20_000 });
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error(`That page returned ${response.status}; paste the text instead.`);
+      }
+      html = String(response.data ?? '');
+    } else {
+      const response = await fetch(target.toString(), { signal: abort.signal });
+      if (!response.ok) {
+        throw new Error(`That page returned ${response.status}; paste the text instead.`);
+      }
+      html = await response.text();
     }
-    html = await response.text();
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('That page returned')) throw error;
     throw new Error('This site blocks web import; paste the text instead.');

@@ -6,7 +6,9 @@ const config: CapacitorConfig = {
   webDir: 'dist',
   plugins: {
     // Article import fetches arbitrary sites; native HTTP avoids the WebView CORS wall.
-    CapacitorHttp: { enabled: true },
+    // Off: the global fetch patch base64-encodes bodies over the bridge, which breaks 100+ MB model downloads.
+    // Web-article import calls CapacitorHttp explicitly instead.
+    CapacitorHttp: { enabled: false },
   },
   android: {
     allowMixedContent: false,
