@@ -9,7 +9,7 @@ MD Pharmacology residents (India) need one app to study their own textbooks/note
 | Content | User imports own files only (no bundled copyrighted content) |
 | Formats v1 | Text PDF, EPUB, DOCX, TXT/MD, web article. OCR = later |
 | Stack | One Vite + React + TS web app → PWA; Capacitor (Android, later iOS); Tauri (Windows, later) |
-| TTS | Pluggable engines, user selects: System voice (prompt user to install Premium/Enhanced or high-quality OS voice) / Pocket TTS streaming (fast offline neural, mid+budget phones) / Kokoro streaming / Kokoro pre-render / Kokoro server (OpenAI-compatible URL). Default auto-picked by device speed |
+| TTS | Pluggable engines, user selects: System voice (prompt user to install Premium/Enhanced or high-quality OS voice) / Pocket TTS streaming (fast offline neural, mid+budget phones) / Kokoro streaming / Kokoro pre-render . On-device only — no PC/server. Android Kokoro = native sherpa-onnx Capacitor plugin (CPU, 4 threads); PWA/desktop Kokoro = kokoro-js. Default auto-picked by device speed |
 | Pronunciation | Built-in pharma lexicon + user-editable entries, applied before every engine |
 | Study features v1 | Read-along sentence highlight, highlights/notes/bookmarks, FSRS flashcards |
 | Levels | Built-in NMC MD Pharmacology topic tree (Basic/Intermediate/Advanced), editable; chapters + cards tagged to topics; per-topic progress |
@@ -37,7 +37,7 @@ MD Pharmacology residents (India) need one app to study their own textbooks/note
 
 ## Architecture (core modules)
 - `src/import/` — per-format extractors → common `Doc { chapters[] → blocks[] → sentences[] }` with source locators (PDF page+rects, EPUB CFI).
-- `src/tts/` — `TtsEngine` interface `{ speak(sentence), prerender(sentences), stop, capabilities }`; engines: `system`, `pocketWorker`, `kokoroWorker`, `kokoroServer`. Auto-default: Kokoro if measured RTF < 1, else Pocket TTS if RTF < 1, else system voice. Audio cache key = hash(text + voice + speed + lexiconVersion).
+- `src/tts/` — `TtsEngine` interface `{ speak(sentence), prerender(sentences), stop, capabilities }`; engines: `system`, `pocketWorker`, `kokoroWorker` (web), `kokoroNative` (Android, sherpa-onnx). Auto-default: Kokoro if measured RTF < 1, else Pocket TTS if RTF < 1, else system voice. Audio cache key = hash(text + voice + speed + lexiconVersion).
 - `src/tts/lexicon/` — `pharma-lexicon.json` (t½→half-life, mg/kg→milligrams per kilogram, CYP3A4→C Y P 3 A 4, μg, IC₅₀, Na⁺/K⁺-ATPase, common drug names) + user overrides table.
 - `src/reader/` — Reflow view (all formats) + PDF page view toggle; read-along highlight by sentence id; tap sentence = play from there.
 - `src/study/` — highlights, notes, bookmarks, cards (cloze / Q&A from highlight), FSRS review screen.
@@ -49,7 +49,7 @@ MD Pharmacology residents (India) need one app to study their own textbooks/note
 1. Scaffold Vite/React/TS + PWA + Capacitor Android debug APK.
 2. Library + import (PDF text, EPUB, DOCX, TXT) → sentence model; reflow reader.
 3. System TTS + read-along sentence highlight + engine interface.
-4. Neural engines: model download manager; Pocket TTS worker (streaming); Kokoro worker (streaming + pre-render queue); audio cache; engine selector + RTF benchmark auto-default; Kokoro server engine. Before coding: 10-min listening test of Pocket vs Kokoro vs OS premium voice on pharma sentences on user's own phone.
+4. Neural engines: model download manager; Pocket TTS worker (streaming); Kokoro worker (streaming + pre-render queue); audio cache; engine selector + RTF benchmark auto-default; native Kokoro plugin for Android. Before coding: 10-min listening test of Pocket vs Kokoro vs OS premium voice on pharma sentences on user's own phone.
 5. Pharma lexicon + user editor.
 6. PDF page view with highlight boxes + view toggle.
 7. Highlights / notes / bookmarks.
@@ -58,7 +58,7 @@ MD Pharmacology residents (India) need one app to study their own textbooks/note
 10. BYO-key AI (cards/summaries from selection).
 11. Backup export/import; Play Store release build; PWA deploy.
 
-Later (v2+): iOS, Windows (Tauri), local LLM (RAM-gated), OCR for scanned PDFs, cloud sync, native sherpa-onnx Kokoro plugin if WebView Kokoro too slow, drug quick-lookup.
+Later (v2+): iOS, Windows (Tauri), local LLM (RAM-gated), OCR for scanned PDFs, cloud sync, native Pocket TTS on Android if WebView Pocket too slow, drug quick-lookup.
 
 ## Verification
 - Vitest unit tests: lexicon expansion, sentence segmentation, extractor output per format (small fixture files), FSRS scheduling, cache-key stability, backup round-trip.
