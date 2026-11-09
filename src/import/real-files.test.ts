@@ -28,6 +28,7 @@ const sample = (name: string) => resolve(SAMPLES, name);
 
 const REAL_PDF = sample('bjp-bee-venom.pdf'); // 15 pp, two columns, CC BY (PMC6240132)
 const SINGLE_COLUMN_PDF = sample('piezo1-pharmacology.pdf'); // 34 pp, one column (PMC7618196)
+const NMC_PDF = fixture('nmc-md-pharmacology.pdf'); // 12 pp, one column, 12 pt on a 20.6 pt step
 
 function read(path: string): ArrayBuffer {
   const bytes = readFileSync(path);
@@ -240,5 +241,40 @@ describe.skipIf(!existsSync(SINGLE_COLUMN_PDF))('real PDF: single-column review 
     const text = allSentences(parsed.doc).join(' ');
     expect(text).toContain('PIEZO1');
     expect(text.length).toBeGreaterThan(100_000);
+  });
+});
+
+describe.skipIf(!existsSync(NMC_PDF))('real PDF: NMC MD Pharmacology guidelines (wide leading)', () => {
+  it('keeps a paragraph that wraps at wide leading in one block', { timeout: 120_000 }, async () => {
+    const parsed = await parsePdf(read(NMC_PDF), 'md pharm');
+    dump('pdf-nmc-md-pharmacology', parsed.doc, {
+      pageCount: parsed.pageCount,
+      charsPerPage: parsed.charsPerPage,
+    });
+
+    expectWellFormed(parsed.doc);
+    expect(parsed.pageCount).toBe(12);
+
+    const blocks = parsed.doc.chapters.flatMap((chapter) =>
+      chapter.blocks.map((block) => block.sentences.map((sentence) => sentence.text).join(' ')),
+    );
+
+    // 12 pt type on a 20.6 pt step: measured against the font height, the gap is
+    // 1.7× and every line used to become its own paragraph (441 blocks for 12
+    // pages, one per line). The page's own leading gives one paragraph per
+    // paragraph.
+    expect(blocks.length).toBeLessThan(200);
+
+    const purpose = blocks.filter((text) => text.includes('The purpose of PG education'));
+    expect(purpose).toHaveLength(1);
+    expect(purpose[0]).toContain(
+      'high quality health care and advance the cause of science through research & training.',
+    );
+    expect(purpose[0]).not.toContain('Pharmacology consists');
+
+    // The three centred title lines are one block, not one block each.
+    expect(blocks.find((text) => text.startsWith('GUIDELINES FOR COMPETENCY BASED'))).toBe(
+      'GUIDELINES FOR COMPETENCY BASED POSTGRADUATE TRAINING PROGRAMME FOR MD IN PHARMACOLOGY',
+    );
   });
 });

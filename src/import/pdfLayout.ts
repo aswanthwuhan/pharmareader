@@ -288,17 +288,88 @@ function furnitureKey(text: string): string {
   return text.toLowerCase().replace(/\d+/g, '#').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Type metrics a page needs for paragraph splitting: the typical baseline step
+ * between consecutive lines (`pitch`) and the width of a full line (`measure`).
+ */
+interface PageMetrics {
+  pitch: number;
+  measure: number;
+}
+
+/**
+ * Line pitch is what tells a wrapped line from a new paragraph. Comparing the
+ * gap with the *font height* does not work: a page set at 12 pt on a 20 pt step
+ * has every line gap at 1.7× the height, which reads as "paragraph end" and
+ * splits the text every line. So measure the page's own leading instead.
+ */
+function pageMetrics(page: PdfPage): PageMetrics {
+  const steps: number[] = [];
+  const widths: number[] = [];
+
+  page.lines.forEach((line, index) => {
+    if (line.w > 0) widths.push(line.w);
+    const previous = page.lines[index - 1];
+    if (!previous) return;
+
+    const step = line.y - previous.y;
+    // Only same-size neighbours in one column (a negative step is a column
+    // jump): small type or a stepped heading has its own leading, and a gap
+    // wider than three steps is a paragraph break, not the body leading.
+    if (step <= 0 || Math.abs(line.h - previous.h) > 2) return;
+    if (step > Math.max(line.h, previous.h) * 3) return;
+    steps.push(step);
+  });
+
+  // The 90th percentile ignores the odd ragged right edge; the median step
+  // ignores paragraph gaps, which are in the minority on a full page.
+  return { pitch: median(steps), measure: percentile(widths, 0.9) };
+}
+
+function median(values: number[]): number {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function percentile(values: number[], fraction: number): number {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * fraction))];
+}
+
+/** Sentence-ending punctuation, optionally followed by a closing quote/bracket. */
+const TERMINAL = /[.!?:;][\u201d\u2019"')]*$/;
+
 /** Group page lines into paragraphs; de-hyphenates words broken across lines. */
 export function pagesToParagraphs(pages: PdfPage[]): PdfParagraph[] {
   const paragraphs: PdfParagraph[] = [];
+  const metrics = pages.map(pageMetrics);
+  // A sparse page (a cover, a figure, a table) has too few lines to trust its
+  // own leading; borrow the document's.
+  const documentPitch = median(metrics.map((metric) => metric.pitch).filter((pitch) => pitch > 0));
 
   pages.forEach((page, index) => {
     const pageNumber = index + 1;
+    const pitch = metrics[index].pitch || documentPitch;
+    const measure = metrics[index].measure || page.width;
     let current: PdfParagraph | null = null;
     let previous: PdfLine | null = null;
+    // A paragraph's body edge is its leftmost line: an indented first line has
+    // the same edge for every continuation line.
+    let bodyLeft = Infinity;
+    let lineCount = 0;
+    let firstLeft = 0;
+    let sameLeft = true;
+    let centreMin = Infinity;
+    let centreMax = -Infinity;
+    let centreSum = 0;
 
     for (const line of page.lines) {
-      const expected = Math.max(line.h, previous?.h ?? line.h, 1);
+      // Font height is only the fallback: on a page with no measurable pitch
+      // (one or two lines) there is nothing better to compare the gap with.
+      const expected = pitch > 0 ? pitch * 1.4 : Math.max(line.h, previous?.h ?? line.h, 1) * 1.45;
       const gap = previous ? line.y - previous.y : 0;
       // Reading order jumps back to the top of the page at a column break, so a
       // negative gap is a new column, not a continuation.
@@ -315,15 +386,57 @@ export function pagesToParagraphs(pages: PdfPage[]): PdfParagraph[] {
       // sentence. A real size step means a new block.
       const sizeChange = Boolean(previous) && Math.abs(line.h - previous!.h) > 2;
 
-      if (
-        !current ||
-        !previous ||
-        (gap > expected * 1.45 && !splitWord) ||
-        (newColumn && !splitWord) ||
-        (sizeChange && !splitWord)
-      ) {
+      // "…who would provide high quality" / "health care and advance…" is one
+      // sentence whatever the leading below it does. A line that stops without
+      // terminal punctuation and continues in lower case is mid-sentence.
+      const continuation = Boolean(previous) && !TERMINAL.test(previous!.text) && /^\p{Ll}/u.test(line.text);
+
+      // A centred title ("GUIDELINES FOR COMPETENCY BASED" over "POSTGRADUATE
+      // TRAINING PROGRAMME") does not share one left edge, yet all its lines
+      // share a centre: that, not the width, is what tells it from a justified
+      // paragraph, whose lines also share a centre but never move off the edge.
+      // It must never be read as an indent or a heading.
+      const centred =
+        lineCount > 0 &&
+        !sameLeft &&
+        centreMax - centreMin <= page.width * 0.02 &&
+        Math.abs(centreSum / lineCount - page.width / 2) <= page.width * 0.08;
+      // An indent or a heading is only readable once the body edge is settled:
+      // if the previous line does not sit on that edge, there is nothing to
+      // indent relative to.
+      const settled = !previous || Math.abs(previous.x - bodyLeft) <= Math.max(2, previous.h * 0.3);
+
+      let breaks = !current || !previous || (newColumn && !splitWord) || (sizeChange && !splitWord);
+
+      if (!breaks && !splitWord && !continuation) {
+        // A justified line fills the measure, so a short one ends its paragraph.
+        const short = previous!.w < measure * 0.7 && TERMINAL.test(previous!.text);
+        // A short single line at the body edge with no full stop, followed by an
+        // uppercase line, is a heading ("Preamble", "A. Cognitive domain").
+        const heading =
+          lineCount === 1 &&
+          !centred &&
+          settled &&
+          previous!.w < measure * 0.6 &&
+          previous!.text.trim().split(/\s+/).length <= 6 &&
+          !TERMINAL.test(previous!.text) &&
+          /^\p{Lu}/u.test(line.text) &&
+          line.w > measure * 0.5;
+        // First-line indent: the new line starts right of the paragraph's edge.
+        const indented = !centred && settled && line.x > bodyLeft + Math.max(4, line.h * 0.7);
+
+        breaks = gap > expected || short || heading || indented;
+      }
+
+      if (breaks) {
         if (current) paragraphs.push(current);
         current = { page: pageNumber, text: '', spans: [] };
+        bodyLeft = Infinity;
+        lineCount = 0;
+        sameLeft = true;
+        centreMin = Infinity;
+        centreMax = -Infinity;
+        centreSum = 0;
       } else if (splitWord) {
         // "pharma-" + "cology" is one word, not a hyphen.
         const before = current!.text;
@@ -331,13 +444,21 @@ export function pagesToParagraphs(pages: PdfPage[]): PdfParagraph[] {
         current!.text = joined;
         const last = current!.spans[current!.spans.length - 1];
         if (last) last.end -= before.length - joined.length;
-      } else if (!/\s$/.test(current.text)) {
+      } else if (!/\s$/.test(current!.text)) {
         // The previous line may already end in a space ("decrease + ").
-        current.text += ' ';
+        current!.text += ' ';
       }
 
-      appendLine(current, line);
+      appendLine(current!, line);
       previous = line;
+      if (lineCount === 0) firstLeft = line.x;
+      else if (Math.abs(line.x - firstLeft) > Math.max(2, line.h * 0.3)) sameLeft = false;
+      bodyLeft = Math.min(bodyLeft, line.x);
+      lineCount += 1;
+      const centre = line.x + line.w / 2;
+      centreMin = Math.min(centreMin, centre);
+      centreMax = Math.max(centreMax, centre);
+      centreSum += centre;
     }
 
     if (current) paragraphs.push(current);

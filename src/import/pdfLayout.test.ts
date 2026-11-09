@@ -22,7 +22,15 @@ const line = (text: string, y: number, h = 12): PdfLine => ({
   items: [item(text, 50, y, 400, h)],
 });
 const page = (lines: PdfLine[], height = 800): PdfPage => ({ width: 600, height, lines });
-const paragraph = (pageNumber: number, text: string): PdfParagraph => ({ page: pageNumber, text, spans: [] });
+/** A line with its own left edge and width: headings, indents and centred titles need them. */
+const placed = (text: string, x: number, y: number, w: number, h = 12): PdfLine => ({
+  text,
+  x,
+  y,
+  w,
+  h,
+  items: [item(text, x, y, w, h)],
+});const paragraph = (pageNumber: number, text: string): PdfParagraph => ({ page: pageNumber, text, spans: [] });
 
 describe('itemsToPageLines', () => {
   /** 20 rows of a two-column journal page: left column 40-280, right column 320-560. */
@@ -172,6 +180,106 @@ describe('pagesToParagraphs', () => {
     ]);
 
     expect(paragraphs).toHaveLength(2);
+  });
+
+  /** 12 pt type set on a 20.6 pt step, as in the NMC guidelines: gap / height = 1.7. */
+  const LEADING = 20.64;
+
+  it('keeps a paragraph whole when the leading is wider than the type', () => {
+    // Comparing the gap with the *font height* reads every line as a paragraph
+    // end here ("…high quality" | "health care and advance…", the reported bug).
+    const paragraphs = pagesToParagraphs([
+      page([
+        placed(
+          'The purpose of PG education is to create specialists who would provide high quality',
+          50,
+          100,
+          400,
+        ),
+        placed('health care and advance the cause of science through research & training.', 50, 100 + LEADING, 330),
+        placed('Pharmacology consists of both the experimental (basic) and clinical sciences.', 50, 182, 400),
+      ]),
+    ]);
+
+    expect(paragraphs.map((current) => current.text)).toEqual([
+      'The purpose of PG education is to create specialists who would provide high quality health care and advance the cause of science through research & training.',
+      'Pharmacology consists of both the experimental (basic) and clinical sciences.',
+    ]);
+  });
+
+  it('never ends a paragraph on a line that runs on in lower case', () => {
+    // A wide gap below a line that has no full stop and continues in lower case
+    // is uneven leading (a figure, an object in the way), not a paragraph end.
+    const paragraphs = pagesToParagraphs([
+      page([
+        placed('The purpose of PG education is to create specialists who would provide high quality', 50, 100, 400),
+        placed('health care and advance the cause of science through research & training.', 62, 160, 330),
+      ]),
+    ]);
+
+    expect(paragraphs).toHaveLength(1);
+    expect(paragraphs[0]?.text).toMatch(/high quality health care/);
+  });
+
+  it('ends the paragraph on a short line with a full stop', () => {
+    const paragraphs = pagesToParagraphs([
+      page([
+        placed('Pharmacology consists of both the experimental (basic) and clinical', 50, 100, 400),
+        placed('sciences.', 50, 100 + LEADING, 78),
+        placed('Experimental pharmacology is essential to understanding of drug action in diseases', 50, 100 + LEADING * 2, 400),
+      ]),
+    ]);
+
+    expect(paragraphs.map((current) => current.text)).toEqual([
+      'Pharmacology consists of both the experimental (basic) and clinical sciences.',
+      'Experimental pharmacology is essential to understanding of drug action in diseases',
+    ]);
+  });
+
+  it('keeps a heading out of the paragraph under it', () => {
+    const paragraphs = pagesToParagraphs([
+      page([
+        placed('Preamble', 50, 100, 62),
+        placed('The purpose of PG education is to create specialists who would provide high quality', 50, 121, 400),
+        placed('health care and advance the cause of science through research & training.', 50, 141, 330),
+      ]),
+    ]);
+
+    expect(paragraphs.map((current) => current.text)).toEqual([
+      'Preamble',
+      'The purpose of PG education is to create specialists who would provide high quality health care and advance the cause of science through research & training.',
+    ]);
+  });
+
+  it('keeps a centred title in one block', () => {
+    // Lines that do not share a left edge but do share a centre are a title, not
+    // three indented paragraphs.
+    const paragraphs = pagesToParagraphs([
+      page([
+        placed('GUIDELINES FOR COMPETENCY BASED', 120, 100, 360, 14),
+        placed('POSTGRADUATE TRAINING PROGRAMME', 105, 100 + LEADING, 390, 14),
+        placed('FOR MD IN PHARMACOLOGY', 140, 100 + LEADING * 2, 320, 14),
+      ]),
+    ]);
+
+    expect(paragraphs).toHaveLength(1);
+    expect(paragraphs[0]?.text).toBe(
+      'GUIDELINES FOR COMPETENCY BASED POSTGRADUATE TRAINING PROGRAMME FOR MD IN PHARMACOLOGY',
+    );
+  });
+
+  it('starts a paragraph at a first-line indent', () => {
+    const paragraphs = pagesToParagraphs([
+      page([
+        placed('Pharmacology consists of both the experimental (basic) and clinical sciences.', 50, 100, 400),
+        placed('Experimental pharmacology is essential to understanding of drug action.', 64, 100 + LEADING, 400),
+      ]),
+    ]);
+
+    expect(paragraphs.map((current) => current.text)).toEqual([
+      'Pharmacology consists of both the experimental (basic) and clinical sciences.',
+      'Experimental pharmacology is essential to understanding of drug action.',
+    ]);
   });
 });
 
