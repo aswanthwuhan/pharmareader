@@ -1,0 +1,514 @@
+/* Reader: mobile first, every touch target at least 44px. */
+
+.rd-page {
+  /* Room for the fixed player bar above the app's bottom navigation. */
+  padding-bottom: 150px;
+}
+
+/* -- header --------------------------------------------------------------- */
+
+.rd-head {
+  position: sticky;
+  top: env(safe-area-inset-top, 0px);
+  z-index: 4;
+  background: var(--bg);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.rd-head-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rd-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rd-tools {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 6px 0 2px;
+  scrollbar-width: none;
+}
+
+.rd-tools::-webkit-scrollbar {
+  display: none;
+}
+
+/* -- buttons -------------------------------------------------------------- */
+
+.rd-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  flex: none;
+}
+
+.rd-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.rd-btn.rd-small {
+  min-height: 36px;
+  font-size: 0.8rem;
+  padding: 0 10px;
+}
+
+.rd-icon {
+  font-size: 1rem;
+  padding: 0;
+}
+
+.rd-link {
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  padding: 8px;
+  min-height: 44px;
+}
+
+.rd-error {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fdeaea;
+  color: #7f1d1d;
+  font-size: 0.9rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .rd-error {
+    background: #3a1c1c;
+    color: #fecaca;
+  }
+}
+
+/* -- text view ------------------------------------------------------------ */
+
+.rd-text {
+  --rd-yellow: #ffe9a8;
+  --rd-green: #cdeecd;
+  --rd-blue: #cfe4ff;
+  --rd-pink: #ffd6e7;
+  padding: 16px 0 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .rd-text {
+    --rd-yellow: rgba(250, 204, 21, 0.28);
+    --rd-green: rgba(74, 222, 128, 0.24);
+    --rd-blue: rgba(96, 165, 250, 0.26);
+    --rd-pink: rgba(244, 114, 182, 0.26);
+  }
+}
+
+.rd-text p {
+  margin: 0 0 1em;
+}
+
+.rd-chapter-title {
+  margin: 0 0 0.9em;
+  font-size: 1.15em;
+  line-height: 1.3;
+  color: var(--accent);
+}
+
+.rd-block-h {
+  margin: 1.4em 0 0.6em;
+  font-size: 1.05em;
+}
+
+.rd-block-li {
+  padding-left: 1.1em;
+  text-indent: -1.1em;
+}
+
+.rd-bullet {
+  margin-right: 0.4em;
+  color: var(--muted);
+}
+
+.rd-block-table {
+  border-left: 3px solid var(--border);
+  padding-left: 10px;
+  margin-bottom: 1em;
+  color: var(--muted);
+}
+
+.rd-block-figure {
+  font-style: italic;
+  color: var(--muted);
+}
+
+/* Sentence spans: the unit the player reads and highlights paint. */
+.rd-s {
+  border-radius: 3px;
+  padding: 1px 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.rd-s[data-hl='yellow'] {
+  background: var(--rd-yellow);
+}
+
+.rd-s[data-hl='green'] {
+  background: var(--rd-green);
+}
+
+.rd-s[data-hl='blue'] {
+  background: var(--rd-blue);
+}
+
+.rd-s[data-hl='pink'] {
+  background: var(--rd-pink);
+}
+
+/* The spoken sentence is outlined, never filled: an outline stays visible on
+   top of any highlight colour. */
+.rd-s.reading {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.rd-s.selected {
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.rd-chapter-nav {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 24px 0 8px;
+}
+
+/* -- player bar ----------------------------------------------------------- */
+
+.rd-player {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
+  z-index: 6;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.08);
+  padding: 6px 10px;
+}
+
+.rd-player-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rd-player-meta {
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 26px;
+  margin-top: 2px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.rd-play {
+  min-width: 56px;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-size: 1rem;
+}
+
+.rd-rate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.rd-rate input {
+  width: 76px;
+  accent-color: var(--accent);
+}
+
+.rd-rate-value {
+  min-width: 2.4em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.rd-badge {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.rd-progress {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* -- selection toolbar ---------------------------------------------------- */
+
+.rd-select {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 92px);
+  z-index: 8;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -4px 18px rgba(0, 0, 0, 0.2);
+  padding: 10px 12px;
+  max-height: 62vh;
+  overflow: auto;
+}
+
+.rd-select-text {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  max-height: 3.6em;
+  overflow: hidden;
+}
+
+.rd-colors {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.rd-swatch {
+  width: 44px;
+  height: 44px;
+  padding: 4px;
+  border: 2px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.rd-swatch span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+}
+
+.rd-swatch-yellow span {
+  background: #ffd93d;
+}
+
+.rd-swatch-green span {
+  background: #7fd97f;
+}
+
+.rd-swatch-blue span {
+  background: #7fb4ff;
+}
+
+.rd-swatch-pink span {
+  background: #ff9dc4;
+}
+
+.rd-select-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rd-select-close {
+  margin-left: auto;
+}
+
+.rd-note-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rd-note-form label {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.rd-note-form textarea {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.rd-note-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* -- sheets (drawer, topics, AI) ------------------------------------------ */
+
+.rd-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.rd-sheet-body {
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 16px 16px 0 0;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  max-height: 84vh;
+  overflow: auto;
+}
+
+.rd-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.rd-tab {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.rd-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.rd-tab-close {
+  margin-left: auto;
+}
+
+.rd-toc {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.rd-toc-link {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 8px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rd-toc-link.active {
+  background: var(--bg);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* -- PDF page view -------------------------------------------------------- */
+
+.rd-pdf {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+}
+
+.rd-pdf-wrap {
+  overflow: auto;
+  max-height: 68vh;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  touch-action: pan-x pan-y;
+}
+
+.rd-pdf-page {
+  position: relative;
+  margin: 0 auto;
+}
+
+.rd-pdf-canvas {
+  display: block;
+}
+
+.rd-pdf-rect {
+  position: absolute;
+  border-radius: 2px;
+  background: rgba(255, 214, 64, 0.35);
+  border: 1px solid rgba(180, 130, 0, 0.85);
+  pointer-events: none;
+}
+
+.rd-pdf-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.rd-pdf-count {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* -- wider screens -------------------------------------------------------- */
+
+@media (min-width: 720px) {
+  .rd-player,
+  .rd-select,
+  .rd-sheet-body {
+    max-width: 720px;
+    margin: 0 auto;
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+  }
+}
