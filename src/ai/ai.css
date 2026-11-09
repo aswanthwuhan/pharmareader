@@ -1,0 +1,191 @@
+/* AI settings + selection actions. Uses the app's shared colour variables. */
+.ai-section {
+  display: grid;
+  gap: 14px;
+  margin: 20px 0;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.ai-section h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: var(--accent);
+}
+
+.ai-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ai-row {
+  display: grid;
+  gap: 4px;
+}
+
+.ai-row > label {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.ai-section input[type='text'],
+.ai-section input[type='password'],
+.ai-section select {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.ai-key-row {
+  display: flex;
+  gap: 8px;
+}
+
+.ai-key-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-btn {
+  min-height: 44px;
+  padding: 0 14px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.ai-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ai-btn.primary {
+  color: var(--accent-text);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.ai-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-check {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.ai-check input {
+  width: 22px;
+  height: 22px;
+  margin: 2px 0 0;
+  flex: none;
+}
+
+.ai-check label {
+  display: grid;
+  gap: 2px;
+  font-weight: 600;
+}
+
+.ai-notice {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.ai-error {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #b3261e;
+}
+
+.ai-ok {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #1b7f3b;
+}
+
+.ai-summary {
+  max-height: 320px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.ai-cards {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ai-card {
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.ai-card input {
+  width: 22px;
+  height: 22px;
+  margin: 2px 0 0;
+  flex: none;
+}
+
+.ai-card label {
+  display: grid;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.ai-front {
+  font-weight: 600;
+}
+
+.ai-back {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.ai-kind {
+  width: fit-content;
+  padding: 1px 8px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.ai-kind-cloze {
+  border-color: var(--accent);
+  color: var(--accent);
+}

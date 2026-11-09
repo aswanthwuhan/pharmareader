@@ -1,0 +1,122 @@
+/* Backup section. Uses the app's shared colour variables. */
+.backup-section {
+  display: grid;
+  gap: 14px;
+  margin: 20px 0;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.backup-section h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: var(--accent);
+}
+
+.backup-notice {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.backup-row {
+  display: grid;
+  gap: 6px;
+}
+
+.backup-row > label {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.backup-row input[type='file'] {
+  min-height: 44px;
+  padding: 8px;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.backup-row:has(> .backup-btn) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.backup-btn {
+  min-height: 44px;
+  padding: 0 14px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.backup-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.backup-btn.primary {
+  color: var(--accent-text);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.backup-rule {
+  width: 100%;
+  margin: 2px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.backup-mode {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.backup-mode legend {
+  padding: 0 4px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.backup-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.backup-radio input {
+  width: 22px;
+  height: 22px;
+  margin: 1px 0 0;
+  flex: none;
+}
+
+.backup-radio label {
+  font-size: 0.9rem;
+}
+
+.backup-ok {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #1b7f3b;
+}
+
+.backup-error {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #b3261e;
+}
