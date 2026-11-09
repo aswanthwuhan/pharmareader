@@ -27,6 +27,9 @@ export default defineConfig(({ mode }) => ({
       },
     }),
   ],
+  // pocket-tts-js spawns its worker via new URL(import.meta.url); esbuild pre-bundling breaks that path
+  optimizeDeps: { exclude: ['pocket-tts-js'] },
+  worker: { format: 'es' },
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test-setup.ts'],
