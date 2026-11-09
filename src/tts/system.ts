@@ -328,7 +328,16 @@ let nativeVoices: NativeVoice[] | null = null;
 let nativeRun: NativeRun | null = null;
 
 function loadNative(): Promise<NativeTts> {
-  nativeModule ??= import('@capacitor-community/text-to-speech').then((m) => m.TextToSpeech as NativeTts);
+  nativeModule ??= import('@capacitor-community/text-to-speech').then((m) => {
+    // Capacitor plugin proxies answer every property, including `then`; resolving a promise with
+    // one makes it look thenable and the await never settles. Wrap it in a plain object.
+    const tts = m.TextToSpeech as NativeTts;
+    return {
+      speak: (opts) => tts.speak(opts),
+      stop: () => tts.stop(),
+      getSupportedVoices: () => tts.getSupportedVoices(),
+    };
+  });
   return nativeModule;
 }
 

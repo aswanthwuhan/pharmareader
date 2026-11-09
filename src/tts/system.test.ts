@@ -10,6 +10,10 @@ const nativeMock = vi.hoisted(() => {
   const pending: (() => void)[] = [];
   const state = { stops: 0 };
   const impl = {
+    // Real Capacitor plugin proxies expose every property, `then` included (regression: awaited forever).
+    then(): never {
+      throw new Error('"TextToSpeech.then()" is not implemented on android');
+    },
     speak(opts: SpeakOpts): Promise<void> {
       calls.push(opts);
       return new Promise<void>((resolve) => {
