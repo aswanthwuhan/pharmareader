@@ -1,0 +1,194 @@
+/* The on-device aligner card.
+   Shape, colour and buttons come from the app's tokens and the global .btn /
+   .banner / .progress rules; this file only arranges one card. */
+
+.card {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+/* Name, what it is for, and the one action that moves it forward. */
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-read);
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+  letter-spacing: var(--ls-tight);
+  color: var(--text);
+}
+
+.qualifier {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.actions .btn {
+  font-size: var(--fs-sm);
+}
+
+/* The secondary action is a word, not a box: one line for the pair on a phone. */
+.actions .btn-ghost {
+  padding-inline: var(--space-1);
+}
+
+.intro {
+  margin: 0;
+  max-width: var(--measure-ui);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  color: var(--muted);
+}
+
+/* State and size: the two facts that decide whether to tap Download. */
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.size {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.download {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.downloadText {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* -- failure -------------------------------------------------------------- */
+
+.errorBlock {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.errorStage {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+.errorMessage {
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+
+.errorDetails {
+  font-size: var(--fs-xs);
+}
+
+.errorDetails summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+
+.errorDetails pre {
+  margin: 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* The copied/copy label is a quiet action inside the banner, not a second
+   primary control: it keeps the button's target size but not its voice. */
+:global(.btn).copyError {
+  justify-self: start;
+  padding-inline: 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--danger);
+}
+
+:global(.btn).copyError:hover:not(:disabled) {
+  background: none;
+  text-decoration: underline;
+}
+
+/* -- speed ---------------------------------------------------------------- */
+
+/* The measured result and the button that refreshes it, on one line: the
+   number is only worth as much as the test behind it. */
+.speed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.speedResult {
+  flex: 1 1 auto;
+  margin: 0;
+  min-width: 0;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.speedValue {
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.speedOk {
+  color: var(--success);
+}
+
+.speedSlow {
+  color: var(--warning);
+}
+
+.measureError {
+  color: var(--danger);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+  color: var(--muted);
+}
+
+.attribution {
+  margin: 0;
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+}
