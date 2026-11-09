@@ -8,7 +8,7 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
-        versionName "1.0"
+        versionName "0.1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         // sherpa-onnx ships x86/x86_64 ONNX runtime builds too, but this app only ever runs
         // on a real phone: dropping the emulator ABIs saves ~70 MB of APK.

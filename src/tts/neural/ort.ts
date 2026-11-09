@@ -18,7 +18,8 @@
  * On Android the same files ship inside the APK (`public/` is bundled), so the
  * native shell is offline from the first launch.
  *
- * `/ort/` is root-relative because `vite.config.ts` uses the default `base: '/'`
- * and Capacitor serves the bundle from the origin root (`https://localhost`).
+ * The path is built from Vite's BASE_URL so it follows the deploy sub-path
+ * (e.g. `/pharmareader/ort/` on GitHub Pages) while staying `/ort/` for dev,
+ * Capacitor (`https://localhost`) and Tauri.
  */
-export const ORT_BASE_URL = '/ort/';
+export const ORT_BASE_URL = `${import.meta.env.BASE_URL}ort/`;

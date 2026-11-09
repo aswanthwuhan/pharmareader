@@ -17,7 +17,10 @@ const { ORT_FILES, copyOrt, resolveOrtDist } = copyScript as unknown as {
 
 describe('self-hosted onnxruntime-web', () => {
   it('serves the runtime from the app origin, not a CDN', () => {
-    expect(ORT_BASE_URL).toBe('/ort/');
+    // Follows the app's mount point: '/ort/' at base '/', '/pharmareader/ort/' on Pages.
+    expect(ORT_BASE_URL).toBe(`${import.meta.env.BASE_URL}ort/`);
+    expect(ORT_BASE_URL).toMatch(/^\/(?:.*\/)?ort\/$/);
+    expect(ORT_BASE_URL).not.toMatch(/^https?:/);
   });
 
   it('finds the installed onnxruntime-web build and copies the files the engines load', () => {

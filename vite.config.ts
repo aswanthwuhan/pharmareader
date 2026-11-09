@@ -2,7 +2,13 @@ import { configDefaults, defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
+// GitHub Pages serves the PWA from /pharmareader/; dev, Capacitor and Tauri need '/'.
+// The workflow sets VITE_BASE=/pharmareader/ at build time.
+const rawBase = process.env.VITE_BASE ?? '/';
+const base = rawBase.endsWith('/') ? rawBase : `${rawBase}/`;
+
 export default defineConfig(({ mode }) => ({
+  base,
   plugins: [
     react(),
     VitePWA({
@@ -17,17 +23,23 @@ export default defineConfig(({ mode }) => ({
         theme_color: '#0f4c5c',
         background_color: '#0f4c5c',
         display: 'standalone',
-        start_url: '/',
+        // the whole app lives under the deploy path, so the install scope is that path too
+        start_url: base,
+        scope: base,
+        // relative to the manifest, which sits at the base path
         icons: [{ src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }],
       },
       workbox: {
         // TTS models are hundreds of MB and are downloaded at runtime, never precached.
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         globPatterns: ['**/*.{js,css,html,woff2}'],
+        // SPA deep links (e.g. /pharmareader/read/abc on reload) must land on the shell.
+        navigateFallback: `${base}index.html`,
         // onnxruntime-web wasm (~22 MB) is too big to precache; cache on first use so later launches work offline.
         runtimeCaching: [
           {
-            urlPattern: ({ url }) => url.pathname.startsWith('/ort/'),
+            // matches <base>ort/ wherever the app is mounted
+            urlPattern: ({ url }) => url.pathname.includes('/ort/'),
             handler: 'CacheFirst',
             options: { cacheName: 'ort-runtime', expiration: { maxEntries: 10 } },
           },
