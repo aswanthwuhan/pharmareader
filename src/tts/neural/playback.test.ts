@@ -13,12 +13,15 @@ interface FakeSource {
   stopped: number;
 }
 
-function installAudioContext(): { ctx: Record<string, unknown>; lastSource: () => FakeSource } {
+function installAudioContext(opts: { suspended?: boolean; resumeGate?: Promise<void> } = {}): {
+  ctx: Record<string, unknown>;
+  lastSource: () => FakeSource;
+} {
   let last: FakeSource | null = null;
   const ctx = {
-    state: 'running' as AudioContextState,
+    state: (opts.suspended ? 'suspended' : 'running') as AudioContextState,
     destination: {},
-    resume: vi.fn(async () => {}),
+    resume: vi.fn(() => opts.resumeGate ?? Promise.resolve()),
     suspend: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
     createBuffer: vi.fn((channels: number, length: number, sampleRate: number) => ({
@@ -92,6 +95,40 @@ describe('FloatPlayer', () => {
 
     expect(lastSource().stopped).toBe(1);
     await expect(done).resolves.toBeUndefined();
+  });
+
+  it('does not start audio when stopped while the context is resuming', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { ctx } = installAudioContext({ suspended: true, resumeGate: gate });
+    const player = new FloatPlayer();
+
+    const done = player.play(new Float32Array(8), 24000);
+    await Promise.resolve(); // play() is now parked on ctx.resume()
+    player.stop();
+    release();
+    await done;
+
+    expect(ctx.createBufferSource).not.toHaveBeenCalled();
+  });
+
+  it('waits while paused instead of starting the next clip', async () => {
+    const { ctx, lastSource } = installAudioContext();
+    const player = new FloatPlayer();
+    player.pause();
+
+    const done = player.play(new Float32Array(8), 24000);
+    await Promise.resolve();
+    expect(ctx.createBufferSource).not.toHaveBeenCalled();
+    expect(ctx.resume).not.toHaveBeenCalled(); // an explicit pause is not undone by play()
+
+    player.resume();
+    await Promise.resolve();
+    expect(lastSource().started).toBe(true);
+    player.stop();
+    await done;
   });
 
   it('ignores empty audio', async () => {

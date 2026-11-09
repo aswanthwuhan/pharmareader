@@ -37,6 +37,21 @@ describe('measureRtf', () => {
     await expect(getSetting(rtfSettingKey('kokoro'), -1)).resolves.toBe(round(result.rtf));
   });
 
+  it('divides the measured synthesis time by the audio duration', async () => {
+    const now = vi.spyOn(performance, 'now');
+    // Only the measured run is timed: start at 5 s, finish at 6.5 s.
+    now.mockReturnValueOnce(5000).mockReturnValueOnce(6500);
+    try {
+      const result = await measureRtf(fakeEngine(), { rate: 1 });
+      expect(result.synthMs).toBe(1500); // 1.5 s of compute…
+      expect(result.audioMs).toBeCloseTo(1000, 0); // …for 1 s of audio
+      expect(result.rtf).toBeCloseTo(1.5, 3);
+      await expect(getSetting(rtfSettingKey('kokoro'), -1)).resolves.toBe(1.5);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it('rejects engines without synthesize support', async () => {
     const engine = { ...fakeEngine(), synthesize: undefined } as unknown as TtsEngine;
     await expect(measureRtf(engine)).rejects.toThrow(/cannot synthesize/);

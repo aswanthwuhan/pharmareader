@@ -94,4 +94,26 @@ describe('models download bookkeeping', () => {
     expect(kokoroSizeMb('fp16')).toBe(170);
     expect(kokoroSizeMb('q8')).toBe(90);
   });
+
+  it('throws when the storage refuses to delete the weights', async () => {
+    // A cache whose delete() reports success but keeps the entries (seen when
+    // the quota/policy layer refuses the removal).
+    const state: Record<string, string[]> = {
+      [POCKET_CACHE]: ['https://huggingface.co/vlapky/pocket-tts-onnx/flow_lm_main.onnx'],
+    };
+    const storage = {
+      has: async (name: string) => name in state,
+      open: async (name: string) => ({
+        keys: async () => (state[name] ?? []).map((url) => ({ url }) as Request),
+        delete: async () => true, // no-op: the entry stays
+      }),
+      delete: async () => true, // bucket "deleted" but still reachable
+    } as unknown as CacheStorage;
+    vi.stubGlobal('caches', storage);
+    await setSetting('tts.model.pocket.ready', true);
+
+    await expect(deleteModel('pocket')).rejects.toThrow('Could not delete the downloaded model files');
+    // The flag must survive so the UI can still show the model as downloaded.
+    await expect(isModelDownloaded('pocket')).resolves.toBe(true);
+  });
 });

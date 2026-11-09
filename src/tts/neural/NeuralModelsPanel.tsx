@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { setSetting, useSetting } from '../../core/settings';
 import type { TtsEngine, TtsVoice } from '../../core/types';
 import { measureRtf, rtfSettingKey, rtfVerdict } from './benchmark';
@@ -12,20 +13,9 @@ import {
   setKokoroVoice,
 } from './kokoro';
 import type { KokoroDtype } from './kokoroProtocol';
-import {
-  DEFAULT_SERVER_URL,
-  SERVER_URL_SETTING,
-  isServerReachable,
-  kokoroServerEngine,
-} from './kokoroServer';
-import {
-  isModelDownloaded,
-  isModelReadyFlag,
-  kokoroSizeMb,
-  deleteModel,
-  POCKET_SIZE_MB,
-} from './models';
-import { pocketEngine, resetPocketEngine } from './pocket';
+import KokoroNativePanel from './KokoroNativePanel';
+import { isModelDownloaded, isModelReadyFlag, kokoroSizeMb, deleteModel, POCKET_SIZE_MB } from './models';
+import { POCKET_RATE_MAX, POCKET_RATE_MIN, pocketEngine, resetPocketEngine } from './pocket';
 import styles from './NeuralModelsPanel.module.css';
 
 type ModelId = 'pocket' | 'kokoro';
@@ -128,7 +118,14 @@ function EngineCard(props: EngineCardProps) {
         </select>
       </label>
 
-      <button type="button" className={styles.secondary} onClick={props.onMeasure} disabled={busy}>
+      <button
+        type="button"
+        className={styles.secondary}
+        onClick={props.onMeasure}
+        // Measuring synthesises with the real model, so it must already be here;
+        // otherwise the click would silently start a 90–150 MB download.
+        disabled={busy || state.kind !== 'ready'}
+      >
         {props.measuring ? 'Measuring…' : 'Measure speed'}
       </button>
 
@@ -175,39 +172,43 @@ export default function NeuralModelsPanel() {
   const [pocketError, setPocketError] = useState<string | null>(null);
   const [kokoroError, setKokoroError] = useState<string | null>(null);
 
+  // On Android/iOS the native sherpa-onnx panel owns Kokoro; the web engine
+  // would download into the WebView cache and could not run the native model.
+  const native = useMemo(() => Capacitor.isNativePlatform(), []);
+
   const dtype = useSetting<KokoroDtype>(KOKORO_DTYPE_SETTING, defaultDtype());
   const kokoroVoice = useSetting<string>(KOKORO_VOICE_SETTING, DEFAULT_KOKORO_VOICE);
   const pocketVoice = useSetting<string>('tts.pocket.voice', '');
   const pocketRtf = useSetting<number>(rtfSettingKey('pocket'), 0);
   const kokoroRtf = useSetting<number>(rtfSettingKey('kokoro'), 0);
-  const savedServerUrl = useSetting<string>(SERVER_URL_SETTING, DEFAULT_SERVER_URL);
-
-  const [serverUrl, setServerUrl] = useState(savedServerUrl);
-  const [serverCheck, setServerCheck] = useState<'idle' | 'checking' | 'ok' | 'fail'>('idle');
-
-  useEffect(() => {
-    setServerUrl(savedServerUrl);
-  }, [savedServerUrl]);
 
   useEffect(() => {
     let alive = true;
     void (async () => {
-      const [pocketDownloaded, pocketLoaded, kokoroDownloaded] = await Promise.all([
+      const [pocketDownloaded, pocketLoaded] = await Promise.all([
         isModelDownloaded('pocket'),
         isModelReadyFlag('pocket'),
-        isModelDownloaded('kokoro'),
       ]);
       if (!alive) return;
       setPocketState(pocketDownloaded ? { kind: 'ready' } : { kind: 'absent' });
+      if (pocketDownloaded && pocketLoaded) {
+        void loadVoices(pocketEngine, (voices) => {
+          if (alive) setPocketVoices(voices);
+        });
+      }
+      if (native) return;
+      const kokoroDownloaded = await isModelDownloaded('kokoro');
+      if (!alive) return;
       setKokoroState(kokoroDownloaded ? { kind: 'ready' } : { kind: 'absent' });
-      if (pocketDownloaded && pocketLoaded) void loadVoices(pocketEngine, setPocketVoices);
       // Kokoro's voice list is static, so it is available without loading the model.
-      void loadVoices(kokoroEngine, setKokoroVoices);
+      void loadVoices(kokoroEngine, (voices) => {
+        if (alive) setKokoroVoices(voices);
+      });
     })();
     return () => {
       alive = false;
     };
-  }, []);
+  }, [native]);
 
   const download = useCallback(
     async (engine: TtsEngine, setState: (state: ModelState) => void, setVoices: (voices: TtsVoice[]) => void) => {
@@ -226,6 +227,8 @@ export default function NeuralModelsPanel() {
   const remove = useCallback(
     async (model: ModelId, reset: () => void, setState: (state: ModelState) => void, setVoices: (voices: TtsVoice[]) => void) => {
       try {
+        // Unload before deleting: an open worker keeps the Cache Storage entries
+        // (and the model memory) reachable and some browsers refuse the delete.
         reset();
         await deleteModel(model);
         setVoices([]);
@@ -251,15 +254,6 @@ export default function NeuralModelsPanel() {
     },
     []
   );
-
-  const testConnection = useCallback(async () => {
-    setServerCheck('checking');
-    const url = serverUrl.trim() || DEFAULT_SERVER_URL;
-    await setSetting(SERVER_URL_SETTING, url);
-    const ok = await isServerReachable(url);
-    setServerCheck(ok ? 'ok' : 'fail');
-    if (ok) void kokoroServerEngine.listVoices().catch(() => []);
-  }, [serverUrl]);
 
   const gpuHint = useMemo(
     () => (typeof navigator !== 'undefined' && 'gpu' in navigator ? 'WebGPU detected' : 'No WebGPU — using WASM'),
@@ -289,90 +283,54 @@ export default function NeuralModelsPanel() {
         measuring={measuring === 'pocket'}
         rtf={pocketRtf}
         measureError={pocketError}
-      />
-
-      <EngineCard
-        model="kokoro"
-        engine={kokoroEngine}
-        title="Kokoro-82M"
-        sizeLabel={`~${kokoroSizeMb(dtype)} MB · ${dtype}`}
-        state={kokoroState}
-        voices={kokoroVoices}
-        voiceId={kokoroVoice}
-        onVoiceChange={(voiceId) => void setKokoroVoice(voiceId)}
-        onDownload={() => void download(kokoroEngine, setKokoroState, setKokoroVoices)}
-        onDelete={() => void remove('kokoro', resetKokoroEngine, setKokoroState, setKokoroVoices)}
-        onMeasure={() => void measure('kokoro', kokoroEngine, kokoroVoice, setKokoroError)}
-        measuring={measuring === 'kokoro'}
-        rtf={kokoroRtf}
-        measureError={kokoroError}
       >
-        <label className={styles.field}>
-          <span>Precision</span>
-          <select
-            value={dtype}
-            onChange={(event) => void setSetting(KOKORO_DTYPE_SETTING, event.target.value as KokoroDtype)}
-          >
-            {(Object.keys(DTYPE_LABELS) as KokoroDtype[]).map((option) => (
-              <option key={option} value={option}>
-                {DTYPE_LABELS[option]}
-              </option>
-            ))}
-          </select>
-        </label>
         <p className={styles.hint}>
-          {gpuHint}. Changing precision takes effect on the next download or reload. All 28 Kokoro voices are
-          English (af_* and am_* US, bf_* and bm_* UK).
+          Pocket changes speed by resampling, which also changes the pitch, so its reading speed is limited to{' '}
+          {POCKET_RATE_MIN.toFixed(2)}×–{POCKET_RATE_MAX.toFixed(2)}×. Use Kokoro or the system voice for a wider range.
         </p>
       </EngineCard>
 
-      <section className={styles.card} aria-labelledby="tts-server-title">
-        <header className={styles.cardHeader}>
-          <h3 id="tts-server-title" className={styles.cardTitle}>
-            Kokoro server
-          </h3>
-          <span className={styles.size}>No download</span>
-        </header>
-        <label className={styles.field}>
-          <span>Server URL</span>
-          <input
-            type="url"
-            inputMode="url"
-            spellCheck={false}
-            placeholder={DEFAULT_SERVER_URL}
-            value={serverUrl}
-            onChange={(event) => {
-              setServerUrl(event.target.value);
-              setServerCheck('idle');
-            }}
-            onBlur={() => void setSetting(SERVER_URL_SETTING, serverUrl.trim() || DEFAULT_SERVER_URL)}
-          />
-        </label>
-        <div className={styles.actions}>
-          <button
-            type="button"
-            className={styles.secondary}
-            onClick={() => void testConnection()}
-            disabled={serverCheck === 'checking'}
-          >
-            {serverCheck === 'checking' ? 'Testing…' : 'Test connection'}
-          </button>
-        </div>
-        <p className={styles.status} role="status" aria-live="polite">
-          {serverCheck === 'ok'
-            ? 'Server reachable ✓'
-            : serverCheck === 'fail'
-              ? 'Server not reachable — check that it is running and allows this origin (CORS).'
-              : 'Needs a local OpenAI-compatible TTS server, e.g. kokoro-fastapi on port 8880.'}
-        </p>
-        <p className={styles.hint}>
-          Uses the OpenAI speech API: POST /v1/audio/speech with MP3 output. The server is ideal on phones: no
-          model download and instant playback on the local network.
-        </p>
-      </section>
+      {native ? (
+        <KokoroNativePanel />
+      ) : (
+        <EngineCard
+          model="kokoro"
+          engine={kokoroEngine}
+          title="Kokoro-82M"
+          sizeLabel={`~${kokoroSizeMb(dtype)} MB · ${dtype}`}
+          state={kokoroState}
+          voices={kokoroVoices}
+          voiceId={kokoroVoice}
+          onVoiceChange={(voiceId) => void setKokoroVoice(voiceId)}
+          onDownload={() => void download(kokoroEngine, setKokoroState, setKokoroVoices)}
+          onDelete={() => void remove('kokoro', resetKokoroEngine, setKokoroState, setKokoroVoices)}
+          onMeasure={() => void measure('kokoro', kokoroEngine, kokoroVoice, setKokoroError)}
+          measuring={measuring === 'kokoro'}
+          rtf={kokoroRtf}
+          measureError={kokoroError}
+        >
+          <label className={styles.field}>
+            <span>Precision</span>
+            <select
+              value={dtype}
+              onChange={(event) => void setSetting(KOKORO_DTYPE_SETTING, event.target.value as KokoroDtype)}
+            >
+              {(Object.keys(DTYPE_LABELS) as KokoroDtype[]).map((option) => (
+                <option key={option} value={option}>
+                  {DTYPE_LABELS[option]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className={styles.hint}>
+            {gpuHint}. Changing precision takes effect on the next download or reload. All 28 Kokoro voices are
+            English (af_* and am_* US, bf_* and bm_* UK).
+          </p>
+        </EngineCard>
+      )}
 
       <p className={styles.attribution}>{POCKET_ATTRIBUTION}</p>
-      <p className={styles.attribution}>{KOKORO_ATTRIBUTION}</p>
+      {!native && <p className={styles.attribution}>{KOKORO_ATTRIBUTION}</p>}
     </div>
   );
 }

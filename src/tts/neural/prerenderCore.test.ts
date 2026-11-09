@@ -110,6 +110,55 @@ describe('runPrerender', () => {
     expect(onItemError).toHaveBeenCalledTimes(1);
   });
 
+  it('does not count an aborted synthesis as a failed item', async () => {
+    const controller = new AbortController();
+    const deps = fakeDeps();
+    const engine = fakeEngine();
+    (engine.synthesize as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      controller.abort();
+      throw new Error('Pocket TTS synthesis was stopped');
+    });
+
+    const report = await runPrerender(engine, items, { signal: controller.signal }, undefined, deps);
+
+    expect(report).toMatchObject({ aborted: true, failed: 0, done: 0, synthesised: 0 });
+    expect(deps.putAudio).not.toHaveBeenCalled();
+    expect(engine.stop).toHaveBeenCalled();
+  });
+
+  it('stops before synthesizing when the signal aborts during expansion', async () => {
+    const controller = new AbortController();
+    const deps = fakeDeps({
+      expand: vi.fn(async (text: string) => {
+        controller.abort();
+        return text;
+      }),
+    });
+    const engine = fakeEngine();
+
+    const report = await runPrerender(engine, items, { signal: controller.signal }, undefined, deps);
+
+    expect(report).toMatchObject({ aborted: true, failed: 0, done: 0 });
+    expect(engine.synthesize).not.toHaveBeenCalled();
+  });
+
+  it('stops before synthesizing when the signal aborts while reading the cache', async () => {
+    const controller = new AbortController();
+    const deps = fakeDeps({
+      getAudio: vi.fn(async () => {
+        controller.abort();
+        return null;
+      }),
+    });
+    const engine = fakeEngine();
+
+    const report = await runPrerender(engine, items, { signal: controller.signal }, undefined, deps);
+
+    expect(report).toMatchObject({ aborted: true, failed: 0, done: 0 });
+    expect(engine.synthesize).not.toHaveBeenCalled();
+    expect(deps.putAudio).not.toHaveBeenCalled();
+  });
+
   it('refuses engines that cannot synthesize', async () => {
     const engine = { ...fakeEngine(), synthesize: undefined } as unknown as TtsEngine;
     await expect(runPrerender(engine, items, {}, undefined, fakeDeps())).rejects.toThrow(/cannot pre-render/);

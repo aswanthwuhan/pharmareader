@@ -87,6 +87,8 @@ class KokoroEngine implements TtsEngine {
   private nextId = 1;
   private ready = false;
   private stopped = false;
+  /** Bumped by `speak`/`stop` so a superseded utterance cannot resume playback. */
+  private generation = 0;
 
   async isReady(): Promise<boolean> {
     return this.ready;
@@ -94,11 +96,12 @@ class KokoroEngine implements TtsEngine {
 
   async prepare(onProgress?: (fraction: number) => void): Promise<void> {
     if (this.ready) return;
-    this.loading ??= this.init(onProgress);
+    const pending = (this.loading ??= this.init(onProgress));
     try {
-      await this.loading;
+      await pending;
     } catch (err) {
-      this.loading = null;
+      // Clear only our own attempt; a reset() may already have replaced it.
+      if (this.loading === pending) this.loading = null;
       throw err;
     }
   }
@@ -110,16 +113,21 @@ class KokoroEngine implements TtsEngine {
     const fallback: KokoroDtype = device === 'webgpu' ? 'fp32' : 'q8';
     const dtype = await getSetting<KokoroDtype>(KOKORO_DTYPE_SETTING, fallback);
 
-    const worker = this.ensureWorker();
-    const done = new Promise<void>((resolve, reject) => {
-      this.pendingInit = { resolve, reject };
-    });
-    worker.postMessage({ type: 'init', dtype, device } satisfies KokoroRequest);
-    await done;
+    try {
+      const worker = this.ensureWorker();
+      const done = new Promise<void>((resolve, reject) => {
+        this.pendingInit = { resolve, reject };
+      });
+      worker.postMessage({ type: 'init', dtype, device } satisfies KokoroRequest);
+      await done;
 
-    this.ready = true;
-    onProgress?.(1);
-    await setModelReady('kokoro', true);
+      this.ready = true;
+      onProgress?.(1);
+      await setModelReady('kokoro', true);
+    } finally {
+      // Do not retain the panel's progress callback once the download is over.
+      this.onProgress = undefined;
+    }
   }
 
   async listVoices(): Promise<TtsVoice[]> {
@@ -133,6 +141,7 @@ class KokoroEngine implements TtsEngine {
   ): Promise<void> {
     if (items.length === 0) return;
     this.stopped = false;
+    const generation = ++this.generation;
 
     let voice: string;
     const rate = opts.rate > 0 ? opts.rate : 1;
@@ -140,11 +149,13 @@ class KokoroEngine implements TtsEngine {
       await this.prepare();
       voice = await this.voice(opts.voiceId);
     } catch (err) {
-      ev.onError?.(asError(err));
+      if (!this.stopped) ev.onError?.(asError(err));
       return;
     }
+    if (this.stopped || generation !== this.generation) return;
 
     await this.player.resume();
+    if (this.stopped || generation !== this.generation) return;
 
     let next = this.request(items[0].text, voice, rate);
     next.catch(() => {});
@@ -154,10 +165,10 @@ class KokoroEngine implements TtsEngine {
       try {
         pcm = await next;
       } catch (err) {
-        if (!this.stopped) ev.onError?.(asError(err));
+        if (!this.stopped && generation === this.generation) ev.onError?.(asError(err));
         return;
       }
-      if (!pcm || this.stopped) return;
+      if (!pcm || this.stopped || generation !== this.generation) return;
 
       if (i + 1 < items.length) {
         next = this.request(items[i + 1].text, voice, rate);
@@ -165,9 +176,14 @@ class KokoroEngine implements TtsEngine {
       }
 
       ev.onStart?.(items[i].id);
-      await this.player.play(pcm.data, pcm.sampleRate, 1);
+      try {
+        await this.player.play(pcm.data, pcm.sampleRate, 1);
+      } catch (err) {
+        if (!this.stopped && generation === this.generation) ev.onError?.(asError(err));
+        return;
+      }
       ev.onEnd?.(items[i].id);
-      if (this.stopped) return;
+      if (this.stopped || generation !== this.generation) return;
     }
   }
 
@@ -181,8 +197,12 @@ class KokoroEngine implements TtsEngine {
 
   stop(): void {
     this.stopped = true;
+    this.generation++;
     this.player.stop();
     this.worker?.postMessage({ type: 'stop' } satisfies KokoroRequest);
+    // The worker answers `stopped` only for the request it was running; the
+    // requests queued behind it would otherwise keep their promises parked.
+    this.rejectPending(new Error('Kokoro synthesis was stopped'));
   }
 
   pause(): void {
@@ -195,16 +215,24 @@ class KokoroEngine implements TtsEngine {
 
   /** Terminate the worker and free the model memory. */
   reset(): void {
-    this.stop();
+    this.stopped = true;
+    this.generation++;
+    this.player.stop();
     this.worker?.terminate();
     this.worker = null;
     this.ready = false;
     this.loading = null;
+    const init = this.pendingInit;
     this.pendingInit = null;
+    init?.reject(new Error('Kokoro engine was reset'));
     // Nothing will answer these once the worker is gone.
-    for (const request of this.pending.values()) request.reject(new Error('Kokoro engine was reset'));
-    this.pending.clear();
+    this.rejectPending(new Error('Kokoro engine was reset'));
     void this.player.dispose();
+  }
+
+  private rejectPending(err: Error): void {
+    for (const request of this.pending.values()) request.reject(err);
+    this.pending.clear();
   }
 
   private ensureWorker(): Worker {
@@ -212,15 +240,21 @@ class KokoroEngine implements TtsEngine {
     // Vite turns this into a bundled module worker.
     const worker = new Worker(new URL('./kokoro.worker.ts', import.meta.url), { type: 'module' });
     worker.onmessage = (event: MessageEvent<KokoroResponse>) => this.receive(event.data);
-    worker.onerror = (event) => {
-      const err = new Error(event.message || 'Kokoro worker error');
-      this.pendingInit?.reject(err);
-      this.pendingInit = null;
-      for (const request of this.pending.values()) request.reject(err);
-      this.pending.clear();
-    };
+    worker.onerror = (event) => this.fail(new Error(event.message || 'Kokoro worker error'));
+    worker.onmessageerror = () => this.fail(new Error('Kokoro worker sent an unreadable message'));
     this.worker = worker;
     return worker;
+  }
+
+  /** Something is wrong with the worker: fail fast and allow a retry. */
+  private fail(err: Error): void {
+    this.ready = false;
+    this.loading = null;
+    this.pendingInit?.reject(err);
+    this.pendingInit = null;
+    this.rejectPending(err);
+    this.worker?.terminate();
+    this.worker = null;
   }
 
   private receive(msg: KokoroResponse): void {
@@ -246,10 +280,11 @@ class KokoroEngine implements TtsEngine {
       case 'error': {
         const err = new Error(msg.message);
         if (msg.id === undefined) {
+          this.ready = false;
+          this.loading = null;
           this.pendingInit?.reject(err);
           this.pendingInit = null;
-          for (const request of this.pending.values()) request.reject(err);
-          this.pending.clear();
+          this.rejectPending(err);
         } else {
           this.pending.get(msg.id)?.reject(err);
           this.pending.delete(msg.id);
@@ -260,8 +295,8 @@ class KokoroEngine implements TtsEngine {
   }
 
   private request(text: string, voice: string, speed: number): Promise<Pcm | null> {
-    const worker = this.ensureWorker();
     if (!this.ready) return Promise.reject(new Error('Kokoro model is not loaded'));
+    const worker = this.ensureWorker();
     const id = this.nextId++;
     return new Promise<Pcm | null>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });

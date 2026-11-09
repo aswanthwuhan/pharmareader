@@ -224,8 +224,8 @@ export default function KokoroNativePanel(): React.JSX.Element {
 
       {state === 'unsupported' && (
         <p className="tts-tip">
-          The native Kokoro engine is only available in the Android app. In the browser use the system
-          voice, or connect to a Kokoro server.
+          The native Kokoro engine is only available in the Android app. In the browser, use the
+          in-browser Kokoro or Pocket TTS model, or the system voice.
         </p>
       )}
 

@@ -103,8 +103,16 @@ export async function runPrerender(
       }
       try {
         const text = await deps.expand(item.text);
+        if (signal?.aborted) {
+          report.aborted = true;
+          break;
+        }
         const key = await deps.cacheKey(text, engine.id, opts.voiceId, rate, version);
         const cached = await deps.getAudio(key);
+        if (signal?.aborted) {
+          report.aborted = true;
+          break;
+        }
         if (cached) {
           report.skipped++;
         } else {
@@ -124,6 +132,12 @@ export async function runPrerender(
           report.synthesised++;
         }
       } catch (error) {
+        // The abort stopped the engine mid-synthesis, so the rejection is the
+        // cancellation, not a broken sentence: do not count it as a failure.
+        if (signal?.aborted) {
+          report.aborted = true;
+          break;
+        }
         report.failed++;
         (deps.onItemError ?? logItemError)(error, item);
       }

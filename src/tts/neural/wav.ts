@@ -100,7 +100,7 @@ export async function wavDurationMs(blob: Blob): Promise<number> {
 
 /**
  * Duration of any browser-decodable audio blob in ms (WAV headers first, then
- * `decodeAudioData` for the MP3 the Kokoro server returns). Falls back to 0.
+ * `decodeAudioData` for other formats such as the system voice's MP3). Falls back to 0.
  */
 export async function audioDurationMs(blob: Blob): Promise<number> {
   const fromHeader = await wavDurationMs(blob);

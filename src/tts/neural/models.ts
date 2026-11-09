@@ -10,6 +10,9 @@
  *
  * Cache Storage is not always inspectable (private mode, quota errors), so a
  * successful `prepare()` also sets `tts.model.<id>.ready`. Either signal counts.
+ * The caches are what makes the second launch offline: the libraries read them
+ * instead of the network, so deleting them really frees the download — and
+ * `deleteModel()` verifies that, because `cache.delete()` can silently fail.
  */
 import { getSetting, setSetting } from '../../core/settings';
 
@@ -54,11 +57,9 @@ export async function setModelReady(id: NeuralModelId, ready = true): Promise<vo
   await setSetting(`tts.model.${id}.ready`, ready);
 }
 
-/** True when the weights look present (cache bucket non-empty or ready flag set). */
-export async function isModelDownloaded(id: NeuralModelId): Promise<boolean> {
-  if (await isModelReadyFlag(id)) return true;
-  if (typeof caches === 'undefined') return false;
+async function hasMatchingEntries(id: NeuralModelId): Promise<boolean> {
   const info = NEURAL_MODELS[id];
+  if (typeof caches === 'undefined') return false;
   try {
     for (const name of info.caches) {
       if (!(await caches.has(name))) continue;
@@ -72,6 +73,11 @@ export async function isModelDownloaded(id: NeuralModelId): Promise<boolean> {
   return false;
 }
 
+/** True when the weights look present (cache bucket non-empty or ready flag set). */
+export async function isModelDownloaded(id: NeuralModelId): Promise<boolean> {
+  return (await isModelReadyFlag(id)) || hasMatchingEntries(id);
+}
+
 /**
  * Delete the downloaded weights; the next `prepare()` fetches them again.
  *
@@ -82,21 +88,21 @@ export async function isModelDownloaded(id: NeuralModelId): Promise<boolean> {
 export async function deleteModel(id: NeuralModelId): Promise<void> {
   const info = NEURAL_MODELS[id];
   if (typeof caches !== 'undefined') {
-    for (const name of info.caches) {
-      try {
+    try {
+      for (const name of info.caches) {
         if (!(await caches.has(name))) continue;
         const cache = await caches.open(name);
         const requests = await cache.keys();
         const ours = requests.filter((request) => info.match(request.url));
         if (ours.length === 0) continue;
-        if (ours.length === requests.length) {
-          await caches.delete(name);
-        } else {
-          await Promise.all(ours.map((request) => cache.delete(request)));
-        }
-      } catch {
-        // Cache Storage can throw in private mode — nothing to delete then.
+        if (ours.length === requests.length) await caches.delete(name);
+        else await Promise.all(ours.map((request) => cache.delete(request)));
       }
+    } catch {
+      // Private mode/quota: fall through and let the verification below decide.
+    }
+    if (await hasMatchingEntries(id)) {
+      throw new Error('Could not delete the downloaded model files');
     }
   }
   await setModelReady(id, false);

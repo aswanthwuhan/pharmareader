@@ -3,11 +3,22 @@
  * the UI thread: ~300 MB of WASM memory plus multi-second inference would
  * freeze the reader otherwise. WebGPU when the browser has it, WASM otherwise.
  */
-import { KokoroTTS } from 'kokoro-js';
+import { KokoroTTS, env } from 'kokoro-js';
 import type { KokoroDevice, KokoroDtype, KokoroRequest, KokoroResponse } from './kokoroProtocol';
 import { createProgressAggregator } from './progress';
+import { ORT_BASE_URL } from './ort';
 
 const MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
+
+/**
+ * `env.wasmPaths` is the kokoro-js alias for `env.backends.onnx.wasm.wasmPaths`
+ * (transformers.js otherwise defaults it to a jsDelivr URL). Assigning it here,
+ * before `from_pretrained()` loads the runtime, keeps onnxruntime-web on the
+ * app's own `/ort/` copy. The weights still come from Hugging Face once, then
+ * live in Cache Storage (`transformers-cache`, `kokoro-voices`), so a second
+ * launch is fully offline.
+ */
+env.wasmPaths = ORT_BASE_URL;
 
 interface WorkerScope {
   postMessage(message: KokoroResponse, transfer?: Transferable[]): void;
@@ -23,9 +34,17 @@ function post(message: KokoroResponse, transfer?: Transferable[]): void {
 let tts: KokoroTTS | null = null;
 /** Request currently being synthesised; -1 once `stop` was received. */
 let currentId = -1;
+/** ONNX sessions are not re-entrant: init/speak run one after another. */
+let queue: Promise<void> = Promise.resolve();
 
 scope.onmessage = (event) => {
-  void handle(event.data);
+  const msg = event.data;
+  // `stop` must act on the running synthesis immediately, not after a queue.
+  if (msg.type === 'stop') {
+    currentId = -1;
+    return;
+  }
+  queue = queue.then(() => handle(msg));
 };
 
 async function handle(msg: KokoroRequest): Promise<void> {
@@ -45,14 +64,29 @@ async function init(dtype: KokoroDtype, device: KokoroDevice): Promise<void> {
     return;
   }
   const report = createProgressAggregator((fraction) => post({ type: 'progress', fraction }));
-  tts = await KokoroTTS.from_pretrained(MODEL_ID, {
+  try {
+    tts = await load(dtype, device, report);
+  } catch (err) {
+    // WebGPU can be advertised but still fail (old driver, no adapter). Retry on
+    // WASM with the same weights instead of leaving the engine unusable.
+    if (device !== 'webgpu') throw err;
+    tts = await load(dtype, 'wasm', report);
+  }
+  post({ type: 'ready', voices: Object.keys(tts.voices) });
+}
+
+async function load(
+  dtype: KokoroDtype,
+  device: KokoroDevice,
+  report: (info: { label?: string; loaded?: number; total?: number }) => void
+): Promise<KokoroTTS> {
+  return KokoroTTS.from_pretrained(MODEL_ID, {
     dtype,
     device,
     progress_callback: (info) => {
       if (info.status === 'progress') report({ label: info.file, loaded: info.loaded, total: info.total });
     },
   });
-  post({ type: 'ready', voices: Object.keys(tts.voices) });
 }
 
 async function speak(id: number, text: string, voice: string, speed: number): Promise<void> {
