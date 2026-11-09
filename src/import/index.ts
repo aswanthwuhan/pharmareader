@@ -43,7 +43,10 @@ export function titleFromFileName(name: string): string {
   return normaliseText(base.replace(/[_-]+/g, ' ')) || 'Untitled';
 }
 
-async function parseFile(file: File): Promise<{ doc: ParsedDoc; warning?: string }> {
+async function parseFile(
+  file: File,
+  onProgress?: (note: string) => void,
+): Promise<{ doc: ParsedDoc; warning?: string }> {
   const format = detectFormat(file);
   if (!format) {
     throw new Error(`Unsupported file type: ${file.name}. Import a PDF, EPUB, DOCX, TXT, Markdown or HTML file.`);
@@ -69,7 +72,11 @@ async function parseFile(file: File): Promise<{ doc: ParsedDoc; warning?: string
     case 'pdf': {
       // Heavy extractors are loaded only when that file type is imported.
       const { parsePdf } = await import('./pdf');
-      const parsed = await parsePdf(await file.arrayBuffer(), fallback);
+      const parsed = await parsePdf(await file.arrayBuffer(), fallback, (done, total) => {
+        // A 1000-page paper takes a while; a note every 25 pages is enough to
+        // prove the app is alive without re-rendering the library 1000 times.
+        if (done === total || done % 25 === 0) onProgress?.(`page ${done} of ${total}`);
+      });
       // Under ~50 characters per page there is no real text layer: a scan.
       const warning =
         parsed.charsPerPage < 50 ? 'Looks scanned — OCR not supported yet' : undefined;
@@ -106,9 +113,30 @@ async function saveRecord(doc: ParsedDoc, fileBlob: Blob): Promise<string> {
   return record.id;
 }
 
+/**
+ * Remove a book and everything that hangs off it, in one transaction.
+ *
+ * The review logs are keyed by card, not by book, so deleting the cards alone
+ * leaves history behind: it would keep counting in the study stats and in
+ * backups, pointing at cards that no longer exist.
+ */
+export async function deleteBook(bookId: string): Promise<void> {
+  await db.transaction('rw', [db.books, db.highlights, db.bookmarks, db.cards, db.reviewLogs], async () => {
+    const cardIds = await db.cards.where('bookId').equals(bookId).primaryKeys();
+    if (cardIds.length) await db.reviewLogs.where('cardId').anyOf(cardIds).delete();
+    await db.highlights.where('bookId').equals(bookId).delete();
+    await db.bookmarks.where('bookId').equals(bookId).delete();
+    await db.cards.where('bookId').equals(bookId).delete();
+    await db.books.delete(bookId);
+  });
+}
+
 /** Full result including the scanned-PDF warning the library shows inline. */
-export async function importFileDetailed(file: File): Promise<ImportResult> {
-  const { doc, warning } = await parseFile(file);
+export async function importFileDetailed(
+  file: File,
+  onProgress?: (note: string) => void,
+): Promise<ImportResult> {
+  const { doc, warning } = await parseFile(file, onProgress);
   const bookId = await saveRecord(doc, file);
   return { bookId, warning };
 }
@@ -140,17 +168,25 @@ export async function importUrl(url: string): Promise<string> {
     throw new Error('Only http and https addresses can be imported.');
   }
 
-  let response: Response;
+  let html: string;
+  // A page that hangs would otherwise disable the whole library screen: the
+  // import button stays busy until the fetch settles. The timer stays armed
+  // through the body read too, because a slow site can stall after the headers.
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 20_000);
   try {
-    response = await fetch(target.toString());
-  } catch {
+    const response = await fetch(target.toString(), { signal: abort.signal });
+    if (!response.ok) {
+      throw new Error(`That page returned ${response.status}; paste the text instead.`);
+    }
+    html = await response.text();
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('That page returned')) throw error;
     throw new Error('This site blocks web import; paste the text instead.');
-  }
-  if (!response.ok) {
-    throw new Error(`That page returned ${response.status}; paste the text instead.`);
+  } finally {
+    clearTimeout(timer);
   }
 
-  const html = await response.text();
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const pageTitle = normaliseText(doc.title);
 
@@ -167,6 +203,10 @@ export async function importUrl(url: string): Promise<string> {
     author: normaliseText(article.byline ?? '') || undefined,
     chapterLevel: 2,
   });
+
+  if (!parsed.chapters.length) {
+    throw new Error('That page had no readable article text; paste the text instead.');
+  }
 
   return saveRecord(parsed, new Blob([article.content], { type: 'text/html' }));
 }

@@ -1,9 +1,9 @@
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useRef, useState, type FormEvent } from 'react';
+import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { db } from '../core/db';
 import type { BookRecord } from '../core/types';
-import { importFileDetailed, importText, importUrl } from '../import';
+import { deleteBook, importFileDetailed, importText, importUrl } from '../import';
 import '../import/library.css';
 
 const ACCEPT = '.pdf,.epub,.docx,.txt,.md,.html';
@@ -52,6 +52,14 @@ export default function LibraryPage() {
   const navigate = useNavigate();
   const books = useLiveQuery(() => db.books.orderBy('addedAt').reverse().toArray(), [], [] as BookRecord[]);
 
+  // Walking every sentence of every book is not free, and the page re-renders on
+  // each keystroke in the URL field: do it once per library change, not per render.
+  const progressById = useMemo(() => {
+    const map = new Map<string, number | null>();
+    for (const book of books) map.set(book.id, readingProgress(book));
+    return map;
+  }, [books]);
+
   const fileInput = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
@@ -72,9 +80,10 @@ export default function LibraryPage() {
 
     for (let index = 0; index < files.length; index++) {
       const file = files[index];
-      setStatus(files.length > 1 ? `Importing ${index + 1} of ${files.length}: ${file.name}…` : `Importing ${file.name}…`);
+      const prefix = files.length > 1 ? `Importing ${index + 1} of ${files.length}: ${file.name}` : `Importing ${file.name}`;
+      setStatus(`${prefix}…`);
       try {
-        const result = await importFileDetailed(file);
+        const result = await importFileDetailed(file, (note) => setStatus(`${prefix} — ${note}…`));
         if (result.warning) setWarnings((current) => [...current, `${file.name}: ${result.warning}`]);
         if (files.length === 1 && !result.warning) navigate(`/read/${result.bookId}`);
       } catch (error) {
@@ -124,12 +133,11 @@ export default function LibraryPage() {
   async function handleDelete(book: BookRecord) {
     if (!window.confirm(`Delete “${book.title}”? Its highlights, bookmarks and cards go with it.`)) return;
 
-    await db.transaction('rw', [db.books, db.highlights, db.bookmarks, db.cards], async () => {
-      await db.highlights.where('bookId').equals(book.id).delete();
-      await db.bookmarks.where('bookId').equals(book.id).delete();
-      await db.cards.where('bookId').equals(book.id).delete();
-      await db.books.delete(book.id);
-    });
+    try {
+      await deleteBook(book.id);
+    } catch (error) {
+      setErrors([`Could not delete “${book.title}”: ${errorMessage(error)}`]);
+    }
   }
 
   return (
@@ -255,7 +263,7 @@ export default function LibraryPage() {
       ) : (
         <ul className="lib-list">
           {books.map((book) => {
-            const progress = readingProgress(book);
+            const progress = progressById.get(book.id) ?? null;
             const meta = [book.author, FORMAT_LABEL[book.format] ?? book.format.toUpperCase(), progress !== null ? `${progress}% read` : null]
               .filter(Boolean)
               .join(' · ');

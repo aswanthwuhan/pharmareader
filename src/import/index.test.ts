@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../core/db';
-import { detectFormat, importFile, importText, importUrl, titleFromFileName } from './index';
+import { deleteBook, detectFormat, importFile, importText, importUrl, titleFromFileName } from './index';
 
 afterEach(async () => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
   await db.delete();
   await db.open();
 });
@@ -97,6 +98,42 @@ describe('importFile', () => {
   });
 });
 
+describe('deleteBook', () => {
+  it('removes the book with its annotations, cards and their review history', async () => {
+    const keep = await importText('Keep', 'Kept book text.');
+    const drop = await importText('Drop', 'Dropped book text.');
+
+    await db.highlights.bulkAdd([
+      { id: 'h-drop', bookId: drop, sentenceIds: ['0-0-0'], text: 'Dropped', color: 'yellow', topicIds: [], createdAt: 1 },
+      { id: 'h-keep', bookId: keep, sentenceIds: ['0-0-0'], text: 'Kept', color: 'blue', topicIds: [], createdAt: 1 },
+    ]);
+    await db.bookmarks.bulkAdd([
+      { id: 'bm-drop', bookId: drop, chapterId: 'ch-0', sentenceId: '0-0-0', createdAt: 1 },
+      { id: 'bm-keep', bookId: keep, chapterId: 'ch-0', sentenceId: '0-0-0', createdAt: 1 },
+    ]);
+    await db.cards.bulkAdd([
+      { id: 'c-drop', bookId: drop, kind: 'qa', front: 'q', back: 'a', topicIds: [], fsrs: {}, createdAt: 1 },
+      { id: 'c-keep', bookId: keep, kind: 'qa', front: 'q', back: 'a', topicIds: [], fsrs: {}, createdAt: 1 },
+    ]);
+    await db.reviewLogs.bulkAdd([
+      { id: 'r-drop', cardId: 'c-drop', rating: 3, reviewedAt: 1, log: {} },
+      { id: 'r-keep', cardId: 'c-keep', rating: 3, reviewedAt: 1, log: {} },
+    ]);
+
+    await deleteBook(drop);
+
+    expect(await db.books.get(drop)).toBeUndefined();
+    expect(await db.books.get(keep)).toBeTruthy();
+    expect(await db.highlights.where('bookId').equals(drop).count()).toBe(0);
+    expect(await db.bookmarks.where('bookId').equals(drop).count()).toBe(0);
+    expect(await db.cards.where('bookId').equals(drop).count()).toBe(0);
+    // Review history is keyed by card, so it has to be swept explicitly.
+    expect((await db.reviewLogs.toArray()).map((log) => log.id)).toEqual(['r-keep']);
+    expect(await db.highlights.where('bookId').equals(keep).count()).toBe(1);
+    expect(await db.cards.where('bookId').equals(keep).count()).toBe(1);
+  });
+});
+
 describe('importUrl', () => {
   it('rejects addresses that are not http(s)', async () => {
     await expect(importUrl('file:///etc/passwd')).rejects.toThrow(/http/i);
@@ -121,5 +158,44 @@ describe('importUrl', () => {
     );
 
     await expect(importUrl('https://example.com/missing')).rejects.toThrow(/404/);
+  });
+
+  it('gives up on a site that never answers instead of hanging the library', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+          }),
+      ),
+    );
+
+    const pending = expect(importUrl('https://example.com/slow')).rejects.toThrow(/blocks web import/);
+    await vi.advanceTimersByTimeAsync(20_100);
+    await pending;
+  });
+
+  it('gives up when the site sends headers and then stalls the body', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () =>
+              new Promise((_resolve, reject) => {
+                init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+              }),
+          } as unknown as Response),
+      ),
+    );
+
+    const pending = expect(importUrl('https://example.com/drip')).rejects.toThrow(/blocks web import/);
+    await vi.advanceTimersByTimeAsync(20_100);
+    await pending;
   });
 });

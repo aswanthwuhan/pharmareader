@@ -52,14 +52,154 @@ export interface ChapterStart {
 
 /** Group text items into visual lines (items sorted by y, then x). */
 export function itemsToLines(items: PdfTextItem[]): PdfLine[] {
-  const sorted = items.filter((item) => item.str.trim()).sort((a, b) => a.y - b.y || a.x - b.x);
+  return groupRows(items).map(makeLine);
+}
+
+/**
+ * Lines in reading order. Most PDFs are a single column, and `itemsToLines`
+ * is already right for them. A journal page holds two columns side by side:
+ * reading its rows in y order splices the columns into each other sentence by
+ * sentence. Detect the vertical gutter and read each column to its bottom
+ * before starting the next one.
+ */
+export function itemsToPageLines(items: PdfTextItem[], pageWidth: number): PdfLine[] {
+  const rows = groupRows(items);
+  const gutter = detectGutter(rows, pageWidth);
+  if (!gutter) return rows.map(makeLine);
+
   const lines: PdfLine[] = [];
+  let left: PdfLine[] = [];
+  let right: PdfLine[] = [];
+  const middle = (gutter.start + gutter.end) / 2;
+
+  const flushBand = () => {
+    lines.push(...left, ...right);
+    left = [];
+    right = [];
+  };
+
+  for (const row of rows) {
+    // A title or figure caption spanning the gutter splits the page into bands:
+    // columns above it, then the wide line, then columns below it. Testing only
+    // "reaches into the gutter" would also catch a left-column line whose last
+    // word overhangs a point or two, and splicing that with the right column is
+    // exactly the interleaving this function exists to avoid.
+    if (row.some((item) => item.x < middle && item.x + item.w > gutter.end)) {
+      flushBand();
+      lines.push(makeLine(row));
+      continue;
+    }
+
+    const leftItems = row.filter((item) => item.x + item.w / 2 < middle);
+    const rightItems = row.filter((item) => item.x + item.w / 2 >= middle);
+    if (leftItems.length) left.push(makeLine(leftItems));
+    if (rightItems.length) right.push(makeLine(rightItems));
+  }
+  flushBand();
+
+  return lines;
+}
+
+interface Gutter {
+  start: number;
+  end: number;
+}
+
+/**
+ * Find the vertical whitespace corridor between two columns.
+ *
+ * Only rows that themselves break in the middle are evidence: a justified
+ * single-column line has no wide internal gap, and a full-width title or figure
+ * caption has none either, so those rows neither create nor veto a corridor.
+ * Pages covered by a full-page figure therefore still get their body text in
+ * reading order.
+ */
+function detectGutter(rows: PdfTextItem[][], width: number): Gutter | null {
+  if (rows.length < 12 || width <= 0) return null;
+
+  const minRun = Math.max(10, width * 0.015);
+  const clear = Math.max(10, width * 0.015);
+  const columnar = rows
+    .map((row) => ({ row, gaps: middleGaps(row, width, clear) }))
+    .filter((entry) => entry.gaps.length > 0);
+  if (columnar.length < Math.max(5, rows.length * 0.2)) return null;
+
+  const bins = Math.ceil(width);
+  const covered = new Uint16Array(bins);
+  for (const { row } of columnar) {
+    const touched = new Uint8Array(bins);
+    for (const item of row) {
+      const from = Math.max(0, Math.floor(item.x));
+      const to = Math.min(bins - 1, Math.ceil(item.x + item.w) - 1);
+      for (let bin = from; bin <= to; bin++) touched[bin] = 1;
+    }
+    for (let bin = 0; bin < bins; bin++) covered[bin] += touched[bin];
+  }
+
+  const sparse = Math.max(1, Math.floor(columnar.length * 0.15));
+  let best: Gutter | null = null;
+  let runStart = -1;
+
+  for (let bin = 0; bin <= bins; bin++) {
+    const empty = bin < bins && covered[bin] <= sparse;
+    if (empty && runStart < 0) runStart = bin;
+    if (!empty && runStart >= 0) {
+      const start = runStart;
+      const end = bin;
+      runStart = -1;
+      const centre = (start + end) / 2;
+      const wideEnough = end - start >= minRun;
+      const centred = centre >= width * 0.25 && centre <= width * 0.75;
+      if (wideEnough && centred && (!best || end - start > best.end - best.start)) best = { start, end };
+    }
+  }
+  const gutter: Gutter | null = best;
+  if (!gutter) return null;
+
+  // The corridor has to be the gap most of those rows actually break at,
+  // otherwise loose justification in one column can fake one.
+  const support = columnar.filter(({ gaps }) =>
+    gaps.some(([from, to]) => from <= gutter.start + 2 && to >= gutter.end - 2),
+  ).length;
+  if (support < columnar.length * 0.5) return null;
+
+  // Require real text on both sides, otherwise a figure's white space looks like
+  // a gutter. A two-column row usually holds items from both columns, so count
+  // items rather than rows, and require them to run right up to the corridor.
+  const items = rows.flat();
+  const near = Math.max(8, width * 0.02);
+  const leftItems = items.filter((item) => item.x + item.w <= gutter.start + 2);
+  const rightItems = items.filter((item) => item.x >= gutter.end - 2);
+  const leftAbuts = leftItems.some((item) => item.x + item.w >= gutter.start - near);
+  const rightAbuts = rightItems.some((item) => item.x <= gutter.end + near);
+  const enough = Math.max(3, Math.floor(rows.length * 0.1));
+  return leftItems.length >= enough && rightItems.length >= enough && leftAbuts && rightAbuts ? gutter : null;
+}
+
+/** Gaps between neighbouring items that sit in the middle half of the page. */
+function middleGaps(row: PdfTextItem[], width: number, minimum: number): [number, number][] {
+  const sorted = [...row].sort((a, b) => a.x - b.x);
+  const gaps: [number, number][] = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const from = sorted[i - 1].x + sorted[i - 1].w;
+    const to = sorted[i].x;
+    if (to - from < minimum) continue;
+    const centre = (from + to) / 2;
+    if (centre >= width * 0.25 && centre <= width * 0.75) gaps.push([from, to]);
+  }
+  return gaps;
+}
+
+/** Items grouped into rows by baselines, ordered top to bottom. */
+function groupRows(items: PdfTextItem[]): PdfTextItem[][] {
+  const sorted = items.filter((item) => item.str.trim()).sort((a, b) => a.y - b.y || a.x - b.x);
+  const rows: PdfTextItem[][] = [];
   let group: PdfTextItem[] = [];
   let centre = 0;
   let height = 0;
 
   const flush = () => {
-    if (group.length) lines.push(makeLine(group));
+    if (group.length) rows.push(group);
     group = [];
   };
 
@@ -79,7 +219,7 @@ export function itemsToLines(items: PdfTextItem[]): PdfLine[] {
   }
   flush();
 
-  return lines;
+  return rows;
 }
 
 function makeLine(items: PdfTextItem[]): PdfLine {
@@ -160,16 +300,39 @@ export function pagesToParagraphs(pages: PdfPage[]): PdfParagraph[] {
     for (const line of page.lines) {
       const expected = Math.max(line.h, previous?.h ?? line.h, 1);
       const gap = previous ? line.y - previous.y : 0;
+      // Reading order jumps back to the top of the page at a column break, so a
+      // negative gap is a new column, not a continuation.
+      const newColumn = Boolean(previous && line.y < previous.y - 1);
+      // A word hyphenated across that break still belongs to the same sentence.
+      // Compound names break on capital letters and digits too ("Sang-" + "Mi",
+      // "IL-" + "4", "1-chloro-" + "2,4-dinitrobenzene").
+      // The continuation can start with any letter, not just ASCII: "IFN-" + "γ".
+      const splitWord =
+        Boolean(previous) && /-\s*$/.test(current?.text ?? '') && /^[\p{L}\p{N}(]/u.test(line.text);
 
-      if (!current || !previous || gap > expected * 1.45) {
+      // Fig. 3 Effects of ... — a caption set in a smaller size runs straight on
+      // into the body text below it, and gluing the two makes one nonsense
+      // sentence. A real size step means a new block.
+      const sizeChange = Boolean(previous) && Math.abs(line.h - previous!.h) > 2;
+
+      if (
+        !current ||
+        !previous ||
+        (gap > expected * 1.45 && !splitWord) ||
+        (newColumn && !splitWord) ||
+        (sizeChange && !splitWord)
+      ) {
         if (current) paragraphs.push(current);
         current = { page: pageNumber, text: '', spans: [] };
-      } else if (/-$/.test(current.text) && /^[a-z]/.test(line.text)) {
+      } else if (splitWord) {
         // "pharma-" + "cology" is one word, not a hyphen.
-        current.text = current.text.slice(0, -1);
-        const last = current.spans[current.spans.length - 1];
-        if (last) last.end -= 1;
-      } else {
+        const before = current!.text;
+        const joined = before.replace(/-\s*$/, '');
+        current!.text = joined;
+        const last = current!.spans[current!.spans.length - 1];
+        if (last) last.end -= before.length - joined.length;
+      } else if (!/\s$/.test(current.text)) {
+        // The previous line may already end in a space ("decrease + ").
         current.text += ' ';
       }
 
@@ -187,13 +350,27 @@ function appendLine(paragraph: PdfParagraph, line: PdfLine): void {
   let endX = -Infinity;
 
   for (const item of line.items) {
+    // A PDF often emits runs that are only a space; the gap rule below already
+    // inserts one, so keeping them doubles the space ("decrease  +  of").
+    if (!item.str.trim()) continue;
+
+    const gapSpace = endX > -Infinity && item.x - endX > Math.max(item.h, 1) * 0.25;
     let chunk = item.str;
-    if (endX === -Infinity || /\s$/.test(paragraph.text)) chunk = chunk.replace(/^\s+/, '');
+    // Never leave two spaces: drop the run's own whitespace when the gap rule
+    // inserts a space, or when the paragraph already ends in one.
+    if (endX === -Infinity || gapSpace || /\s$/.test(paragraph.text)) chunk = chunk.replace(/^\s+/, '');
     if (!chunk) continue;
 
-    const gapSpace =
-      endX > -Infinity && item.x - endX > Math.max(item.h, 1) * 0.25 && !/\s$/.test(paragraph.text) && !/^\s/.test(chunk);
-    if (gapSpace) chunk = ` ${chunk}`;
+    // A PDF run can end at the break of a hyphenated compound ("anti-" + "JAK2")
+    // even inside one line; the space the gap rule would add is not real there,
+    // and the run often carries one of its own anyway.
+    const hyphenJoin = /-[\s]*$/.test(paragraph.text) && /^[\p{L}\p{N}(]/u.test(chunk);
+    if (hyphenJoin) {
+      paragraph.text = paragraph.text.replace(/\s+$/, '');
+      const lastSpan = paragraph.spans[paragraph.spans.length - 1];
+      if (lastSpan) lastSpan.end = paragraph.text.length;
+    }
+    if (gapSpace && !hyphenJoin && !/\s$/.test(paragraph.text)) chunk = ` ${chunk}`;
 
     const start = paragraph.text.length;
     paragraph.text += chunk;

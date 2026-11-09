@@ -6,7 +6,7 @@ import { normaliseText } from './blocks';
 import {
   chaptersFromPages,
   dropPageFurniture,
-  itemsToLines,
+  itemsToPageLines,
   pagesToParagraphs,
   type ChapterStart,
   type PdfPage,
@@ -22,7 +22,11 @@ export interface PdfParseResult {
   pageCount: number;
 }
 
-export async function parsePdf(data: ArrayBuffer, fallbackTitle: string): Promise<PdfParseResult> {
+export async function parsePdf(
+  data: ArrayBuffer,
+  fallbackTitle: string,
+  onProgress?: (done: number, total: number) => void,
+): Promise<PdfParseResult> {
   const loadingTask = getDocument({ data: new Uint8Array(data) });
 
   try {
@@ -50,8 +54,11 @@ export async function parsePdf(data: ArrayBuffer, fallbackTitle: string): Promis
         });
       }
 
-      pages.push({ width: viewport.width, height: viewport.height, lines: itemsToLines(items) });
+      pages.push({ width: viewport.width, height: viewport.height, lines: itemsToPageLines(items, viewport.width) });
       page.cleanup();
+      // One page at a time, so a long paper never blocks the caller for the whole
+      // run and the UI can show where it has got to.
+      onProgress?.(pageNumber, pdf.numPages);
     }
 
     const paragraphs = pagesToParagraphs(dropPageFurniture(pages));
@@ -118,3 +125,4 @@ async function destinationPage(pdf: PDFDocumentProxy, dest: unknown): Promise<nu
   }
   return null;
 }
+

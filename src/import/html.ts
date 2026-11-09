@@ -10,6 +10,7 @@ import { buildChapters, chapterFromSeeds, normaliseText, type BlockSeed } from '
 const SKIP_TAGS = new Set([
   'SCRIPT', 'STYLE', 'NOSCRIPT', 'HEAD', 'TITLE', 'META', 'LINK', 'TEMPLATE',
   'NAV', 'IFRAME', 'OBJECT', 'EMBED', 'FORM', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'SVG',
+  'ASIDE',
 ]);
 
 const TEXT_BLOCK_TAGS = new Set(['P', 'LI', 'BLOCKQUOTE', 'PRE', 'DT', 'DD', 'CAPTION']);
@@ -27,6 +28,16 @@ function isHidden(el: Element): boolean {
   return el.hasAttribute('hidden') || el.getAttribute('aria-hidden') === 'true';
 }
 
+/**
+ * Project Gutenberg and most book CSS keep the short heading a paragraph used to
+ * carry in the margin in `div.sidenote`/`div.marginnote`. Read in flow they turn
+ * into fragments ("Light.") in front of the sentence they label, so drop them.
+ */
+function isMarginalNote(el: Element): boolean {
+  const name = el.getAttribute('class') ?? '';
+  return /(?:^|\s)(?:sidenote|marginnote)(?:\s|$)/.test(name);
+}
+
 /** Walk a DOM subtree and flatten it into ordered block seeds. */
 export function blocksFromRoot(root: Element): BlockSeed[] {
   const seeds: BlockSeed[] = [];
@@ -36,7 +47,7 @@ export function blocksFromRoot(root: Element): BlockSeed[] {
 
 function walk(el: Element, out: BlockSeed[]): void {
   for (const child of Array.from(el.children)) {
-    if (SKIP_TAGS.has(child.tagName) || isHidden(child)) continue;
+    if (SKIP_TAGS.has(child.tagName) || isHidden(child) || isMarginalNote(child)) continue;
 
     const level = headingLevel(child.tagName);
     if (level > 0) {
@@ -75,7 +86,31 @@ function containsBlock(el: Element): boolean {
 }
 
 function textOf(el: Element): string {
-  return normaliseText(el.textContent ?? '');
+  const parts: string[] = [];
+  collectText(el, parts);
+  return normaliseText(parts.join(''));
+}
+
+/**
+ * Text of one block, minus marginal notes. Gutenberg also puts them inline
+ * (`<span class="sidenote">Beef tea.</span>One is …`), where `textContent` would
+ * splice the note into the sentence it labels.
+ */
+function collectText(node: Node, out: string[]): void {
+  for (const child of Array.from(node.childNodes)) {
+    if (child.nodeType === 3) {
+      out.push((child as CharacterData).data);
+      continue;
+    }
+    if (child.nodeType !== 1) continue;
+    const element = child as Element;
+    if (SKIP_TAGS.has(element.tagName) || isHidden(element)) continue;
+    if (isMarginalNote(element)) {
+      out.push(' ');
+      continue;
+    }
+    collectText(element, out);
+  }
 }
 
 function tableText(table: Element): string {

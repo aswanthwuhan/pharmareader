@@ -3,6 +3,7 @@ import {
   chaptersFromPages,
   dropPageFurniture,
   itemsToLines,
+  itemsToPageLines,
   pagesToParagraphs,
   rectsForRange,
   type PdfLine,
@@ -22,6 +23,53 @@ const line = (text: string, y: number, h = 12): PdfLine => ({
 });
 const page = (lines: PdfLine[], height = 800): PdfPage => ({ width: 600, height, lines });
 const paragraph = (pageNumber: number, text: string): PdfParagraph => ({ page: pageNumber, text, spans: [] });
+
+describe('itemsToPageLines', () => {
+  /** 20 rows of a two-column journal page: left column 40-280, right column 320-560. */
+  const twoColumns = (rows = 20, rowHeight = 14): PdfTextItem[] => {
+    const items: PdfTextItem[] = [];
+    for (let row = 0; row < rows; row++) {
+      const y = 100 + row * rowHeight;
+      items.push(item(`left${row}`, 40, y, 240), item(`right${row}`, 320, y, 240));
+    }
+    return items;
+  };
+
+  it('reads the left column to the bottom before the right column', () => {
+    const lines = itemsToPageLines(twoColumns(), 600);
+    const texts = lines.map((current) => current.text);
+
+    expect(texts.slice(0, 20)).toEqual(Array.from({ length: 20 }, (_, row) => `left${row}`));
+    expect(texts.slice(20)).toEqual(Array.from({ length: 20 }, (_, row) => `right${row}`));
+  });
+
+  it('keeps a full-width title between the columns of its band', () => {
+    const items = twoColumns(20);
+    items.push(item('A full width title', 40, 233, 520));
+
+    const texts = itemsToPageLines(items, 600).map((current) => current.text);
+    const title = texts.indexOf('A full width title');
+
+    const band = (rows: number[]) => [...rows.map((row) => `left${row}`), ...rows.map((row) => `right${row}`)];
+    // Rows above the title: the whole left column, then the whole right one.
+    expect(texts.slice(0, title)).toEqual(band([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]));
+    expect(texts.slice(title + 1)).toEqual(band([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]));
+  });
+
+  it('leaves a single-column page in top-to-bottom order', () => {
+    const items = Array.from({ length: 20 }, (_, row) => item(`line ${row}`, 50, 100 + row * 14, 500));
+
+    expect(itemsToPageLines(items, 600).map((current) => current.text)).toEqual(
+      Array.from({ length: 20 }, (_, row) => `line ${row}`),
+    );
+  });
+
+  it('does not split a page whose text sits in one centred block', () => {
+    const items = Array.from({ length: 20 }, (_, row) => item(`centred ${row}`, 200, 100 + row * 14, 200));
+
+    expect(itemsToPageLines(items, 600)).toHaveLength(20);
+  });
+});
 
 describe('itemsToLines', () => {
   it('puts items on the same row into one line with gap spaces', () => {
@@ -94,6 +142,36 @@ describe('pagesToParagraphs', () => {
     ]);
 
     expect(paragraphs.map((current) => current.page)).toEqual([1, 2]);
+  });
+
+  it('breaks the paragraph where the reading order drops back to a new column', () => {
+    // itemsToPageLines emits the whole left column, then the right one from the
+    // top: y goes backwards at that point and must not be read as a continuation.
+    const paragraphs = pagesToParagraphs([
+      page([line('Left column sentence.', 100), line('Right column starts here.', 80)]),
+    ]);
+
+    expect(paragraphs.map((current) => current.text)).toEqual([
+      'Left column sentence.',
+      'Right column starts here.',
+    ]);
+  });
+
+  it('still joins a word hyphenated across a column break', () => {
+    const paragraphs = pagesToParagraphs([
+      page([line('with complex interac-', 120), line('tions of innate immunity.', 80)]),
+    ]);
+
+    expect(paragraphs).toHaveLength(1);
+    expect(paragraphs[0]?.text).toBe('with complex interactions of innate immunity.');
+  });
+
+  it('starts a paragraph when the type size changes under a caption', () => {
+    const paragraphs = pagesToParagraphs([
+      page([line('Fig. 3 Effects on TSLP.', 560, 9), line('Body text continues here.', 572, 12)]),
+    ]);
+
+    expect(paragraphs).toHaveLength(2);
   });
 });
 

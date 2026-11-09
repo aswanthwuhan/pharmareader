@@ -105,6 +105,20 @@ describe('parseHtmlDocument', () => {
     expect(sentences).toEqual(['Real text.']);
   });
 
+  it('drops margin notes so they cannot splice into the sentence they label', () => {
+    const doc = parseHtmlDocument(
+      htmlDocument(
+        '<div class="sidenote">Diet.</div><p>Beef tea is <span class="sidenote">Beef tea.</span>not the most nutritive article.</p><aside>See also the appendix.</aside><p>Milk is next.</p>',
+      ),
+      { format: 'html', title: 'Page' },
+    );
+
+    const sentences = doc.chapters.flatMap((chapter) =>
+      chapter.blocks.flatMap((block) => block.sentences.map((sentence) => sentence.text)),
+    );
+    expect(sentences).toEqual(['Beef tea is not the most nutritive article.', 'Milk is next.']);
+  });
+
   it('prefers the given title, then <title>, then the first heading', () => {
     const withTitle = new DOMParser().parseFromString(
       '<html><head><title>From Title Tag</title></head><body><h1>Heading</h1><p>Body.</p></body></html>',
