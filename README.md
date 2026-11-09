@@ -11,6 +11,7 @@ pnpm install   then:   pnpm dev    (dev server)   pnpm test   (vitest)   pnpm bu
 
 ## Credits
 
+- **Contributors:** see [CONTRIBUTORS.md](CONTRIBUTORS.md).
 - **Built with AI agents:** planned and orchestrated by Claude (Anthropic, Claude Opus); most code
   written, reviewed and tested by DeepSeek V4.1 Flash agents (DeepSeek), run through DeepSeek Harness.
   UI reference screens generated with Google Stitch.
