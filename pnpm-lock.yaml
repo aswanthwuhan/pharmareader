@@ -20,6 +20,9 @@ importers:
       '@capacitor/filesystem':
         specifier: ^8.1.5
         version: 8.1.5(@capacitor/core@8.6.0)
+      '@huggingface/transformers':
+        specifier: 3.8.1
+        version: 3.8.1
       '@mozilla/readability':
         specifier: ^0.6.0
         version: 0.6.0
