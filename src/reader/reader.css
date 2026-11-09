@@ -294,6 +294,51 @@
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
+/* A sentence whose audio is being made right now: a dotted rule under the words,
+   quieter than the spoken wash and impossible to confuse with a highlight. */
+.rd-s.generating {
+  border-bottom: 1px dotted var(--accent);
+}
+
+/* The word being spoken, inside the spoken sentence. A wash would fight the
+   reading frame and a highlight colour would read as an annotation, so the word
+   leans on weight and an underline instead. */
+.rd-word {
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.18em;
+  background: none;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* Text the voice will not read (tables, figures, footnotes by default): still
+   legible, clearly apart from the prose it belongs to. */
+.is-skipped {
+  opacity: 0.72;
+  color: var(--muted);
+}
+
+.rd-skip-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 var(--space-1);
+  padding: 0 var(--space-2);
+  border: 1px dashed var(--border-control);
+  border-radius: var(--radius-full);
+  font-family: var(--font-ui);
+  font-size: 0.62em;
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-wide);
+  text-transform: uppercase;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
 .rd-chapter-nav {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -365,7 +410,6 @@
 }
 
 .rd-player-count {
-  flex: 1 1 auto;
   min-width: 0;
   margin: 0;
   font-size: var(--fs-xs);
@@ -374,6 +418,103 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* The position line and the generation line share one column: the count never
+   wraps, and the status underneath is the only thing that grows the sheet. */
+.rd-player-meta {
+  display: grid;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Waiting for a clip is not a stuck button: a quiet spinner, a sentence number,
+   and the same tabular figures as the count above it. */
+.rd-gen,
+.rd-buffer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rd-spinner {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--border-control);
+  border-top-color: var(--accent);
+  border-radius: var(--radius-full);
+  animation: rd-spin 700ms linear infinite;
+}
+
+@keyframes rd-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rd-spinner {
+    animation-duration: 1.6s;
+  }
+}
+
+/* Page stepping, between the position and the options button. */
+.rd-pages {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 0;
+}
+
+/* 44 px like every other target in the bar; the caption row is tight, so the
+   label between the two chevrons stays narrow. */
+.rd-pages .rd-icon-btn {
+  width: var(--tap);
+  height: var(--tap);
+  margin-inline: -6px;
+}
+
+.rd-pages-label {
+  min-width: 3.6em;
+  text-align: center;
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The cursor is off-screen: the one control that says where play would start. */
+.rd-from-here {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  width: calc(100% - 2 * var(--space-3));
+  max-width: var(--app-max);
+  min-height: var(--tap);
+  margin: 0 auto var(--space-1);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+
+.rd-from-here:hover {
+  border-color: var(--accent-hover);
 }
 
 .rd-player-saved {
@@ -1044,4 +1185,84 @@
     border-right: 1px solid var(--border);
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   }
+}
+
+/* -- settings: reading aloud ---------------------------------------------- */
+
+/* A switch row is the label: the whole line is the target, so a thumb never
+   has to find a 20px box. Rules between rows read as one list, not a form. */
+.rd-opt-group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.rd-opt-legend {
+  padding: 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
+.rd-opt-hint {
+  margin: var(--space-1) 0 var(--space-2);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+.rd-opt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: var(--tap);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.rd-opt-text {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.rd-opt-name {
+  font-size: var(--fs-sm);
+  color: var(--text);
+  line-height: var(--lh-snug);
+}
+
+.rd-opt-note {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  line-height: var(--lh-snug);
+  text-wrap: pretty;
+}
+
+.rd-opt-check {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.rd-opt-field {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.rd-opt-range {
+  width: 100%;
+  height: var(--tap);
+  margin: -8px 0;
+  accent-color: var(--accent);
+}
+
+.rd-opt-last {
+  margin-top: var(--space-3);
 }

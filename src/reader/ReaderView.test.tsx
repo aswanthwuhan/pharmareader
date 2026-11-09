@@ -14,11 +14,15 @@ const LAST_POS_KEY = `reader.lastPos.${BOOK_ID}`;
 // The player drives audio; here it only records the queue it was given.
 const playerMock = vi.hoisted(() => {
   interface Call {
-    items: { id: string; text: string }[];
+    items: { id: string; text: string; spoken?: string }[];
     startIndex: number;
     rate: number;
-    onSentence?(id: string): void;
+    onSentence?(id: string, index?: number): void;
+    onItemState?(id: string, state: string): void;
+    onBuffer?(readyAhead: number): void;
+    onWord?(id: string, charIndex: number): void;
     onDone?(): void;
+    onError?(err: Error, id?: string): void;
     played: number;
     stops: number;
   }
@@ -36,9 +40,14 @@ const playerMock = vi.hoisted(() => {
         call.stops += 1;
       },
       seek() {},
+      index: options.startIndex ?? 0,
+      bufferAhead: 0,
     };
   }
-  return { calls, createPlayer };
+  function last(): Call | undefined {
+    return calls[calls.length - 1];
+  }
+  return { calls, createPlayer, last };
 });
 
 vi.mock('../tts/player', () => ({ createPlayer: playerMock.createPlayer }));
@@ -597,5 +606,307 @@ describe('ReaderView reflow', () => {
     const saved = await db.highlights.toCollection().first();
     expect(saved?.id).toBe(first?.id);
     expect(saved?.color).toBe('blue');
+  });
+});
+
+/** Three sentences in one block, for stepping and playback-start tests. */
+function makeListBook(texts: string[]): BookRecord {
+  const book = makeBook();
+  return {
+    ...book,
+    parsed: {
+      title: book.title,
+      format: 'txt',
+      chapters: [
+        {
+          id: 'ch-0',
+          title: 'One chapter',
+          blocks: [
+            {
+              id: 'b-0-0',
+              kind: 'p',
+              sentences: texts.map((text, i) => ({ id: `0-0-${i}`, text })),
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+/** A PDF-backed book: three sentences, one per page. */
+function makePdfBook(): BookRecord {
+  const rect = (page: number) => [{ page, x: 10, y: 10, w: 40, h: 8 }];
+  return {
+    ...makeBook({ format: 'pdf' }),
+    parsed: {
+      title: 'Pharmacology Notes',
+      format: 'pdf',
+      chapters: [
+        {
+          id: 'ch-0',
+          title: 'Kinetics',
+          blocks: [
+            {
+              id: 'b-0-0',
+              kind: 'p',
+              sentences: [
+                { id: '0-0-0', text: 'Page one begins.', pdfRects: rect(1) },
+                { id: '0-0-1', text: 'Page two begins.', pdfRects: rect(2) },
+                { id: '0-0-2', text: 'Page three begins.', pdfRects: rect(3) },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+/** Give every sentence a viewport position, so "visible" means something in jsdom. */
+function stubRects(tops: Record<string, number>): void {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    const id = this.getAttribute('data-sid');
+    const top = (id && tops[id] !== undefined ? tops[id] : 200) ?? 200;
+    const height = 40;
+    return {
+      top,
+      bottom: top + height,
+      left: 0,
+      right: 320,
+      width: 320,
+      height,
+      x: 0,
+      y: top,
+      toJSON: () => ({}),
+    } as DOMRect;
+  });
+}
+
+function generatingSpan(): string | null {
+  return container.querySelector('.rd-s.generating')?.getAttribute('data-sid') ?? null;
+}
+
+describe('reader: playback start and page stepping', () => {
+  it('restarts the queue at the tapped sentence, not at the one after it (B1)', async () => {
+    await db.books.put(makeListBook(['One.', 'Two.', 'Three.']));
+    await renderReader();
+    await waitForEngine();
+
+    await act(async () => {
+      playButton()?.click();
+    });
+    await waitFor(() => playerMock.calls.length === 1, 'player created');
+    const first = playerMock.calls[0]!;
+
+    // The first sentence has started; tap the third one.
+    await act(async () => {
+      first.onSentence?.('0-0-0', 0);
+    });
+    await act(async () => {
+      sentence('0-0-2')?.click();
+    });
+
+    expect(playerMock.calls.length).toBe(2);
+    expect(first.stops).toBe(1);
+    const second = playerMock.calls[1]!;
+    expect(second.startIndex).toBe(2);
+    expect(second.played).toBe(1);
+
+    await act(async () => {
+      second.onSentence?.('0-0-2', 2);
+    });
+    expect(readingId()).toBe('0-0-2');
+  });
+
+  it('starts at the top of the viewport when the cursor has scrolled away (B2)', async () => {
+    await db.books.put(makeListBook(['One.', 'Two.', 'Three.']));
+    // The reading sentence is above the screen; "Two." is the first visible one.
+    stubRects({ '0-0-0': -300, '0-0-1': 150, '0-0-2': 400 });
+    await renderReader();
+    await waitForEngine();
+    await waitFor(() => buttonByText('Play from here') !== null, 'play-from-here pill');
+
+    await act(async () => {
+      playButton()?.click();
+    });
+    await waitFor(() => playerMock.calls.length === 1, 'player created');
+    expect(playerMock.calls[0]?.startIndex).toBe(1);
+  });
+
+  it('keeps resuming at the cursor while it is on screen (B2)', async () => {
+    await db.books.put(makeListBook(['One.', 'Two.', 'Three.']));
+    stubRects({ '0-0-0': 120, '0-0-1': 400, '0-0-2': 800 });
+    await renderReader();
+    await waitForEngine();
+    await act(async () => {
+      sentence('0-0-1')?.click();
+    });
+
+    await act(async () => {
+      playButton()?.click();
+    });
+    await waitFor(() => playerMock.calls.length === 1, 'player created');
+    expect(playerMock.calls[0]?.startIndex).toBe(1);
+    expect(buttonByText('Play from here')).toBeNull();
+  });
+
+  it('steps one screen of text from the page buttons (B3)', async () => {
+    await db.books.put(makeListBook(['One.', 'Two.', 'Three.']));
+    stubRects({ '0-0-0': 100, '0-0-1': 400, '0-0-2': 900 });
+    await renderReader();
+    await waitFor(() => sentence('0-0-0') !== null, 'first sentence');
+
+    await act(async () => {
+      buttonByLabel('Next page')?.click();
+    });
+    expect(readingId()).toBe('0-0-2');
+
+    await act(async () => {
+      buttonByLabel('Previous page')?.click();
+    });
+    expect(readingId()).toBe('0-0-0');
+  });
+
+  it('turns a PDF page from the player and plays from that page (B2, B3)', async () => {
+    await db.books.put(makePdfBook());
+    await renderReader();
+    await waitForEngine();
+    await waitFor(() => container.querySelector('.rd-pages-label')?.textContent === 'Page 1 of 3', 'page label');
+
+    await act(async () => {
+      buttonByLabel('Next page')?.click();
+    });
+    await waitFor(
+      () => container.querySelector('.rd-pages-label')?.textContent === 'Page 2 of 3',
+      'page two label'
+    );
+    expect(readingId()).toBe('0-0-1');
+
+    await act(async () => {
+      playButton()?.click();
+    });
+    await waitFor(() => playerMock.calls.length === 1, 'player created');
+    expect(playerMock.calls[0]?.startIndex).toBe(1);
+  });
+});
+
+describe('reader: generation status, skips and word highlight', () => {
+  it('shows the sentence being generated and the buffer ahead (F1)', async () => {
+    await db.books.put(makeListBook(['One.', 'Two.', 'Three.']));
+    await renderReader();
+    await waitForEngine();
+    await act(async () => {
+      playButton()?.click();
+    });
+    await waitFor(() => playerMock.calls.length === 1, 'player created');
+    const call = playerMock.calls[0]!;
+
+    await act(async () => {
+      call.onItemState?.('0-0-1', 'generating');
+    });
+    expect(container.textContent).toContain('Generating sentence 2…');
+    expect(generatingSpan()).toBe('0-0-1');
+
+    await act(async () => {
+      call.onItemState?.('0-0-1', 'ready');
+      call.onBuffer?.(2);
+    });
+    expect(container.textContent).toContain('2 ready ahead');
+    expect(generatingSpan()).toBeNull();
+  });
+
+  it('shows a failed sentence and retries it in place (F1)', async () => {
+    await db.books.put(makeListBook(['One.', 'Two.', 'Three.']));
+    await renderReader();
+    await waitForEngine();
+    await act(async () => {
+      playButton()?.click();
+    });
+    await waitFor(() => playerMock.calls.length === 1, 'player created');
+
+    await act(async () => {
+      playerMock.calls[0]?.onError?.(new Error('Synthesis failed.'), '0-0-1');
+    });
+    expect(container.textContent).toContain('Synthesis failed.');
+
+    await act(async () => {
+      buttonByText('Try again')?.click();
+    });
+    expect(playerMock.calls.length).toBe(2);
+    expect(playerMock.calls[1]?.startIndex).toBe(1);
+    expect(container.textContent).not.toContain('Synthesis failed.');
+  });
+
+  it('leaves skipped blocks visible but out of the queue (F2)', async () => {
+    const book = makeBook();
+    book.parsed.chapters[0]!.blocks.push({
+      id: 'b-0-1',
+      kind: 'table',
+      sentences: [{ id: '0-1-0', text: 'Dose: 5 mg twice daily.' }],
+    });
+    await db.books.put(book);
+    await renderReader();
+    await waitForEngine();
+    await waitFor(() => sentence('0-1-0') !== null, 'table sentence rendered');
+    expect(container.querySelector('.is-skipped')).not.toBeNull();
+    expect(container.textContent).toContain('skipped while reading');
+
+    await act(async () => {
+      playButton()?.click();
+    });
+    await waitFor(() => playerMock.calls.length === 1, 'player created');
+    expect(playerMock.calls[0]?.items.map((item) => item.id)).toEqual(['0-0-0', '0-0-1']);
+  });
+
+  it('speaks a sentence without its citation but keeps the original text (F2)', async () => {
+    await db.books.put(makeListBook(['Used for pain [12].']));
+    await renderReader();
+    await waitForEngine();
+    await act(async () => {
+      playButton()?.click();
+    });
+    await waitFor(() => playerMock.calls.length === 1, 'player created');
+    const item = playerMock.calls[0]?.items[0];
+    expect(item?.text).toBe('Used for pain [12].');
+    expect(item?.spoken).toBe('Used for pain.');
+  });
+
+  it('dims the current word inside the spoken sentence (F3)', async () => {
+    await db.books.put(makeListBook(['Absorption is the first step.']));
+    await renderReader();
+    await waitForEngine();
+    await act(async () => {
+      playButton()?.click();
+    });
+    await waitFor(() => playerMock.calls.length === 1, 'player created');
+    const call = playerMock.calls[0]!;
+
+    await act(async () => {
+      call.onSentence?.('0-0-0', 0);
+      call.onWord?.('0-0-0', 12);
+    });
+    const mark = container.querySelector('[data-sid="0-0-0"] .rd-word');
+    expect(mark?.textContent).toBe('is');
+  });
+
+  it('does not highlight words when the setting is off (F3)', async () => {
+    await db.books.put(makeListBook(['Absorption is the first step.']));
+    await act(async () => {
+      await db.settings.put({ key: 'read.wordHighlight', value: false });
+    });
+    await renderReader();
+    await waitForEngine();
+    await act(async () => {
+      playButton()?.click();
+    });
+    await waitFor(() => playerMock.calls.length === 1, 'player created');
+    const call = playerMock.calls[0]!;
+
+    await act(async () => {
+      call.onSentence?.('0-0-0', 0);
+      call.onWord?.('0-0-0', 12);
+    });
+    expect(container.querySelector('.rd-word')).toBeNull();
   });
 });

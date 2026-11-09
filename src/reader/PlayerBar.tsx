@@ -5,12 +5,22 @@
  *
  * The two popovers keep the sheet itself to a single row of controls; both are
  * dismissable with Escape, a tap outside, or the same button that opened them.
+ * Generation status ("Generating sentence 15…", "2 ready ahead") lives under the
+ * position line, so waiting is visible instead of looking like a stuck button.
  */
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Glyph, icons } from './Icon';
 
 export type PlayState = 'idle' | 'playing' | 'paused';
+
+/** Page-level stepping for long books: one PDF page, or one screen of text. */
+export interface PageNav {
+  /** "Page 12 of 24" (PDF) or "Screen 2 of 9" (text). */
+  label: string;
+  onPrev(): void;
+  onNext(): void;
+}
 
 interface Props {
   state: PlayState;
@@ -25,6 +35,14 @@ interface Props {
   /** 1-based position of the spoken sentence inside the chapter. */
   sentenceNumber: number;
   sentenceTotal: number;
+  /** 1-based sentence number being synthesized right now, if any. */
+  generating: number | null;
+  /** How many upcoming sentences already have audio. */
+  readyAhead: number;
+  /** Null when page stepping is not available (single page, or page view). */
+  pages: PageNav | null;
+  /** The cursor is off-screen: play should start at the top of the viewport. */
+  fromHere: boolean;
   onToggle(): void;
   onStop(): void;
   onPrev(): void;
@@ -32,6 +50,7 @@ interface Props {
   onRate(rate: number): void;
   onPrerender(): void;
   onCancelPrerender(): void;
+  onPlayFromHere(): void;
 }
 
 const RATE_MIN = 0.5;
@@ -54,6 +73,10 @@ export default function PlayerBar({
   cached,
   sentenceNumber,
   sentenceTotal,
+  generating,
+  readyAhead,
+  pages,
+  fromHere,
   onToggle,
   onStop,
   onPrev,
@@ -61,6 +84,7 @@ export default function PlayerBar({
   onRate,
   onPrerender,
   onCancelPrerender,
+  onPlayFromHere,
 }: Props) {
   const playing = state === 'playing';
   const busy = progress !== null;
@@ -96,10 +120,35 @@ export default function PlayerBar({
         </div>
 
         <div className="rd-player-caption">
-          <p className="rd-player-count" aria-live="polite">
-            {sentenceTotal > 0 ? `Sentence ${sentenceNumber} of ${sentenceTotal}` : 'No sentences here'}
-            {cached && !busy ? <span className="rd-player-saved"> · audio saved</span> : null}
-          </p>
+          <div className="rd-player-meta">
+            <p className="rd-player-count" aria-live="polite">
+              {sentenceTotal > 0 ? `Sentence ${sentenceNumber} of ${sentenceTotal}` : 'No sentences here'}
+              {cached && !busy ? <span className="rd-player-saved"> · audio saved</span> : null}
+            </p>
+            {generating !== null ? (
+              <p className="rd-gen" role="status">
+                <span className="rd-spinner" aria-hidden="true" />
+                Generating sentence {generating}…
+              </p>
+            ) : readyAhead > 0 ? (
+              <p className="rd-buffer">{readyAhead} ready ahead</p>
+            ) : null}
+          </div>
+
+          {pages ? (
+            <div className="rd-pages">
+              <button type="button" className="rd-icon-btn" aria-label="Previous page" onClick={pages.onPrev}>
+                <Glyph>{icons.back}</Glyph>
+              </button>
+              <span className="rd-pages-label" aria-hidden="true">
+                {pages.label}
+              </span>
+              <button type="button" className="rd-icon-btn" aria-label="Next page" onClick={pages.onNext}>
+                <Glyph>{icons.forward}</Glyph>
+              </button>
+            </div>
+          ) : null}
+
           <button
             type="button"
             className="rd-icon-btn"
@@ -110,6 +159,13 @@ export default function PlayerBar({
             <Glyph>{icons.more}</Glyph>
           </button>
         </div>
+
+        {fromHere && !playing ? (
+          <button type="button" className="rd-from-here" onClick={onPlayFromHere}>
+            <Glyph size={16}>{icons.play}</Glyph>
+            <span>Play from here</span>
+          </button>
+        ) : null}
 
         <div className="rd-player-controls">
           <button

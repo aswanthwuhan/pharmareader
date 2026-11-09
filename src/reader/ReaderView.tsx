@@ -11,7 +11,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../core/db';
 import { getSetting, setSetting, useSetting } from '../core/settings';
 import type { BookRecord, Highlight } from '../core/types';
-import { createPlayer, type Player } from '../tts/player';
+import { createPlayer, type ItemState, type Player } from '../tts/player';
 import { describeEngine, ENGINE_SETTING, type EngineInfo } from '../tts/registry';
 import { prerenderChapter } from '../tts/neural/prerender';
 import {
@@ -28,13 +28,25 @@ import HighlightList from '../study/HighlightList';
 import AiActions from '../ai/AiActions';
 import TopicPicker from '../syllabus/TopicPicker';
 import ModelStatusBanner from '../tts/ModelStatusBanner';
-import PlayerBar, { type PlayState } from './PlayerBar';
+import PlayerBar, { type PageNav, type PlayState } from './PlayerBar';
 import SelectionBar, { type HighlightColor } from './SelectionBar';
 import { Glyph, icons } from './Icon';
 import ReflowView from './ReflowView';
 import {
+  DEFAULT_PAUSE_MS,
+  PAUSE_KEY,
+  planChapter,
+  skippedLabel,
+  useSkipOptions,
+  WORD_HIGHLIGHT_KEY,
+  type ChapterPlan,
+} from './reading';
+import {
+  firstPosOnPages,
   highlightBySentence,
   indexBook,
+  lastPage,
+  pageWithSentence,
   posForSaved,
   sentenceAt,
   stepPos,
@@ -106,6 +118,9 @@ export default function ReaderView() {
   const rate = useSetting<number>(RATE_KEY, 1);
   const voiceId = useSetting<string>(VOICE_KEY, '');
   const engineChoice = useSetting<string>(ENGINE_SETTING, 'auto');
+  const skip = useSkipOptions();
+  const wordHighlight = useSetting<boolean>(WORD_HIGHLIGHT_KEY, true);
+  const pauseMs = useSetting<number>(PAUSE_KEY, DEFAULT_PAUSE_MS);
 
   const [cursor, setCursor] = useState<Pos | null>(null);
   const [mode, setMode] = useState<'text' | 'page'>('text');
@@ -119,6 +134,17 @@ export default function ReaderView() {
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [cachedChapter, setCachedChapter] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Per-sentence generation state, straight from the player (F1). */
+  const [itemStates, setItemStates] = useState<Map<string, ItemState>>(() => new Map());
+  const [readyAhead, setReadyAhead] = useState(0);
+  /** Spoken word inside the reading sentence, as an offset into its text (F3). */
+  const [word, setWord] = useState<{ id: string; charIndex: number } | null>(null);
+  /** The sentence that failed, so the banner can offer a retry. */
+  const [failed, setFailed] = useState<{ id: string; message: string } | null>(null);
+  /** False when the reader scrolled away from the cursor: Play starts at the top. */
+  const [cursorOnScreen, setCursorOnScreen] = useState(true);
+  /** Which screen of text is showing, for the page buttons label. */
+  const [screen, setScreen] = useState({ at: 1, total: 1 });
 
   const index = useMemo(() => (book ? indexBook(book.parsed) : null), [book?.parsed]);
   const highlightsFor = useLiveQuery(async () => (bookId ? listHighlights(bookId) : []), [bookId]);
@@ -138,6 +164,8 @@ export default function ReaderView() {
   voiceRef.current = voiceId;
   const cursorRef = useRef<Pos | null>(cursor);
   cursorRef.current = cursor;
+  const cursorOnScreenRef = useRef(cursorOnScreen);
+  cursorOnScreenRef.current = cursorOnScreen;
   const playStateRef = useRef<PlayState>(playState);
   playStateRef.current = playState;
   const abortRef = useRef<AbortController | null>(null);
@@ -146,11 +174,46 @@ export default function ReaderView() {
   const pendingPos = useRef<{ bookId: string; pos: SavedPos } | null>(null);
   const rateTimer = useRef<number | null>(null);
   const sheetBody = useRef<HTMLDivElement>(null);
+  const pageRef = useRef<HTMLElement>(null);
+  // Latest skip/pause/word settings, for callbacks created once per player.
+  const skipRef = useRef(skip);
+  skipRef.current = skip;
+  const pauseRef = useRef(pauseMs);
+  pauseRef.current = pauseMs;
+  const wordRef = useRef(wordHighlight);
+  wordRef.current = wordHighlight;
+  /** Plans are pure and cheap-ish; a chapter is planned once per settings change. */
+  const planCache = useRef(new Map<string, ChapterPlan>());
+  /** True while the page number came from the spoken sentence, not from a tap. */
+  const pageFromCursor = useRef(false);
 
   const chapterIndex = cursor?.chapterIndex ?? 0;
   const chapter = book?.parsed.chapters[chapterIndex];
   const reading = index ? sentenceAt(index, cursor) : null;
   const readingId = reading?.id ?? null;
+
+  const plan = useMemo(
+    () => (chapter ? planChapter(chapter, skip, pauseMs) : null),
+    [chapter, skip, pauseMs]
+  );
+  useEffect(() => {
+    planCache.current.clear();
+  }, [skip, pauseMs]);
+
+  /** The first sentence printed on each PDF page, for page-button stepping. */
+  const pages = useMemo(() => (index ? firstPosOnPages(index) : new Map<number, Pos>()), [index]);
+  const isPdf = book?.parsed.format === 'pdf';
+  const pageOfCursor = reading?.pdfRects?.[0]?.page ?? pdfPage;
+
+  function planFor(ci: number): ChapterPlan | null {
+    const target = book?.parsed.chapters[ci];
+    if (!target) return null;
+    const cached = planCache.current.get(target.id);
+    if (cached) return cached;
+    const built = planChapter(target, skipRef.current, pauseRef.current);
+    planCache.current.set(target.id, built);
+    return built;
+  }
 
   // -- position ------------------------------------------------------------
 
@@ -269,11 +332,53 @@ export default function ReaderView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId, engineChoice]);
 
-  // Auto-turn the PDF page when the spoken sentence lives on another page.
+  // Auto-turn the PDF page when the spoken sentence lives on another page. The
+  // flag keeps the page callback from moving the cursor back to the page start.
   useEffect(() => {
     const first = reading?.pdfRects?.[0];
-    if (first && mode === 'page') setPdfPage(Math.max(1, first.page));
+    if (first && mode === 'page') {
+      pageFromCursor.current = true;
+      setPdfPage(Math.max(1, first.page));
+    }
   }, [readingId, mode]);
+
+  // B2: is the cursor still on screen? After a long scroll it is not, and Play
+  // should then start at the top of the viewport instead of somewhere above it.
+  useEffect(() => {
+    if (mode !== 'text' || !readingId) {
+      setCursorOnScreen(true);
+      return;
+    }
+    const check = () => {
+      const node = document.querySelector<HTMLElement>(`[data-sid="${readingId}"]`);
+      if (!node) {
+        setCursorOnScreen(false);
+        return;
+      }
+      const box = node.getBoundingClientRect();
+      setCursorOnScreen(box.bottom > 96 && box.top < window.innerHeight - 180);
+    };
+    check();
+    window.addEventListener('scroll', check, { passive: true });
+    return () => window.removeEventListener('scroll', check);
+  }, [readingId, mode, fontSize, lineHeight]);
+
+  // Which screen of text is showing — the label between the page buttons.
+  useEffect(() => {
+    if (mode !== 'text') return;
+    const measure = () => {
+      const height = Math.max(1, window.innerHeight);
+      const total = Math.max(1, Math.ceil(document.documentElement.scrollHeight / height));
+      setScreen({ at: Math.min(total, Math.round(window.scrollY / height) + 1), total });
+    };
+    measure();
+    window.addEventListener('scroll', measure, { passive: true });
+    window.addEventListener('resize', measure);
+    return () => {
+      window.removeEventListener('scroll', measure);
+      window.removeEventListener('resize', measure);
+    };
+  }, [mode, chapterIndex, plan]);
 
   // -- playback ------------------------------------------------------------
 
@@ -292,46 +397,93 @@ export default function ReaderView() {
     playerRef.current = null;
     player?.stop();
     setPlayState('idle');
+    setItemStates(new Map());
+    setReadyAhead(0);
+    setWord(null);
   }
 
-  function chapterItems(ci: number): { id: string; text: string }[] {
-    return (index?.chapters[ci] ?? []).map((sentence) => ({ id: sentence.id, text: sentence.text }));
+  /** What pre-rendering should cache: the spoken form the player will ask for. */
+  function prerenderItems(ci: number): { id: string; text: string }[] {
+    const target = planFor(ci);
+    if (!target) return [];
+    return target.items.map((item) => ({ id: item.id, text: item.spoken ?? item.text }));
   }
 
   /**
    * Start speaking, synchronously. Called straight from the tap handler so the
    * element's first `play()` happens inside the user gesture; everything slow
    * (engine probe, voice list) has already been resolved.
+   *
+   * `at` is a sentence position in the chapter, but the queue only holds what
+   * is read aloud (a skipped table leaves a hole), so it is mapped onto the
+   * queue here.
    */
   function beginPlayback(info: EngineInfo, ci: number, at: number): void {
     if (!book || !index) return;
     releasePlayer();
     const mine = ++generation.current;
 
-    // Skip empty chapters (an import can produce one) rather than stall.
+    // Skip empty chapters and chapters with nothing left to read (an import can
+    // produce either) rather than stall on a silent player.
     let chapterIdx = ci;
-    let startIndex = at;
-    while (chapterIdx < index.chapters.length && (index.chapters[chapterIdx]?.length ?? 0) === 0) {
+    let startAt = at;
+    let target: ChapterPlan | null = null;
+    while (chapterIdx < index.chapters.length) {
+      const candidate = planFor(chapterIdx);
+      if (candidate && candidate.items.length > 0) {
+        target = candidate;
+        break;
+      }
       chapterIdx += 1;
-      startIndex = 0;
+      startAt = 0;
     }
-    if (chapterIdx >= index.chapters.length) return;
+    if (!target) return;
 
-    const items = chapterItems(chapterIdx);
-    if (!items.length) return;
-    const firstIndex = Math.min(Math.max(0, startIndex), items.length - 1);
+    const sentences = index.chapters[chapterIdx] ?? [];
+    let queueIndex = 0;
+    for (let offset = 0; offset < Math.max(1, sentences.length); offset += 1) {
+      const sentence = sentences[Math.min(startAt + offset, sentences.length - 1)];
+      const found = sentence ? target.orderById.get(sentence.id) : undefined;
+      if (found !== undefined) {
+        queueIndex = found;
+        break;
+      }
+    }
 
     setError(null);
+    setFailed(null);
+    setItemStates(new Map());
+    setReadyAhead(0);
+    setWord(null);
+
     const player = createPlayer({
       engine: info.engine,
-      items,
-      startIndex: firstIndex,
+      items: target.items,
+      startIndex: queueIndex,
       voiceId: voiceRef.current || undefined,
       rate: rateRef.current,
+      // Fires only when this sentence's audio actually starts (B1).
       onSentence: (id) => {
         if (mine !== generation.current) return;
         const pos = index.byId.get(id);
         if (pos) setCursor(pos);
+        setWord(null);
+      },
+      onItemState: (id, state) => {
+        if (mine !== generation.current) return;
+        setItemStates((current) => {
+          const next = new Map(current);
+          next.set(id, state);
+          return next;
+        });
+      },
+      onBuffer: (count) => {
+        if (mine !== generation.current) return;
+        setReadyAhead(count);
+      },
+      onWord: (id, charIndex) => {
+        if (mine !== generation.current || !wordRef.current) return;
+        setWord({ id, charIndex });
       },
       onDone: () => {
         if (mine !== generation.current) return;
@@ -342,17 +494,20 @@ export default function ReaderView() {
         }
         setPlayState('idle');
       },
-      onError: (err) => {
+      onError: (err, id) => {
         if (mine !== generation.current) return;
         setPlayState('idle');
         setError(err.message);
+        if (id) setFailed({ id, message: err.message });
       },
     });
     playerRef.current = player;
     setPlayState('playing');
     // Move the page to what is being spoken now, not when the first clip is
     // ready: auto-advance into the next chapter must show that chapter at once.
-    setCursor({ chapterIndex: chapterIdx, index: firstIndex });
+    const firstItem = target.items[queueIndex];
+    const firstPos = firstItem ? index.byId.get(firstItem.id) : undefined;
+    setCursor(firstPos ?? { chapterIndex: chapterIdx, index: startAt });
     player.play();
   }
 
@@ -370,6 +525,30 @@ export default function ReaderView() {
     setPlayState('paused');
   }
 
+  /** The first sentence whose box is still below the sticky bar. */
+  function firstVisibleSentence(): Pos | null {
+    if (!index) return null;
+    for (const node of document.querySelectorAll<HTMLElement>('.rd-s[data-sid]')) {
+      if (node.getBoundingClientRect().bottom < 96) continue;
+      const id = node.dataset.sid;
+      const pos = id ? index.byId.get(id) : undefined;
+      if (pos) return pos;
+    }
+    return null;
+  }
+
+  /** Move the cursor there — and the player too, when it is already speaking. */
+  function goToPos(pos: Pos): void {
+    if (playStateRef.current === 'playing') {
+      const info = engineRef.current;
+      if (info) beginPlayback(info, pos.chapterIndex, pos.index);
+      else void startFrom(pos.chapterIndex, pos.index);
+      return;
+    }
+    if (playStateRef.current === 'paused') releasePlayer();
+    setCursor(pos);
+  }
+
   function startOrResume(): void {
     const pos = cursorRef.current;
     if (!pos) return;
@@ -379,6 +558,31 @@ export default function ReaderView() {
       setPlayState('playing');
       return;
     }
+    // B2: after scrolling away from the cursor, Play starts at the top of what
+    // is on screen rather than at a sentence she can no longer see.
+    const fromTop = mode === 'text' && !cursorOnScreenRef.current ? firstVisibleSentence() : null;
+    const start = fromTop ?? pos;
+    const info = engineRef.current;
+    if (info) beginPlayback(info, start.chapterIndex, start.index);
+    else void startFrom(start.chapterIndex, start.index);
+  }
+
+  /** The small "Play from here" pill: always the visible top of the text. */
+  function playFromHere(): void {
+    const start = firstVisibleSentence() ?? cursorRef.current;
+    if (!start) return;
+    const info = engineRef.current;
+    if (info) beginPlayback(info, start.chapterIndex, start.index);
+    else void startFrom(start.chapterIndex, start.index);
+  }
+
+  /** Retry the sentence whose generation failed, from that sentence. */
+  function retryFailed(): void {
+    if (!index || !failed) return;
+    const pos = index.byId.get(failed.id);
+    if (!pos) return;
+    setFailed(null);
+    setError(null);
     const info = engineRef.current;
     if (info) beginPlayback(info, pos.chapterIndex, pos.index);
     else void startFrom(pos.chapterIndex, pos.index);
@@ -394,18 +598,71 @@ export default function ReaderView() {
     flushBookPos();
   }
 
-  function step(delta: number): void {
+  /** Next sentence that is actually read aloud: skipped blocks are stepped over. */
+  function neighbour(pos: Pos, delta: 1 | -1): Pos | null {
+    if (!index) return null;
+    let at = pos;
+    const plans = new Map<number, ChapterPlan | null>();
+    for (let guard = 0; guard < 200; guard += 1) {
+      const next = stepPos(index, at, delta);
+      if (!next) return null;
+      const sentence = sentenceAt(index, next);
+      if (!sentence) return null;
+      if (!plans.has(next.chapterIndex)) plans.set(next.chapterIndex, planFor(next.chapterIndex));
+      if (plans.get(next.chapterIndex)?.orderById.has(sentence.id)) return next;
+      at = next;
+    }
+    return null;
+  }
+
+  function step(delta: 1 | -1): void {
     if (!index || !cursor) return;
-    const target = stepPos(index, cursor, delta);
+    const target = neighbour(cursor, delta);
     if (!target) return;
-    if (playStateRef.current === 'playing') {
-      const info = engineRef.current;
-      if (info) beginPlayback(info, target.chapterIndex, target.index);
-      else void startFrom(target.chapterIndex, target.index);
+    goToPos(target);
+  }
+
+  /** A page whose first sentence was skipped borrows the nearest one. */
+  function pageStartNear(page: number): Pos | null {
+    const forward = pageWithSentence(pages, page - 1, 1);
+    const backward = pageWithSentence(pages, page, -1);
+    const chosen =
+      forward !== null && (backward === null || forward - page <= page - backward) ? forward : backward;
+    return chosen === null ? null : pages.get(chosen) ?? null;
+  }
+
+  /** Jump to the first readable sentence of a PDF page, playing stays playing. */
+  function goToPage(page: number): void {
+    if (!index || page < 1) return;
+    setPdfPage(page);
+    const pos = pages.get(page) ?? pageStartNear(page);
+    if (pos) goToPos(pos);
+  }
+
+  /**
+   * B3: one page (PDF) or one screen (text) at a time. In text view the cursor
+   * and any playback move to the first sentence of the new screen.
+   */
+  function turnPage(direction: 1 | -1): void {
+    if (!index || !book) return;
+    if (book.parsed.format === 'pdf') {
+      const target = pageWithSentence(pages, pageOfCursor, direction);
+      if (target !== null) goToPage(target);
       return;
     }
-    if (playStateRef.current === 'paused') releasePlayer();
-    setCursor(target);
+    const nodes = document.querySelectorAll<HTMLElement>('.rd-s[data-sid]');
+    const goal = window.scrollY + direction * window.innerHeight * 0.85 + 96;
+    let pos: Pos | null = null;
+    for (const node of nodes) {
+      const top = node.getBoundingClientRect().top + window.scrollY;
+      if (top < goal) continue;
+      const id = node.dataset.sid;
+      pos = id ? index.byId.get(id) ?? null : null;
+      if (pos) break;
+    }
+    if (!pos) return;
+    window.scrollTo?.({ top: Math.max(0, goal - 96), behavior: 'smooth' });
+    goToPos(pos);
   }
 
   function goToChapter(ci: number): void {
@@ -443,7 +700,7 @@ export default function ReaderView() {
 
   async function preRender(): Promise<void> {
     if (!index || !cursor) return;
-    const items = chapterItems(cursor.chapterIndex);
+    const items = prerenderItems(cursor.chapterIndex);
     if (!items.length) return;
     const info = await engineForPlay();
     if (!info.engine.synthesize) {
@@ -649,6 +906,23 @@ export default function ReaderView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The player decides how much room the page needs to reserve at the bottom:
+  // its caption row grows a status line and the "Play from here" pill comes and
+  // goes, so a fixed 120 px would let the last line of a chapter slide behind it.
+  useEffect(() => {
+    const page = pageRef.current;
+    const dock = document.querySelector<HTMLElement>('.rd-dock');
+    if (!page || !dock) return;
+    const apply = () => {
+      page.style.setProperty('--rd-player-h', `${Math.ceil(dock.getBoundingClientRect().height)}px`);
+    };
+    apply();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(apply);
+    observer.observe(dock);
+    return () => observer.disconnect();
+  }, [playState, cursorOnScreen, mode, book]);
+
   // -- render --------------------------------------------------------------
 
   if (book === undefined) {
@@ -671,11 +945,34 @@ export default function ReaderView() {
     );
   }
 
-  const isPdf = book.format === 'pdf';
   const showPage = isPdf && mode === 'page';
 
+  // F1: which sentence is being synthesized right now (and its chapter number).
+  // Plain computation, not a hook: this sits below the loading return.
+  let generatingId: string | null = null;
+  if (playerRef.current) {
+    for (const item of plan?.items ?? []) {
+      if (itemStates.get(item.id) === 'generating') {
+        generatingId = item.id;
+        break;
+      }
+    }
+  }
+  const generatingNumber = generatingId ? (index.byId.get(generatingId)?.index ?? 0) + 1 : null;
+
+  const skippedLabels = new Map<string, string>();
+  if (plan) for (const id of plan.skippedBlocks) skippedLabels.set(id, skippedLabel(plan.blockKinds.get(id) ?? 'p'));
+
+  const pageNav: PageNav | null = isPdf
+    ? {
+        label: `Page ${pageOfCursor} of ${lastPage(index)}`,
+        onPrev: () => turnPage(-1),
+        onNext: () => turnPage(1),
+      }
+    : { label: `${screen.at} / ${screen.total}`, onPrev: () => turnPage(-1), onNext: () => turnPage(1) };
+
   return (
-    <section className="page rd-page">
+    <section className="page rd-page" ref={pageRef}>
       <header className="rd-bar">
         <Link to="/" className="rd-bar-btn" aria-label="Back to library">
           <Glyph>{icons.back}</Glyph>
@@ -732,7 +1029,19 @@ export default function ReaderView() {
           <div>
             <p>{error}</p>
           </div>
-          <button type="button" className="btn btn-ghost rd-error-dismiss" onClick={() => setError(null)}>
+          {failed && index.byId.has(failed.id) ? (
+            <button type="button" className="btn btn-ghost" onClick={retryFailed}>
+              Try again
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="btn btn-ghost rd-error-dismiss"
+            onClick={() => {
+              setError(null);
+              setFailed(null);
+            }}
+          >
             Dismiss
           </button>
         </div>
@@ -745,7 +1054,16 @@ export default function ReaderView() {
             file={book.fileBlob}
             page={pdfPage}
             rects={reading?.pdfRects ?? []}
-            onPageChange={(page) => setPdfPage(Math.max(1, page))}
+            onPageChange={(page) => {
+              const next = Math.max(1, page);
+              setPdfPage(next);
+              // The page turned because the voice moved on: keep the cursor.
+              if (pageFromCursor.current) {
+                pageFromCursor.current = false;
+                return;
+              }
+              goToPage(next);
+            }}
           />
         </Suspense>
       ) : chapter ? (
@@ -759,10 +1077,18 @@ export default function ReaderView() {
           selected={selection?.ids ?? []}
           fontSize={fontSize}
           lineHeight={lineHeight}
+          skipped={plan?.skippedBlocks}
+          skippedLabels={skippedLabels}
+          generatingId={generatingId}
+          wordChar={wordHighlight ? word : null}
+          wordHighlight={wordHighlight}
           onTap={(sentence: FlatSentence) => {
             setSelection(null);
-            if (playStateRef.current === 'playing') {
-              void startFrom(sentence.chapterIndex, sentence.index);
+            const playable = !plan || plan.orderById.has(sentence.id);
+            if (playStateRef.current === 'playing' && playable) {
+              const info = engineRef.current;
+              if (info) beginPlayback(info, sentence.chapterIndex, sentence.index);
+              else void startFrom(sentence.chapterIndex, sentence.index);
               return;
             }
             if (playStateRef.current === 'paused') releasePlayer();
@@ -805,6 +1131,10 @@ export default function ReaderView() {
         cached={Boolean(cachedChapter && cachedChapter === chapter?.id)}
         sentenceNumber={reading ? reading.index + 1 : 0}
         sentenceTotal={index.chapters[chapterIndex]?.length ?? 0}
+        generating={generatingNumber}
+        readyAhead={readyAhead}
+        pages={showPage ? null : pageNav}
+        fromHere={mode === 'text' && !cursorOnScreen && playState !== 'playing'}
         onToggle={togglePlay}
         onStop={stopPlayback}
         onPrev={() => step(-1)}
@@ -812,6 +1142,7 @@ export default function ReaderView() {
         onRate={changeRate}
         onPrerender={() => void preRender()}
         onCancelPrerender={() => abortRef.current?.abort()}
+        onPlayFromHere={playFromHere}
       />
 
       {selection ? (

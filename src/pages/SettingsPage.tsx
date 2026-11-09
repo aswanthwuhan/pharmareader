@@ -2,6 +2,8 @@ import { useEffect, type ReactNode } from 'react';
 import packageJson from '../../package.json';
 import { CachePanel, LexiconPanel, VoicePanel } from '../tts/TtsSettings';
 import NeuralModelsPanel from '../tts/neural/NeuralModelsPanel';
+import AlignModelPanel from '../tts/align/AlignModelPanel';
+import ReadingOptions from '../reader/ReadingOptions';
 import AiSettings from '../ai/AiSettings';
 import BackupPanel from '../backup/BackupPanel';
 import './settings.css';
@@ -10,6 +12,7 @@ const REPO_URL = 'https://github.com/aswanthwuhan/pharmareader';
 
 const SECTIONS = [
   { id: 'voice', label: 'Voice' },
+  { id: 'reading', label: 'Reading aloud' },
   { id: 'voice-models', label: 'On-device models' },
   { id: 'pronunciation', label: 'Pronunciation' },
   { id: 'cached-audio', label: 'Cached audio' },
@@ -75,11 +78,14 @@ export default function SettingsPage() {
             <VoicePanel />
           </Section>
 
+          <ReadingOptions />
+
           <section id="voice-models" className="settings-section" aria-labelledby="voice-models-h2">
             <h2 id="voice-models-h2" className="settings-h2">
               On-device voice models
             </h2>
             <NeuralModelsPanel />
+            <AlignModelPanel />
           </section>
 
           <Section

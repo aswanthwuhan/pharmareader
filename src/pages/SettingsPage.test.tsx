@@ -6,6 +6,7 @@ import SettingsPage, { scrollToHash } from './SettingsPage';
 const SECTION_IDS = ['voice', 'voice-models', 'pronunciation', 'cached-audio', 'ai', 'backup', 'about'];
 const SECTION_TITLES = [
   'Voice',
+  'Reading aloud',
   'On-device voice models',
   'Pronunciation',
   'Cached audio',

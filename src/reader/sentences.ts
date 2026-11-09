@@ -123,3 +123,54 @@ export function stepPos(index: BookIndex, pos: Pos, delta: number): Pos | null {
   }
   return { chapterIndex, index: at };
 }
+
+/**
+ * The sentence a PDF page starts with, for every page that starts one.
+ *
+ * Page view and playback share one cursor, so turning a page has to land the
+ * cursor on the first sentence printed on that page — a page can also begin
+ * mid-chapter, so the position carries the chapter with it.
+ */
+export function firstPosOnPages(index: BookIndex): Map<number, Pos> {
+  const pages = new Map<number, Pos>();
+  index.chapters.forEach((sentences, chapterIndex) => {
+    sentences.forEach((sentence, at) => {
+      const page = sentence.pdfRects?.[0]?.page;
+      if (page === undefined) return;
+      if (!pages.has(page)) pages.set(page, { chapterIndex, index: at });
+    });
+  });
+  return pages;
+}
+
+/** The page with a sentence nearest to `from`, searching forward or back. */
+export function pageWithSentence(
+  pages: Map<number, Pos>,
+  from: number,
+  direction: 1 | -1,
+  step = 1,
+): number | null {
+  if (pages.size === 0) return null;
+  const ordered = [...pages.keys()].sort((a, b) => a - b);
+  if (direction === 1) {
+    for (const page of ordered) if (page >= from + step) return page;
+    return null;
+  }
+  for (let i = ordered.length - 1; i >= 0; i--) {
+    const page = ordered[i]!;
+    if (page <= from - step) return page;
+  }
+  return null;
+}
+
+/** Highest page number any sentence sits on (PDF books). */
+export function lastPage(index: BookIndex): number {
+  let page = 1;
+  for (const sentences of index.chapters) {
+    for (const sentence of sentences) {
+      const at = sentence.pdfRects?.[0]?.page;
+      if (at !== undefined && at > page) page = at;
+    }
+  }
+  return page;
+}

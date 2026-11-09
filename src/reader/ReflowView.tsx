@@ -22,6 +22,16 @@ interface Props {
   selected: string[];
   fontSize: number;
   lineHeight: number;
+  /** Block ids whose text stays visible but is left out of the voice. */
+  skipped?: Set<string>;
+  /** "Table", "Figure" … per skipped block, for the quiet inline label. */
+  skippedLabels?: Map<string, string>;
+  /** Sentence being synthesized right now: a dotted underline marks the wait. */
+  generatingId?: string | null;
+  /** Spoken word inside `readingId`, as a char offset into the original text. */
+  wordChar?: { id: string; charIndex: number } | null;
+  /** Karaoke word highlight for synthesized audio. */
+  wordHighlight?: boolean;
   onTap(sentence: FlatSentence): void;
   onSelect(sentenceIds: string[], text: string): void;
 }
@@ -44,6 +54,11 @@ export default function ReflowView({
   selected,
   fontSize,
   lineHeight,
+  skipped,
+  skippedLabels,
+  generatingId,
+  wordChar,
+  wordHighlight,
   onTap,
   onSelect,
 }: Props) {
@@ -175,6 +190,25 @@ export default function ReflowView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** Split a sentence around the spoken word so only that word is marked. */
+  function spoken(text: string, id: string) {
+    if (!wordHighlight || !wordChar || wordChar.id !== id) return text;
+    // The player reports a character inside the word; take the whole word so the
+    // underline never starts halfway through a token.
+    let start = Math.min(Math.max(0, wordChar.charIndex), Math.max(0, text.length - 1));
+    while (start > 0 && !/\s/.test(text[start - 1]!)) start -= 1;
+    let end = start;
+    while (end < text.length && !/\s/.test(text[end]!)) end += 1;
+    if (end === start) return text;
+    return (
+      <>
+        {text.slice(0, start)}
+        <mark className="rd-word">{text.slice(start, end)}</mark>
+        {text.slice(end)}
+      </>
+    );
+  }
+
   function spans(block: Chapter['blocks'][number]) {
     return block.sentences
       .filter((sentence) => {
@@ -185,10 +219,11 @@ export default function ReflowView({
         const highlight = highlights.get(sentence.id);
         const classes = ['rd-s'];
         if (sentence.id === readingId) classes.push('reading');
+        if (sentence.id === generatingId) classes.push('generating');
         if (selectedSet.has(sentence.id)) classes.push('selected');
         return (
           <span key={sentence.id} className={classes.join(' ')} data-sid={sentence.id} data-hl={highlight?.color}>
-            {sentence.text}{' '}
+            {spoken(sentence.text, sentence.id)}{' '}
           </span>
         );
       });
@@ -243,36 +278,52 @@ export default function ReflowView({
       {chapter.blocks.map((block) => {
         const content = spans(block);
         if (!content.length) return null;
+        const leftOut = skipped?.has(block.id) ?? false;
+        const tag = leftOut ? (
+          <span className="rd-skip-tag">
+            {skippedLabels?.get(block.id) ?? 'Skipped'} · skipped while reading
+          </span>
+        ) : null;
+        const extra = leftOut ? ' is-skipped' : '';
         switch (block.kind) {
           case 'h':
             return (
-              <h3 key={block.id} className="rd-block-h">
+              <h3 key={block.id} className={`rd-block-h${extra}`}>
+                {tag}
                 {content}
               </h3>
             );
           case 'li':
             return (
-              <p key={block.id} className="rd-block-li">
+              <p key={block.id} className={`rd-block-li${extra}`}>
                 <span aria-hidden="true" className="rd-bullet">
                   •
                 </span>
+                {tag}
                 {content}
               </p>
             );
           case 'table':
             return (
-              <div key={block.id} className="rd-block-table" role="group">
+              <div key={block.id} className={`rd-block-table${extra}`} role="group">
+                {tag}
                 {content}
               </div>
             );
           case 'figure':
             return (
-              <p key={block.id} className="rd-block-figure">
+              <p key={block.id} className={`rd-block-figure${extra}`}>
+                {tag}
                 {content}
               </p>
             );
           default:
-            return <p key={block.id}>{content}</p>;
+            return (
+              <p key={block.id} className={leftOut ? 'is-skipped' : undefined}>
+                {tag}
+                {content}
+              </p>
+            );
         }
       })}
       {after ? (
