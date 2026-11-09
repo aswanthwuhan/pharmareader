@@ -1,7 +1,10 @@
 /**
  * The sticky playback bar. It sits directly above the app's bottom navigation
- * so it is always reachable with a thumb while reading.
+ * so it is always reachable with a thumb while reading. It reads as a small
+ * bottom sheet: one calm surface, one primary action, the voice named quietly.
  */
+import { Glyph, icons } from './Icon';
+
 export type PlayState = 'idle' | 'playing' | 'paused';
 
 interface Props {
@@ -48,23 +51,30 @@ export default function PlayerBar({
   return (
     <div className="rd-player" role="group" aria-label="Read aloud">
       <div className="rd-player-row">
-        <button type="button" className="rd-btn rd-icon" aria-label="Previous sentence" onClick={onPrev}>
-          ⏮
+        <button
+          type="button"
+          className="btn btn-ghost btn-icon rd-step"
+          aria-label="Previous sentence"
+          onClick={onPrev}
+        >
+          <Glyph>{icons.prev}</Glyph>
         </button>
         <button
           type="button"
-          className="rd-btn rd-play"
+          className="rd-play"
           aria-label={playing ? 'Pause' : state === 'paused' ? 'Resume' : 'Play'}
           aria-pressed={playing}
           onClick={onToggle}
         >
-          {playing ? '❚❚' : '▶'}
+          <Glyph>{playing ? icons.pause : icons.play}</Glyph>
         </button>
-        <button type="button" className="rd-btn rd-icon" aria-label="Next sentence" onClick={onNext}>
-          ⏭
-        </button>
-        <button type="button" className="rd-btn rd-icon" aria-label="Stop" onClick={onStop}>
-          ■
+        <button
+          type="button"
+          className="btn btn-ghost btn-icon rd-step"
+          aria-label="Next sentence"
+          onClick={onNext}
+        >
+          <Glyph>{icons.next}</Glyph>
         </button>
 
         <label className="rd-rate">
@@ -83,27 +93,40 @@ export default function PlayerBar({
       </div>
 
       <div className="rd-player-row rd-player-meta">
-        <span className="rd-engine" title={fallback ? 'Your chosen voice is not ready; using system voices.' : undefined}>
+        <span
+          className="rd-engine"
+          title={fallback ? 'Your chosen voice is not ready; using system voices.' : undefined}
+        >
           {engineLabel}
           {fallback ? ' · fallback' : ''}
         </span>
 
-        {cached && !busy ? <span className="rd-badge">cached</span> : null}
+        {cached && !busy ? <span className="badge">cached</span> : null}
 
         {busy ? (
           <>
             <span className="rd-progress" aria-live="polite">
               Pre-rendering {progress.done}/{progress.total}
             </span>
-            <button type="button" className="rd-btn rd-small" onClick={onCancelPrerender}>
+            <button type="button" className="btn btn-ghost rd-meta-btn" onClick={onCancelPrerender}>
               Cancel
             </button>
           </>
         ) : canPrerender ? (
-          <button type="button" className="rd-btn rd-small" onClick={onPrerender}>
+          <button type="button" className="btn btn-ghost rd-meta-btn" onClick={onPrerender}>
             Pre-render chapter
           </button>
         ) : null}
+
+        <button
+          type="button"
+          className="btn btn-ghost rd-meta-btn rd-stop"
+          aria-label="Stop"
+          onClick={onStop}
+        >
+          <Glyph>{icons.stop}</Glyph>
+          <span>Stop</span>
+        </button>
       </div>
     </div>
   );

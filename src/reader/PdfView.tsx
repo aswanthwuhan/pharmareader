@@ -13,6 +13,7 @@ import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type { PdfRect } from '../core/types';
+import { Glyph, icons } from './Icon';
 
 GlobalWorkerOptions.workerSrc ||= workerUrl;
 
@@ -268,45 +269,65 @@ export default function PdfView({ docKey, file, page, rects, onPageChange }: Pro
       </div>
 
       {error ? (
-        <p className="rd-error" role="alert">
-          {error}
-        </p>
+        <div className="banner banner-error rd-error" role="alert">
+          <Glyph>{icons.alert}</Glyph>
+          <div>
+            <p>{error}</p>
+          </div>
+        </div>
       ) : null}
 
       <div className="rd-pdf-controls">
-        <button type="button" className="rd-btn" onClick={() => onPageChange(painted - 1)} disabled={painted <= 1}>
-          <span aria-hidden="true">‹</span> Prev
-        </button>
-        <span className="rd-pdf-count" aria-live="polite">
-          {loading ? '…' : `Page ${painted} / ${pageCount || '?'}`}
-        </span>
-        <button
-          type="button"
-          className="rd-btn"
-          onClick={() => onPageChange(painted + 1)}
-          disabled={pageCount > 0 && painted >= pageCount}
-        >
-          Next <span aria-hidden="true">›</span>
-        </button>
-        <button
-          type="button"
-          className="rd-btn"
-          aria-label="Zoom out"
-          onClick={() => setZoom((value) => clampNumber(value - 0.2, ZOOM_MIN, ZOOM_MAX))}
-        >
-          A−
-        </button>
-        <button
-          type="button"
-          className="rd-btn"
-          aria-label="Zoom in"
-          onClick={() => setZoom((value) => clampNumber(value + 0.2, ZOOM_MIN, ZOOM_MAX))}
-        >
-          A+
-        </button>
-        <button type="button" className="rd-btn" onClick={() => setZoom(1)}>
-          Fit width
-        </button>
+        <div className="rd-pdf-nav" role="group" aria-label="Page">
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon"
+            aria-label="Previous page"
+            onClick={() => onPageChange(painted - 1)}
+            disabled={painted <= 1}
+          >
+            <Glyph>{icons.back}</Glyph>
+          </button>
+          <span className="rd-pdf-count" aria-live="polite">
+            {loading ? '…' : `Page ${painted} / ${pageCount || '?'}`}
+          </span>
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon"
+            aria-label="Next page"
+            onClick={() => onPageChange(painted + 1)}
+            disabled={pageCount > 0 && painted >= pageCount}
+          >
+            <Glyph>{icons.forward}</Glyph>
+          </button>
+        </div>
+        <div className="rd-pdf-zoom" role="group" aria-label="Zoom">
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon"
+            aria-label="Zoom out"
+            onClick={() => setZoom((value) => clampNumber(value - 0.2, ZOOM_MIN, ZOOM_MAX))}
+          >
+            <Glyph>{icons.zoomOut}</Glyph>
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon"
+            aria-label="Zoom in"
+            onClick={() => setZoom((value) => clampNumber(value + 0.2, ZOOM_MIN, ZOOM_MAX))}
+          >
+            <Glyph>{icons.zoomIn}</Glyph>
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon"
+            aria-label="Fit width"
+            title="Fit width"
+            onClick={() => setZoom(1)}
+          >
+            <Glyph>{icons.fit}</Glyph>
+          </button>
+        </div>
       </div>
     </div>
   );

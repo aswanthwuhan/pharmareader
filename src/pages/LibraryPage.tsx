@@ -5,6 +5,7 @@ import { db } from '../core/db';
 import type { BookRecord } from '../core/types';
 import { deleteBook, importFileDetailed, importText, importUrl } from '../import';
 import '../import/library.css';
+import ModelStatusBanner from '../tts/ModelStatusBanner';
 
 const ACCEPT = '.pdf,.epub,.docx,.txt,.md,.html';
 
@@ -240,6 +241,7 @@ export default function LibraryPage() {
           />
         </div>
       </header>
+      <ModelStatusBanner context="library" />
 
       <div className="toolbar lib-actions">
         <button

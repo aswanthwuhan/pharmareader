@@ -230,7 +230,7 @@ export default function ReflowView({
       {before ? (
         <button
           type="button"
-          className="rd-btn rd-more"
+          className="btn btn-secondary rd-more"
           onClick={() => setWin((current) => ({ start: Math.max(0, current.start - WINDOW_RADIUS), end: current.end }))}
         >
           Show earlier
@@ -275,7 +275,7 @@ export default function ReflowView({
         <button
           ref={moreRef}
           type="button"
-          className="rd-btn rd-more"
+          className="btn btn-secondary rd-more"
           onClick={() =>
             setWin((current) => ({
               start: current.start,

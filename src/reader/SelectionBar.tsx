@@ -1,8 +1,10 @@
 /**
  * The toolbar that appears over a text selection: highlight it, annotate it,
- * bookmark the sentence, turn it into a card, or hand it to the AI.
+ * bookmark the sentence, turn it into a card, or hand it to the AI. It wears
+ * the same sheet surface and corner radius as every other panel in the app.
  */
 import { useEffect, useRef, useState } from 'react';
+import { Glyph, icons } from './Icon';
 
 export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink';
 
@@ -61,7 +63,17 @@ export default function SelectionBar({
         onClose();
       }}
     >
-      <p className="rd-select-text">{text.length > 140 ? `${text.slice(0, 140)}…` : text}</p>
+      <div className="rd-select-head">
+        <p className="rd-select-text">{text.length > 140 ? `${text.slice(0, 140)}…` : text}</p>
+        <button
+          type="button"
+          className="btn btn-ghost btn-icon rd-select-close"
+          aria-label="Close actions"
+          onClick={onClose}
+        >
+          <Glyph>{icons.close}</Glyph>
+        </button>
+      </div>
 
       {noteOpen ? (
         <form
@@ -74,12 +86,19 @@ export default function SelectionBar({
           }}
         >
           <label htmlFor="rd-note">Note</label>
-          <textarea id="rd-note" value={note} rows={3} onChange={(event) => setNote(event.target.value)} autoFocus />
+          <textarea
+            id="rd-note"
+            className="input rd-note-input"
+            value={note}
+            rows={3}
+            onChange={(event) => setNote(event.target.value)}
+            autoFocus
+          />
           <div className="rd-note-actions">
-            <button type="submit" className="rd-btn" disabled={!note.trim()}>
+            <button type="submit" className="btn btn-primary" disabled={!note.trim()}>
               Save note
             </button>
-            <button type="button" className="rd-btn" onClick={() => setNoteOpen(false)}>
+            <button type="button" className="btn btn-secondary" onClick={() => setNoteOpen(false)}>
               Cancel
             </button>
           </div>
@@ -102,26 +121,28 @@ export default function SelectionBar({
           </div>
 
           <div className="rd-select-actions">
-            <button type="button" className="rd-btn" aria-label="Extend selection by one sentence" onClick={onExtend}>
-              + Sentence
+            <button
+              type="button"
+              className="btn btn-ghost rd-action"
+              aria-label="Extend selection by one sentence"
+              onClick={onExtend}
+            >
+              <Glyph>{icons.plus}</Glyph><span>Sentence</span>
             </button>
-            <button type="button" className="rd-btn" onClick={() => setNoteOpen(true)}>
-              Note
+            <button type="button" className="btn btn-ghost rd-action" onClick={() => setNoteOpen(true)}>
+              <Glyph>{icons.note}</Glyph><span>Note</span>
             </button>
-            <button type="button" className="rd-btn" onClick={onBookmark}>
-              Bookmark
+            <button type="button" className="btn btn-ghost rd-action" onClick={onBookmark}>
+              <Glyph>{icons.bookmark}</Glyph><span>Bookmark</span>
             </button>
-            <button type="button" className="rd-btn" onClick={() => onCard('qa')}>
-              Q&amp;A card
+            <button type="button" className="btn btn-ghost rd-action" onClick={() => onCard('qa')}>
+              <Glyph>{icons.card}</Glyph><span>Q&amp;A card</span>
             </button>
-            <button type="button" className="rd-btn" onClick={() => onCard('cloze')}>
-              Cloze card
+            <button type="button" className="btn btn-ghost rd-action" onClick={() => onCard('cloze')}>
+              <Glyph>{icons.card}</Glyph><span>Cloze card</span>
             </button>
-            <button type="button" className="rd-btn" aria-label="AI actions" onClick={onAi}>
-              AI
-            </button>
-            <button type="button" className="rd-btn rd-select-close" aria-label="Close actions" onClick={onClose}>
-              ✕
+            <button type="button" className="btn btn-ghost rd-action" aria-label="AI actions" onClick={onAi}>
+              <Glyph>{icons.sparkle}</Glyph><span>AI</span>
             </button>
           </div>
         </>

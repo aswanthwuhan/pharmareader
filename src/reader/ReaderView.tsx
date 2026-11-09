@@ -27,8 +27,10 @@ import {
 import HighlightList from '../study/HighlightList';
 import AiActions from '../ai/AiActions';
 import TopicPicker from '../syllabus/TopicPicker';
+import ModelStatusBanner from '../tts/ModelStatusBanner';
 import PlayerBar, { type PlayState } from './PlayerBar';
 import SelectionBar, { type HighlightColor } from './SelectionBar';
+import { Glyph, icons } from './Icon';
 import ReflowView from './ReflowView';
 import {
   highlightBySentence,
@@ -653,7 +655,7 @@ export default function ReaderView() {
       <section className="page rd-page">
         <h1>Book not found</h1>
         <p className="muted">It may have been deleted.</p>
-        <Link to="/" className="rd-btn">
+        <Link to="/" className="btn btn-secondary">
           Back to library
         </Link>
       </section>
@@ -667,44 +669,73 @@ export default function ReaderView() {
     <section className="page rd-page">
       <header className="rd-head">
         <div className="rd-head-row">
-          <Link to="/" className="rd-btn" aria-label="Back to library">
-            ‹
+          <Link to="/" className="btn btn-ghost btn-icon" aria-label="Back to library">
+            <Glyph>{icons.back}</Glyph>
           </Link>
           <h1 className="rd-title" title={book.title}>
             {book.title}
           </h1>
-          <button type="button" className="rd-btn" onClick={() => setDrawer('toc')}>
+          <button type="button" className="btn btn-secondary rd-head-action" onClick={() => setDrawer('toc')}>
+            <Glyph>{icons.chapters}</Glyph>
             Chapters
-          </button>
-        </div>
-        <div className="rd-tools">
-          <button type="button" className="rd-btn" aria-label="Smaller text" onClick={() => changeFont(-1)}>
-            A−
-          </button>
-          <button type="button" className="rd-btn" aria-label="Larger text" onClick={() => changeFont(1)}>
-            A+
-          </button>
-          <button type="button" className="rd-btn" onClick={cycleLineHeight} aria-label="Change line spacing">
-            Spacing
-          </button>
-          {isPdf ? (
-            <button type="button" className="rd-btn" onClick={() => setMode(showPage ? 'text' : 'page')}>
-              {showPage ? 'Text view' : 'Page view'}
-            </button>
-          ) : null}
-          <button type="button" className="rd-btn" onClick={() => setTopicOpen(true)}>
-            Topics{topicIds.length ? ` (${topicIds.length})` : ''}
           </button>
         </div>
       </header>
 
+      <div className="rd-tools">
+        <button
+          type="button"
+          className="btn btn-ghost btn-icon"
+          aria-label="Smaller text"
+          onClick={() => changeFont(-1)}
+        >
+          <Glyph>{icons.textSmall}</Glyph>
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost btn-icon"
+          aria-label="Larger text"
+          onClick={() => changeFont(1)}
+        >
+          <Glyph>{icons.textLarge}</Glyph>
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost rd-tool"
+          onClick={cycleLineHeight}
+          aria-label="Change line spacing"
+        >
+          <Glyph>{icons.spacing}</Glyph>
+          Spacing
+        </button>
+        {isPdf ? (
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon"
+            onClick={() => setMode(showPage ? 'text' : 'page')}
+            aria-label={showPage ? 'Text view' : 'Page view'}
+            title={showPage ? 'Text view' : 'Page view'}
+          >
+            <Glyph>{icons.page}</Glyph>
+          </button>
+        ) : null}
+        <button type="button" className="btn btn-ghost rd-tool" onClick={() => setTopicOpen(true)}>
+          Topics{topicIds.length ? ` (${topicIds.length})` : ''}
+        </button>
+      </div>
+
+      <ModelStatusBanner context="reader" />
+
       {error ? (
-        <p className="rd-error" role="alert">
-          {error}
-          <button type="button" className="rd-link" onClick={() => setError(null)}>
+        <div className="banner banner-error rd-error" role="alert">
+          <Glyph>{icons.alert}</Glyph>
+          <div>
+            <p>{error}</p>
+          </div>
+          <button type="button" className="btn btn-ghost rd-error-dismiss" onClick={() => setError(null)}>
             Dismiss
           </button>
-        </p>
+        </div>
       ) : null}
 
       {showPage ? (
@@ -743,16 +774,23 @@ export default function ReaderView() {
       )}
 
       <nav className="rd-chapter-nav" aria-label="Chapter navigation">
-        <button type="button" className="rd-btn" disabled={chapterIndex <= 0} onClick={() => goToChapter(chapterIndex - 1)}>
-          ‹ Previous chapter
+        <button
+          type="button"
+          className="btn btn-secondary"
+          disabled={chapterIndex <= 0}
+          onClick={() => goToChapter(chapterIndex - 1)}
+        >
+          <Glyph>{icons.back}</Glyph>
+          <span>Previous chapter</span>
         </button>
         <button
           type="button"
-          className="rd-btn"
+          className="btn btn-secondary"
           disabled={chapterIndex >= index.chapters.length - 1}
           onClick={() => goToChapter(chapterIndex + 1)}
         >
-          Next chapter ›
+          <span>Next chapter</span>
+          <Glyph>{icons.forward}</Glyph>
         </button>
       </nav>
 
@@ -800,7 +838,7 @@ export default function ReaderView() {
             if (event.target === event.currentTarget) setAiText(null);
           }}
         >
-          <div className="rd-sheet-body" ref={sheetBody} tabIndex={-1}>
+          <div className="rd-sheet-body sheet" ref={sheetBody} tabIndex={-1}>
             <AiActions
               text={aiText}
               bookId={book.id}
@@ -821,7 +859,7 @@ export default function ReaderView() {
             if (event.target === event.currentTarget) setTopicOpen(false);
           }}
         >
-          <div className="rd-sheet-body" ref={sheetBody} tabIndex={-1}>
+          <div className="rd-sheet-body sheet" ref={sheetBody} tabIndex={-1}>
             <TopicPicker
               label="Topics for this book"
               value={topicIds}
@@ -830,7 +868,7 @@ export default function ReaderView() {
                 void db.books.update(book.id, { topicIds: ids });
               }}
             />
-            <button type="button" className="rd-btn" onClick={() => setTopicOpen(false)}>
+            <button type="button" className="btn btn-primary rd-sheet-done" onClick={() => setTopicOpen(false)}>
               Done
             </button>
           </div>
@@ -847,7 +885,7 @@ export default function ReaderView() {
             if (event.target === event.currentTarget) setDrawer('none');
           }}
         >
-          <div className="rd-sheet-body" ref={sheetBody} tabIndex={-1}>
+          <div className="rd-sheet-body sheet" ref={sheetBody} tabIndex={-1}>
             <div className="rd-tabs" role="tablist">
               <button
                 type="button"
@@ -867,8 +905,13 @@ export default function ReaderView() {
               >
                 Notes
               </button>
-              <button type="button" className="rd-btn rd-tab-close" aria-label="Close" onClick={() => setDrawer('none')}>
-                ✕
+              <button
+                type="button"
+                className="btn btn-ghost btn-icon rd-tab-close"
+                aria-label="Close"
+                onClick={() => setDrawer('none')}
+              >
+                <Glyph>{icons.close}</Glyph>
               </button>
             </div>
             {drawer === 'toc' ? (
