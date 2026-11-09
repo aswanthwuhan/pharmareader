@@ -85,7 +85,7 @@ describe('filterEntries', () => {
   it('matches pattern and replacement case-insensitively', () => {
     const rows = [
       { id: 'b-1', pattern: 'mg/kg', replacement: 'milligrams per kilogram', isRegex: true, source: 'builtin' as const, enabled: true },
-      { id: 'b-2', pattern: 'CYP3A4', replacement: 'C Y P three A four', isRegex: true, source: 'builtin' as const, enabled: true },
+      { id: 'b-2', pattern: 'CYP3A4', replacement: 'C Y P three eigh four', isRegex: true, source: 'builtin' as const, enabled: true },
     ];
     expect(filterEntries(rows, 'cyp')).toHaveLength(1);
     expect(filterEntries(rows, 'kilogram')).toHaveLength(1);
@@ -144,7 +144,7 @@ describe('TtsSettings', () => {
     await flush(200);
 
     const preview = container.querySelector('.tts-preview');
-    expect(preview?.textContent).toContain('C Y P three A four');
+    expect(preview?.textContent).toContain('C Y P three eigh four');
   });
 
   it('shows the cache size and clears it', async () => {
