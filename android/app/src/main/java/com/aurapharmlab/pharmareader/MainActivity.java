@@ -4,6 +4,7 @@ import android.content.pm.ApplicationInfo;
 import android.os.Bundle;
 import android.webkit.WebView;
 
+import com.aurapharmlab.pharmareader.kokoro.KokoroPlugin;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
@@ -13,6 +14,9 @@ public class MainActivity extends BridgeActivity {
         if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
             WebView.setWebContentsDebuggingEnabled(true);
         }
+        // On-device Kokoro speech (sherpa-onnx). Must be registered before super.onCreate(),
+        // which is where the Capacitor Bridge instantiates its plugin set.
+        registerPlugin(KokoroPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

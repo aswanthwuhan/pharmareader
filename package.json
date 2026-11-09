@@ -11,8 +11,9 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p .",
     "build:native": "tsc -b && vite build --mode native",
-    "android:sync": "pnpm build:native && cap sync android",
-    "android:apk": "cd android && gradlew assembleDebug"
+    "android:sync": "pnpm android:libs && pnpm build:native && cap sync android",
+    "android:apk": "cd android && gradlew assembleDebug",
+    "android:libs": "node scripts/fetch-android-libs.mjs"
   },
   "dependencies": {
     "@capacitor-community/text-to-speech": "^8.0.2",
