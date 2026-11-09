@@ -32,7 +32,6 @@ vi.mock('@capacitor/core', () => ({
 vi.mock('./system', () => ({ systemEngine: h.make('system', 'System voices') }));
 vi.mock('./neural/pocket', () => ({ pocketEngine: h.make('pocket', 'Pocket TTS') }));
 vi.mock('./neural/kokoro', () => ({ kokoroEngine: h.make('kokoro', 'Kokoro (web)') }));
-vi.mock('./neural/kokoroServer', () => ({ kokoroServerEngine: h.make('kokoro-server', 'Kokoro server') }));
 vi.mock('./native/kokoroNativeEngine', () => ({ kokoroNativeEngine: h.make('kokoro', 'Kokoro (native)') }));
 
 const { allEngines, describeEngine, resolveEngine } = await import('./registry');
@@ -41,7 +40,6 @@ beforeEach(async () => {
   h.ready.system = true;
   h.ready.pocket = false;
   h.ready.kokoro = false;
-  h.ready['kokoro-server'] = false;
   h.failing.clear();
   h.native.value = false;
   await db.delete();
@@ -82,12 +80,6 @@ describe('resolveEngine', () => {
     h.ready.pocket = true;
     h.failing.add('pocket');
     expect((await resolveEngine()).id).toBe('system');
-  });
-
-  it('honours kokoro-server, which is not in allEngines()', async () => {
-    await setSetting('tts.engine', 'kokoro-server');
-    h.ready['kokoro-server'] = true;
-    expect((await resolveEngine()).id).toBe('kokoro-server');
   });
 
   it('auto prefers kokoro over pocket when both are installed and fast', async () => {

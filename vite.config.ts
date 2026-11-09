@@ -24,6 +24,14 @@ export default defineConfig(({ mode }) => ({
         // TTS models are hundreds of MB and are downloaded at runtime, never precached.
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         globPatterns: ['**/*.{js,css,html,woff2}'],
+        // onnxruntime-web wasm (~22 MB) is too big to precache; cache on first use so later launches work offline.
+        runtimeCaching: [
+          {
+            urlPattern: ({ url }) => url.pathname.startsWith('/ort/'),
+            handler: 'CacheFirst',
+            options: { cacheName: 'ort-runtime', expiration: { maxEntries: 10 } },
+          },
+        ],
       },
     }),
   ],

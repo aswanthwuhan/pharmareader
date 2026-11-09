@@ -163,9 +163,9 @@ export interface SpeakEvents {
   onError?(err: Error): void;
 }
 
-/** Contract every TTS engine (system, pocket, kokoro, kokoro-server) implements. */
+/** Contract every TTS engine (system, pocket, kokoro) implements. */
 export interface TtsEngine {
-  id: 'system' | 'pocket' | 'kokoro' | 'kokoro-server';
+  id: 'system' | 'pocket' | 'kokoro';
   label: string;
   capabilities: TtsCapabilities;
   isReady(): Promise<boolean>;

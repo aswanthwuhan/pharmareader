@@ -9,7 +9,6 @@ import { getSetting } from '../core/settings';
 import type { TtsEngine } from '../core/types';
 import { rtfSettingKey } from './neural/benchmark';
 import { kokoroEngine } from './neural/kokoro';
-import { kokoroServerEngine } from './neural/kokoroServer';
 import { pocketEngine } from './neural/pocket';
 import { kokoroNativeEngine } from './native/kokoroNativeEngine';
 import { systemEngine } from './system';
@@ -17,7 +16,7 @@ import { systemEngine } from './system';
 /** Same key the settings panel writes (`TTS_ENGINE_SETTING`). */
 export const ENGINE_SETTING = 'tts.engine';
 
-export type EngineChoice = 'auto' | 'system' | 'pocket' | 'kokoro' | 'kokoro-server';
+export type EngineChoice = 'auto' | 'system' | 'pocket' | 'kokoro';
 
 /**
  * The neural models exist twice: the same Kokoro weights run in a native
@@ -51,10 +50,7 @@ export async function resolveEngine(): Promise<TtsEngine> {
   const choice = await getSetting<string>(ENGINE_SETTING, 'auto');
 
   if (choice !== 'auto') {
-    // kokoro-server is LAN-only and deliberately not in `allEngines()` (the
-    // player/prerender list), but the settings panel offers it — honour it.
-    const candidates = [...allEngines(), kokoroServerEngine];
-    const picked = candidates.find((engine) => engine.id === choice);
+    const picked = allEngines().find((engine) => engine.id === choice);
     if (picked && (await ready(picked))) return picked;
     return systemEngine;
   }
