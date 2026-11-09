@@ -1,0 +1,375 @@
+/* Syllabus + TopicPicker styles. Imported by the components so the shared
+   src/styles.css stays untouched; colours come from its CSS variables. */
+
+.syl-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 12px 0 16px;
+}
+
+.syl-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.syl-filter,
+.syl-btn {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.syl-filter[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.syl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-decoration: none;
+}
+
+.syl-btn.danger {
+  color: #b3261e;
+}
+
+.syl-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.syl-list,
+.syl-sublist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.syl-node + .syl-node {
+  border-top: 1px solid var(--border);
+}
+
+/* A parent kept only for context while a level filter is on. */
+.syl-title.is-ancestor {
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.syl-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 6px 4px;
+}
+
+.syl-twisty {
+  flex: 0 0 36px;
+  width: 36px;
+  min-height: 44px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.syl-title {
+  flex: 1 1 120px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-height: 44px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.syl-badge {
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.syl-badge.lvl-basic {
+  border-color: #6a9f4b;
+  color: #4b7a2f;
+}
+
+.syl-badge.lvl-intermediate {
+  border-color: #b98a1f;
+  color: #8a650f;
+}
+
+.syl-badge.lvl-advanced {
+  border-color: #a3502c;
+  color: #8a3d20;
+}
+
+.syl-meta {
+  flex: 1 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: center;
+  padding-left: 40px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.syl-bar {
+  flex: 1 1 120px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.syl-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.syl-detail {
+  padding: 4px 8px 14px 40px;
+}
+
+.syl-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.syl-move {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.syl-actions select {
+  min-height: 44px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.syl-edit-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.syl-edit-row input {
+  flex: 1;
+  min-height: 44px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.syl-books {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.syl-empty {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* Book tagging dialog */
+.syl-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.syl-dialog {
+  width: 100%;
+  max-width: 520px;
+  max-height: 80vh;
+  overflow: auto;
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.syl-dialog h2 {
+  margin: 0 0 4px;
+  font-size: 1.1rem;
+}
+
+.syl-check {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 44px;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.syl-check input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent);
+}
+
+/* TopicPicker */
+.tp-root {
+  position: relative;
+  display: block;
+}
+
+.tp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.tp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 4px 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.82rem;
+}
+
+.tp-chip button {
+  min-width: 32px;
+  min-height: 32px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tp-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.tp-panel {
+  position: absolute;
+  z-index: 10;
+  left: 0;
+  right: 0;
+  max-height: 320px;
+  overflow: auto;
+  margin-top: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.tp-option {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 44px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.tp-option[aria-selected='true'] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.tp-option.is-active {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.tp-box {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--muted);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  color: var(--accent-text);
+}
+
+.tp-option[aria-selected='true'] .tp-box {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.tp-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.tp-parent {
+  display: block;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.tp-empty {
+  padding: 12px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}

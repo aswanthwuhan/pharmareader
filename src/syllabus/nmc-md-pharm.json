@@ -1,0 +1,1157 @@
+[
+  {
+    "id": "general-pharmacology",
+    "parentId": null,
+    "title": "General Pharmacology",
+    "level": "basic",
+    "order": 1
+  },
+  {
+    "id": "gp-absorption-distribution",
+    "parentId": "general-pharmacology",
+    "title": "Absorption & Distribution",
+    "level": "basic",
+    "order": 1
+  },
+  {
+    "id": "gp-metabolism-excretion",
+    "parentId": "general-pharmacology",
+    "title": "Metabolism & Excretion",
+    "level": "basic",
+    "order": 2
+  },
+  {
+    "id": "gp-pharmacokinetic-parameters",
+    "parentId": "general-pharmacology",
+    "title": "Pharmacokinetic Parameters",
+    "level": "basic",
+    "order": 3
+  },
+  {
+    "id": "gp-pharmacodynamics-receptors",
+    "parentId": "general-pharmacology",
+    "title": "Pharmacodynamics & Receptors",
+    "level": "basic",
+    "order": 4
+  },
+  {
+    "id": "gp-dose-response-curves",
+    "parentId": "general-pharmacology",
+    "title": "Dose–Response Curves",
+    "level": "basic",
+    "order": 5
+  },
+  {
+    "id": "gp-receptor-signal-transduction",
+    "parentId": "general-pharmacology",
+    "title": "Receptor Signal Transduction",
+    "level": "intermediate",
+    "order": 6
+  },
+  {
+    "id": "gp-adverse-drug-reactions",
+    "parentId": "general-pharmacology",
+    "title": "Adverse Drug Reactions",
+    "level": "intermediate",
+    "order": 7
+  },
+  {
+    "id": "gp-drug-interaction-mechanisms",
+    "parentId": "general-pharmacology",
+    "title": "Drug Interaction Mechanisms",
+    "level": "intermediate",
+    "order": 8
+  },
+  {
+    "id": "gp-factors-modifying-drug-response",
+    "parentId": "general-pharmacology",
+    "title": "Factors Modifying Drug Response",
+    "level": "intermediate",
+    "order": 9
+  },
+  {
+    "id": "autonomic-nervous-system",
+    "parentId": null,
+    "title": "Autonomic Nervous System",
+    "level": "basic",
+    "order": 2
+  },
+  {
+    "id": "ans-organization",
+    "parentId": "autonomic-nervous-system",
+    "title": "Organisation of the Autonomic Nervous System",
+    "level": "basic",
+    "order": 1
+  },
+  {
+    "id": "ans-cholinergic-agonists",
+    "parentId": "autonomic-nervous-system",
+    "title": "Cholinergic Agonists",
+    "level": "intermediate",
+    "order": 2
+  },
+  {
+    "id": "ans-anticholinergics",
+    "parentId": "autonomic-nervous-system",
+    "title": "Anticholinergic Drugs",
+    "level": "intermediate",
+    "order": 3
+  },
+  {
+    "id": "ans-cholinesterase-inhibitors",
+    "parentId": "autonomic-nervous-system",
+    "title": "Cholinesterase Inhibitors & Reactivators",
+    "level": "intermediate",
+    "order": 4
+  },
+  {
+    "id": "ans-neuromuscular-blockers",
+    "parentId": "autonomic-nervous-system",
+    "title": "Neuromuscular Blocking Drugs",
+    "level": "intermediate",
+    "order": 5
+  },
+  {
+    "id": "ans-adrenergic-agonists",
+    "parentId": "autonomic-nervous-system",
+    "title": "Adrenergic Agonists",
+    "level": "intermediate",
+    "order": 6
+  },
+  {
+    "id": "ans-adrenergic-antagonists",
+    "parentId": "autonomic-nervous-system",
+    "title": "Adrenergic Antagonists",
+    "level": "intermediate",
+    "order": 7
+  },
+  {
+    "id": "ans-ganglionic-blockers",
+    "parentId": "autonomic-nervous-system",
+    "title": "Ganglionic Blocking Drugs",
+    "level": "intermediate",
+    "order": 8
+  },
+  {
+    "id": "autacoids",
+    "parentId": null,
+    "title": "Autacoids & Related Drugs",
+    "level": "intermediate",
+    "order": 3
+  },
+  {
+    "id": "aut-histamine-serotonin",
+    "parentId": "autacoids",
+    "title": "Histamine & Serotonin",
+    "level": "intermediate",
+    "order": 1
+  },
+  {
+    "id": "aut-prostaglandins",
+    "parentId": "autacoids",
+    "title": "Prostaglandins",
+    "level": "intermediate",
+    "order": 2
+  },
+  {
+    "id": "aut-leukotrienes",
+    "parentId": "autacoids",
+    "title": "Leukotrienes & Lipoxygenase Inhibitors",
+    "level": "intermediate",
+    "order": 3
+  },
+  {
+    "id": "aut-bradykinin",
+    "parentId": "autacoids",
+    "title": "Bradykinin & Kallikrein System",
+    "level": "intermediate",
+    "order": 4
+  },
+  {
+    "id": "aut-neuropeptides",
+    "parentId": "autacoids",
+    "title": "Substance P & Neuropeptides",
+    "level": "advanced",
+    "order": 5
+  },
+  {
+    "id": "aut-nsaids",
+    "parentId": "autacoids",
+    "title": "Non-steroidal Anti-inflammatory Drugs",
+    "level": "intermediate",
+    "order": 6
+  },
+  {
+    "id": "aut-antihistamines",
+    "parentId": "autacoids",
+    "title": "H1 Antihistamines",
+    "level": "intermediate",
+    "order": 7
+  },
+  {
+    "id": "respiratory",
+    "parentId": null,
+    "title": "Respiratory System",
+    "level": "intermediate",
+    "order": 4
+  },
+  {
+    "id": "resp-asthma-controllers",
+    "parentId": "respiratory",
+    "title": "Asthma Controllers",
+    "level": "intermediate",
+    "order": 1
+  },
+  {
+    "id": "resp-asthma-relievers",
+    "parentId": "respiratory",
+    "title": "Bronchodilators & Relievers",
+    "level": "intermediate",
+    "order": 2
+  },
+  {
+    "id": "resp-copd",
+    "parentId": "respiratory",
+    "title": "COPD Pharmacotherapy",
+    "level": "intermediate",
+    "order": 3
+  },
+  {
+    "id": "resp-antitussives-expectorants",
+    "parentId": "respiratory",
+    "title": "Antitussives & Expectorants",
+    "level": "basic",
+    "order": 4
+  },
+  {
+    "id": "resp-nasal-decongestants",
+    "parentId": "respiratory",
+    "title": "Nasal Decongestants & Topical Antihistamines",
+    "level": "basic",
+    "order": 5
+  },
+  {
+    "id": "resp-pulmonary-hypertension",
+    "parentId": "respiratory",
+    "title": "Drugs for Pulmonary Hypertension",
+    "level": "advanced",
+    "order": 6
+  },
+  {
+    "id": "cardiovascular-renal",
+    "parentId": null,
+    "title": "Cardiovascular & Renal",
+    "level": "intermediate",
+    "order": 5
+  },
+  {
+    "id": "cvs-antihypertensives",
+    "parentId": "cardiovascular-renal",
+    "title": "Antihypertensives",
+    "level": "intermediate",
+    "order": 1
+  },
+  {
+    "id": "cvs-antianginals",
+    "parentId": "cardiovascular-renal",
+    "title": "Antianginal Drugs",
+    "level": "intermediate",
+    "order": 2
+  },
+  {
+    "id": "cvs-heart-failure",
+    "parentId": "cardiovascular-renal",
+    "title": "Drugs in Heart Failure",
+    "level": "intermediate",
+    "order": 3
+  },
+  {
+    "id": "cvs-antiarrhythmics",
+    "parentId": "cardiovascular-renal",
+    "title": "Antiarrhythmic Drugs",
+    "level": "intermediate",
+    "order": 4
+  },
+  {
+    "id": "cvs-diuretics",
+    "parentId": "cardiovascular-renal",
+    "title": "Diuretics",
+    "level": "intermediate",
+    "order": 5
+  },
+  {
+    "id": "cvs-lipid-lowering",
+    "parentId": "cardiovascular-renal",
+    "title": "Lipid-lowering Drugs",
+    "level": "intermediate",
+    "order": 6
+  },
+  {
+    "id": "cvs-vasoactive-shock",
+    "parentId": "cardiovascular-renal",
+    "title": "Vasoactive Drugs in Shock",
+    "level": "advanced",
+    "order": 7
+  },
+  {
+    "id": "cvs-renal-impairment",
+    "parentId": "cardiovascular-renal",
+    "title": "Drug Therapy in Renal Impairment",
+    "level": "advanced",
+    "order": 8
+  },
+  {
+    "id": "blood-haemopoiesis",
+    "parentId": null,
+    "title": "Blood & Haemopoiesis",
+    "level": "intermediate",
+    "order": 6
+  },
+  {
+    "id": "blood-anticoagulants",
+    "parentId": "blood-haemopoiesis",
+    "title": "Anticoagulants",
+    "level": "intermediate",
+    "order": 1
+  },
+  {
+    "id": "blood-antiplatelets",
+    "parentId": "blood-haemopoiesis",
+    "title": "Antiplatelet Drugs",
+    "level": "intermediate",
+    "order": 2
+  },
+  {
+    "id": "blood-thrombolytics",
+    "parentId": "blood-haemopoiesis",
+    "title": "Thrombolytics & Fibrinolytics",
+    "level": "intermediate",
+    "order": 3
+  },
+  {
+    "id": "blood-haematinics",
+    "parentId": "blood-haemopoiesis",
+    "title": "Haematinics",
+    "level": "basic",
+    "order": 4
+  },
+  {
+    "id": "blood-antihaemorrhagic",
+    "parentId": "blood-haemopoiesis",
+    "title": "Antihaemorrhagic Agents",
+    "level": "intermediate",
+    "order": 5
+  },
+  {
+    "id": "blood-growth-factors",
+    "parentId": "blood-haemopoiesis",
+    "title": "Haematopoietic Growth Factors",
+    "level": "advanced",
+    "order": 6
+  },
+  {
+    "id": "blood-plasma-expanders",
+    "parentId": "blood-haemopoiesis",
+    "title": "Plasma Expanders",
+    "level": "basic",
+    "order": 7
+  },
+  {
+    "id": "central-nervous-system",
+    "parentId": null,
+    "title": "Central Nervous System",
+    "level": "intermediate",
+    "order": 7
+  },
+  {
+    "id": "cns-general-anaesthetics",
+    "parentId": "central-nervous-system",
+    "title": "General Anaesthetics",
+    "level": "intermediate",
+    "order": 1
+  },
+  {
+    "id": "cns-sedative-hypnotics",
+    "parentId": "central-nervous-system",
+    "title": "Sedative–Hypnotics",
+    "level": "intermediate",
+    "order": 2
+  },
+  {
+    "id": "cns-antiepileptics",
+    "parentId": "central-nervous-system",
+    "title": "Antiepileptic Drugs",
+    "level": "intermediate",
+    "order": 3
+  },
+  {
+    "id": "cns-antiparkinsonian",
+    "parentId": "central-nervous-system",
+    "title": "Antiparkinsonian Drugs",
+    "level": "intermediate",
+    "order": 4
+  },
+  {
+    "id": "cns-antipsychotics",
+    "parentId": "central-nervous-system",
+    "title": "Antipsychotics",
+    "level": "intermediate",
+    "order": 5
+  },
+  {
+    "id": "cns-antidepressants",
+    "parentId": "central-nervous-system",
+    "title": "Antidepressants & Mood Stabilisers",
+    "level": "intermediate",
+    "order": 6
+  },
+  {
+    "id": "cns-opioid-analgesics",
+    "parentId": "central-nervous-system",
+    "title": "Opioid Analgesics",
+    "level": "intermediate",
+    "order": 7
+  },
+  {
+    "id": "cns-local-anaesthetics",
+    "parentId": "central-nervous-system",
+    "title": "Local Anaesthetics",
+    "level": "intermediate",
+    "order": 8
+  },
+  {
+    "id": "cns-alzheimers",
+    "parentId": "central-nervous-system",
+    "title": "Drugs for Alzheimer Disease",
+    "level": "advanced",
+    "order": 9
+  },
+  {
+    "id": "cns-substance-dependence",
+    "parentId": "central-nervous-system",
+    "title": "Drugs of Abuse & Dependence",
+    "level": "advanced",
+    "order": 10
+  },
+  {
+    "id": "endocrine",
+    "parentId": null,
+    "title": "Endocrine System",
+    "level": "intermediate",
+    "order": 8
+  },
+  {
+    "id": "end-insulin",
+    "parentId": "endocrine",
+    "title": "Insulin",
+    "level": "intermediate",
+    "order": 1
+  },
+  {
+    "id": "end-oral-antidiabetics",
+    "parentId": "endocrine",
+    "title": "Oral Antidiabetic Drugs",
+    "level": "intermediate",
+    "order": 2
+  },
+  {
+    "id": "end-thyroid",
+    "parentId": "endocrine",
+    "title": "Thyroid & Antithyroid Drugs",
+    "level": "intermediate",
+    "order": 3
+  },
+  {
+    "id": "end-corticosteroids",
+    "parentId": "endocrine",
+    "title": "Corticosteroids",
+    "level": "intermediate",
+    "order": 4
+  },
+  {
+    "id": "end-sex-hormones",
+    "parentId": "endocrine",
+    "title": "Sex Hormones",
+    "level": "intermediate",
+    "order": 5
+  },
+  {
+    "id": "end-contraceptives",
+    "parentId": "endocrine",
+    "title": "Contraceptives",
+    "level": "intermediate",
+    "order": 6
+  },
+  {
+    "id": "end-osteoporosis",
+    "parentId": "endocrine",
+    "title": "Drugs for Osteoporosis",
+    "level": "intermediate",
+    "order": 7
+  },
+  {
+    "id": "end-pituitary",
+    "parentId": "endocrine",
+    "title": "Pituitary Hormones & Analogues",
+    "level": "advanced",
+    "order": 8
+  },
+  {
+    "id": "gastrointestinal",
+    "parentId": null,
+    "title": "Gastrointestinal Tract",
+    "level": "basic",
+    "order": 9
+  },
+  {
+    "id": "gi-acid-suppression",
+    "parentId": "gastrointestinal",
+    "title": "Acid Suppression Therapy",
+    "level": "basic",
+    "order": 1
+  },
+  {
+    "id": "gi-antiemetics",
+    "parentId": "gastrointestinal",
+    "title": "Antiemetics",
+    "level": "basic",
+    "order": 2
+  },
+  {
+    "id": "gi-prokinetics-laxatives",
+    "parentId": "gastrointestinal",
+    "title": "Prokinetics & Laxatives",
+    "level": "basic",
+    "order": 3
+  },
+  {
+    "id": "gi-antidiarrhoeals",
+    "parentId": "gastrointestinal",
+    "title": "Antidiarrhoeals",
+    "level": "basic",
+    "order": 4
+  },
+  {
+    "id": "gi-ibd",
+    "parentId": "gastrointestinal",
+    "title": "Drugs in Inflammatory Bowel Disease",
+    "level": "intermediate",
+    "order": 5
+  },
+  {
+    "id": "gi-hepatobiliary",
+    "parentId": "gastrointestinal",
+    "title": "Hepatobiliary Pharmacology",
+    "level": "advanced",
+    "order": 6
+  },
+  {
+    "id": "chemo-antimicrobials",
+    "parentId": null,
+    "title": "Chemotherapy – Antimicrobials",
+    "level": "intermediate",
+    "order": 10
+  },
+  {
+    "id": "amr-beta-lactams",
+    "parentId": "chemo-antimicrobials",
+    "title": "Beta-lactam Antibiotics",
+    "level": "intermediate",
+    "order": 1
+  },
+  {
+    "id": "amr-aminoglycosides",
+    "parentId": "chemo-antimicrobials",
+    "title": "Aminoglycosides",
+    "level": "intermediate",
+    "order": 2
+  },
+  {
+    "id": "amr-macrolides",
+    "parentId": "chemo-antimicrobials",
+    "title": "Macrolides & Lincosamides",
+    "level": "intermediate",
+    "order": 3
+  },
+  {
+    "id": "amr-fluoroquinolones",
+    "parentId": "chemo-antimicrobials",
+    "title": "Fluoroquinolones",
+    "level": "intermediate",
+    "order": 4
+  },
+  {
+    "id": "amr-tetracyclines",
+    "parentId": "chemo-antimicrobials",
+    "title": "Tetracyclines & Chloramphenicol",
+    "level": "intermediate",
+    "order": 5
+  },
+  {
+    "id": "amr-sulphonamides",
+    "parentId": "chemo-antimicrobials",
+    "title": "Sulphonamides & Cotrimoxazole",
+    "level": "intermediate",
+    "order": 6
+  },
+  {
+    "id": "amr-antitubercular",
+    "parentId": "chemo-antimicrobials",
+    "title": "Antitubercular Drugs",
+    "level": "intermediate",
+    "order": 7
+  },
+  {
+    "id": "amr-antileprotic",
+    "parentId": "chemo-antimicrobials",
+    "title": "Antileprotic Drugs",
+    "level": "intermediate",
+    "order": 8
+  },
+  {
+    "id": "amr-antifungals",
+    "parentId": "chemo-antimicrobials",
+    "title": "Antifungal Drugs",
+    "level": "intermediate",
+    "order": 9
+  },
+  {
+    "id": "amr-antivirals",
+    "parentId": "chemo-antimicrobials",
+    "title": "Antiviral Drugs",
+    "level": "advanced",
+    "order": 10
+  },
+  {
+    "id": "amr-stewardship",
+    "parentId": "chemo-antimicrobials",
+    "title": "Antimicrobial Stewardship & Policy",
+    "level": "advanced",
+    "order": 11
+  },
+  {
+    "id": "chemo-antiparasitic",
+    "parentId": null,
+    "title": "Chemotherapy – Antiparasitic",
+    "level": "intermediate",
+    "order": 11
+  },
+  {
+    "id": "anti-antimalarials",
+    "parentId": "chemo-antiparasitic",
+    "title": "Antimalarial Drugs",
+    "level": "intermediate",
+    "order": 1
+  },
+  {
+    "id": "anti-antiamoebic",
+    "parentId": "chemo-antiparasitic",
+    "title": "Antiamoebic & Antigiardial Drugs",
+    "level": "intermediate",
+    "order": 2
+  },
+  {
+    "id": "anti-anthelmintics",
+    "parentId": "chemo-antiparasitic",
+    "title": "Anthelmintics",
+    "level": "intermediate",
+    "order": 3
+  },
+  {
+    "id": "anti-antileishmanial",
+    "parentId": "chemo-antiparasitic",
+    "title": "Antileishmanial Drugs",
+    "level": "advanced",
+    "order": 4
+  },
+  {
+    "id": "anti-ectoparasiticides",
+    "parentId": "chemo-antiparasitic",
+    "title": "Ectoparasiticides",
+    "level": "basic",
+    "order": 5
+  },
+  {
+    "id": "anticancer-immunomodulators",
+    "parentId": null,
+    "title": "Anticancer & Immunomodulators",
+    "level": "advanced",
+    "order": 12
+  },
+  {
+    "id": "onc-principles",
+    "parentId": "anticancer-immunomodulators",
+    "title": "Principles of Cancer Chemotherapy",
+    "level": "intermediate",
+    "order": 1
+  },
+  {
+    "id": "onc-cytotoxic",
+    "parentId": "anticancer-immunomodulators",
+    "title": "Cytotoxic Agents",
+    "level": "advanced",
+    "order": 2
+  },
+  {
+    "id": "onc-targeted",
+    "parentId": "anticancer-immunomodulators",
+    "title": "Targeted Anticancer Therapy",
+    "level": "advanced",
+    "order": 3
+  },
+  {
+    "id": "onc-hormonal",
+    "parentId": "anticancer-immunomodulators",
+    "title": "Hormonal Therapy in Cancer",
+    "level": "advanced",
+    "order": 4
+  },
+  {
+    "id": "onc-immunotherapy",
+    "parentId": "anticancer-immunomodulators",
+    "title": "Immunotherapy & Checkpoint Inhibitors",
+    "level": "advanced",
+    "order": 5
+  },
+  {
+    "id": "onc-immunosuppressants",
+    "parentId": "anticancer-immunomodulators",
+    "title": "Immunosuppressants",
+    "level": "advanced",
+    "order": 6
+  },
+  {
+    "id": "onc-toxicity",
+    "parentId": "anticancer-immunomodulators",
+    "title": "Anticancer Toxicity & Supportive Care",
+    "level": "intermediate",
+    "order": 7
+  },
+  {
+    "id": "miscellaneous",
+    "parentId": null,
+    "title": "Miscellaneous",
+    "level": "intermediate",
+    "order": 13
+  },
+  {
+    "id": "misc-vitamins",
+    "parentId": "miscellaneous",
+    "title": "Vitamins",
+    "level": "basic",
+    "order": 1
+  },
+  {
+    "id": "misc-chelators",
+    "parentId": "miscellaneous",
+    "title": "Chelating Agents",
+    "level": "intermediate",
+    "order": 2
+  },
+  {
+    "id": "misc-dermatological",
+    "parentId": "miscellaneous",
+    "title": "Dermatological Pharmacology",
+    "level": "intermediate",
+    "order": 3
+  },
+  {
+    "id": "misc-ocular",
+    "parentId": "miscellaneous",
+    "title": "Ocular Pharmacology",
+    "level": "intermediate",
+    "order": 4
+  },
+  {
+    "id": "misc-vaccines",
+    "parentId": "miscellaneous",
+    "title": "Vaccines & Immunoglobulins",
+    "level": "intermediate",
+    "order": 5
+  },
+  {
+    "id": "misc-toxicology",
+    "parentId": "miscellaneous",
+    "title": "General Management of Poisoning",
+    "level": "advanced",
+    "order": 6
+  },
+  {
+    "id": "misc-antidotes",
+    "parentId": "miscellaneous",
+    "title": "Antidotes for Specific Poisons",
+    "level": "advanced",
+    "order": 7
+  },
+  {
+    "id": "clinical-pharmacology",
+    "parentId": null,
+    "title": "Clinical Pharmacology",
+    "level": "advanced",
+    "order": 14
+  },
+  {
+    "id": "cp-therapeutic-drug-monitoring",
+    "parentId": "clinical-pharmacology",
+    "title": "Therapeutic Drug Monitoring",
+    "level": "advanced",
+    "order": 1
+  },
+  {
+    "id": "cp-pharmacovigilance",
+    "parentId": "clinical-pharmacology",
+    "title": "Pharmacovigilance & ADR Causality",
+    "level": "advanced",
+    "order": 2
+  },
+  {
+    "id": "cp-drug-interactions",
+    "parentId": "clinical-pharmacology",
+    "title": "Clinically Important Drug Interactions",
+    "level": "intermediate",
+    "order": 3
+  },
+  {
+    "id": "cp-special-populations",
+    "parentId": "clinical-pharmacology",
+    "title": "Special Populations (Pregnancy, Paediatric, Geriatric)",
+    "level": "intermediate",
+    "order": 4
+  },
+  {
+    "id": "cp-rational-drug-use",
+    "parentId": "clinical-pharmacology",
+    "title": "Rational Drug Use & Essential Medicines",
+    "level": "intermediate",
+    "order": 5
+  },
+  {
+    "id": "cp-p-drug",
+    "parentId": "clinical-pharmacology",
+    "title": "P-drug Selection",
+    "level": "intermediate",
+    "order": 6
+  },
+  {
+    "id": "cp-prescription-writing",
+    "parentId": "clinical-pharmacology",
+    "title": "Prescription Writing & Audit",
+    "level": "intermediate",
+    "order": 7
+  },
+  {
+    "id": "experimental-pharmacology",
+    "parentId": null,
+    "title": "Experimental Pharmacology",
+    "level": "advanced",
+    "order": 15
+  },
+  {
+    "id": "exp-bioassay",
+    "parentId": "experimental-pharmacology",
+    "title": "Bioassay",
+    "level": "advanced",
+    "order": 1
+  },
+  {
+    "id": "exp-animal-models",
+    "parentId": "experimental-pharmacology",
+    "title": "Animal Models of Disease",
+    "level": "advanced",
+    "order": 2
+  },
+  {
+    "id": "exp-animal-ethics",
+    "parentId": "experimental-pharmacology",
+    "title": "Animal Ethics & CPCSEA Guidelines",
+    "level": "advanced",
+    "order": 3
+  },
+  {
+    "id": "exp-in-vitro",
+    "parentId": "experimental-pharmacology",
+    "title": "In-vitro Techniques",
+    "level": "advanced",
+    "order": 4
+  },
+  {
+    "id": "exp-alternatives",
+    "parentId": "experimental-pharmacology",
+    "title": "Alternatives to Animal Experimentation",
+    "level": "advanced",
+    "order": 5
+  },
+  {
+    "id": "exp-organ-bath",
+    "parentId": "experimental-pharmacology",
+    "title": "Isolated Tissue & Organ Bath Preparations",
+    "level": "advanced",
+    "order": 6
+  },
+  {
+    "id": "research-methodology-biostatistics",
+    "parentId": null,
+    "title": "Research Methodology & Biostatistics",
+    "level": "advanced",
+    "order": 16
+  },
+  {
+    "id": "rm-study-designs",
+    "parentId": "research-methodology-biostatistics",
+    "title": "Study Designs",
+    "level": "advanced",
+    "order": 1
+  },
+  {
+    "id": "rm-sampling-errors",
+    "parentId": "research-methodology-biostatistics",
+    "title": "Sampling & Errors in Research",
+    "level": "advanced",
+    "order": 2
+  },
+  {
+    "id": "rm-descriptive-statistics",
+    "parentId": "research-methodology-biostatistics",
+    "title": "Descriptive Statistics",
+    "level": "basic",
+    "order": 3
+  },
+  {
+    "id": "rm-hypothesis-testing",
+    "parentId": "research-methodology-biostatistics",
+    "title": "Hypothesis Testing",
+    "level": "advanced",
+    "order": 4
+  },
+  {
+    "id": "rm-regression-correlation",
+    "parentId": "research-methodology-biostatistics",
+    "title": "Correlation & Regression",
+    "level": "advanced",
+    "order": 5
+  },
+  {
+    "id": "rm-sample-size",
+    "parentId": "research-methodology-biostatistics",
+    "title": "Sample Size Calculation",
+    "level": "advanced",
+    "order": 6
+  },
+  {
+    "id": "rm-critical-appraisal",
+    "parentId": "research-methodology-biostatistics",
+    "title": "Critical Appraisal of Literature",
+    "level": "advanced",
+    "order": 7
+  },
+  {
+    "id": "rm-research-ethics",
+    "parentId": "research-methodology-biostatistics",
+    "title": "Research Ethics & Publication",
+    "level": "advanced",
+    "order": 8
+  },
+  {
+    "id": "clinical-trials-regulatory",
+    "parentId": null,
+    "title": "Clinical Trials, GCP & Regulatory",
+    "level": "advanced",
+    "order": 17
+  },
+  {
+    "id": "ct-gcp",
+    "parentId": "clinical-trials-regulatory",
+    "title": "ICH-Good Clinical Practice",
+    "level": "advanced",
+    "order": 1
+  },
+  {
+    "id": "ct-ndt-rules-2019",
+    "parentId": "clinical-trials-regulatory",
+    "title": "New Drugs and Clinical Trials Rules 2019",
+    "level": "advanced",
+    "order": 2
+  },
+  {
+    "id": "ct-cdsco",
+    "parentId": "clinical-trials-regulatory",
+    "title": "CDSCO & Regulatory Approvals",
+    "level": "advanced",
+    "order": 3
+  },
+  {
+    "id": "ct-ethics-committees",
+    "parentId": "clinical-trials-regulatory",
+    "title": "Ethics Committees",
+    "level": "advanced",
+    "order": 4
+  },
+  {
+    "id": "ct-trial-design-phases",
+    "parentId": "clinical-trials-regulatory",
+    "title": "Trial Design & Phases of Clinical Trials",
+    "level": "intermediate",
+    "order": 5
+  },
+  {
+    "id": "ct-informed-consent",
+    "parentId": "clinical-trials-regulatory",
+    "title": "Informed Consent Process",
+    "level": "advanced",
+    "order": 6
+  },
+  {
+    "id": "ct-safety-reporting",
+    "parentId": "clinical-trials-regulatory",
+    "title": "Safety Reporting & SUSAR",
+    "level": "advanced",
+    "order": 7
+  },
+  {
+    "id": "drug-development-pharmacoeconomics",
+    "parentId": null,
+    "title": "Drug Development & Pharmacoeconomics",
+    "level": "advanced",
+    "order": 18
+  },
+  {
+    "id": "dd-drug-discovery",
+    "parentId": "drug-development-pharmacoeconomics",
+    "title": "Drug Discovery & Preclinical Stages",
+    "level": "advanced",
+    "order": 1
+  },
+  {
+    "id": "dd-clinical-development",
+    "parentId": "drug-development-pharmacoeconomics",
+    "title": "Clinical Development & Regulatory Submission",
+    "level": "advanced",
+    "order": 2
+  },
+  {
+    "id": "dd-pharmacoeconomics",
+    "parentId": "drug-development-pharmacoeconomics",
+    "title": "Pharmacoeconomic Evaluation",
+    "level": "advanced",
+    "order": 3
+  },
+  {
+    "id": "dd-cost-analysis",
+    "parentId": "drug-development-pharmacoeconomics",
+    "title": "Cost-minimisation to Cost-effectiveness Analysis",
+    "level": "advanced",
+    "order": 4
+  },
+  {
+    "id": "dd-pricing-access",
+    "parentId": "drug-development-pharmacoeconomics",
+    "title": "Drug Pricing, Patents & Access",
+    "level": "advanced",
+    "order": 5
+  },
+  {
+    "id": "dd-bioequivalence",
+    "parentId": "drug-development-pharmacoeconomics",
+    "title": "Bioequivalence & Generic Drugs",
+    "level": "advanced",
+    "order": 6
+  },
+  {
+    "id": "pharmacogenomics",
+    "parentId": null,
+    "title": "Pharmacogenomics & Personalised Medicine",
+    "level": "advanced",
+    "order": 19
+  },
+  {
+    "id": "pg-principles",
+    "parentId": "pharmacogenomics",
+    "title": "Principles of Pharmacogenomics",
+    "level": "advanced",
+    "order": 1
+  },
+  {
+    "id": "pg-cyp-polymorphisms",
+    "parentId": "pharmacogenomics",
+    "title": "CYP Polymorphisms",
+    "level": "advanced",
+    "order": 2
+  },
+  {
+    "id": "pg-transporter-polymorphisms",
+    "parentId": "pharmacogenomics",
+    "title": "Transporter Polymorphisms",
+    "level": "advanced",
+    "order": 3
+  },
+  {
+    "id": "pg-hla-biomarkers",
+    "parentId": "pharmacogenomics",
+    "title": "HLA & Predictive Biomarkers",
+    "level": "advanced",
+    "order": 4
+  },
+  {
+    "id": "pg-biomarker-guided-therapy",
+    "parentId": "pharmacogenomics",
+    "title": "Biomarker-guided Therapy",
+    "level": "advanced",
+    "order": 5
+  },
+  {
+    "id": "pg-oncology",
+    "parentId": "pharmacogenomics",
+    "title": "Personalised Medicine in Oncology",
+    "level": "advanced",
+    "order": 6
+  },
+  {
+    "id": "pg-ethical-legal",
+    "parentId": "pharmacogenomics",
+    "title": "Ethical & Legal Issues in Pharmacogenomics",
+    "level": "advanced",
+    "order": 7
+  },
+  {
+    "id": "teaching-communication",
+    "parentId": null,
+    "title": "Teaching & Communication Skills",
+    "level": "intermediate",
+    "order": 20
+  },
+  {
+    "id": "tc-teaching-methods",
+    "parentId": "teaching-communication",
+    "title": "Teaching–Learning Methods",
+    "level": "intermediate",
+    "order": 1
+  },
+  {
+    "id": "tc-assessment",
+    "parentId": "teaching-communication",
+    "title": "Assessment & Evaluation",
+    "level": "intermediate",
+    "order": 2
+  },
+  {
+    "id": "tc-patient-communication",
+    "parentId": "teaching-communication",
+    "title": "Communication with Patients & Peers",
+    "level": "intermediate",
+    "order": 3
+  },
+  {
+    "id": "tc-scientific-writing",
+    "parentId": "teaching-communication",
+    "title": "Scientific Writing & Presentation",
+    "level": "advanced",
+    "order": 4
+  },
+  {
+    "id": "tc-feedback-mentoring",
+    "parentId": "teaching-communication",
+    "title": "Feedback & Mentoring",
+    "level": "intermediate",
+    "order": 5
+  }
+]
