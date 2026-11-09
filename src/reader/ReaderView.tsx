@@ -798,7 +798,7 @@ export default function ReaderView() {
       <PlayerBar
         state={playState}
         engineName={engineName(engineInfo)}
-        fallback={Boolean(engineInfo && !engineInfo.preferred)}
+        fallback={Boolean(engineInfo && !engineInfo.preferred && engineChoice !== 'auto')} // auto on the phone voice is expected, not a failure
         rate={rate}
         canPrerender={Boolean(engineInfo?.engine.capabilities.prerender)}
         progress={progress}
