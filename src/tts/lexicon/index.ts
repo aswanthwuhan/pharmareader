@@ -1,11 +1,19 @@
 /**
  * Text normalisation for TTS: turn pharmacology notation into words the speech
- * engines get right ("t½" → "half-life", "CYP3A4" → "C Y P three A four").
+ * engines get right ("t½" → "half-life", "CYP3A4" → "C Y P three eigh four").
  *
  * Built-in entries live in `pharma-lexicon.json` and are seeded into
- * `db.lexicon` on first use. They are keyed by position (`b-1`, `b-2`, …) so a
- * re-seed can update them in place while keeping the user's on/off choices.
- * User entries always run first, in creation order, then the built-ins.
+ * `db.lexicon` on first use. Every row carries a stable id: `b-<n>` for the core
+ * rules and `rx-<n>` for the drug-name respellings, so a re-seed can update the
+ * rows in place while keeping the user's on/off choices. Rules are applied in
+ * *file* order (not id order) — the JSON is ordered from the most specific
+ * pattern to the generic glyph rules at the end. User entries always run first,
+ * in creation order, then the built-ins.
+ *
+ * Convention for letter names: espeak-ng reads a bare capital "A" as the
+ * article ("uh"), so letter sequences are written with dots between the
+ * capitals ("A.C.E", "A.N.S", "A.T.P-ace") and a lone A as "eigh", which is the
+ * only spelling espeak turns into /eɪ/. See `drug-respellings.md`.
  */
 import rawLexicon from './pharma-lexicon.json?raw';
 import { db } from '../../core/db';
@@ -13,6 +21,7 @@ import type { LexiconEntry } from '../../core/types';
 import { sha256Hex } from '../cache';
 
 interface RawEntry {
+  id: string;
   pattern: string;
   replacement: string;
   isRegex: boolean;
@@ -20,10 +29,13 @@ interface RawEntry {
 
 export const BUILTIN_LEXICON: readonly RawEntry[] = JSON.parse(rawLexicon) as RawEntry[];
 
+/** Where each built-in applies in the pipeline: the order it has in the file. */
+const BUILTIN_ORDER: ReadonlyMap<string, number> = new Map(BUILTIN_LEXICON.map((e, i) => [e.id, i]));
+
 /** The seeded rows, in file order, before any user toggle is applied. */
 function builtinRecords(): LexiconEntry[] {
-  return BUILTIN_LEXICON.map((e, i) => ({
-    id: `b-${i + 1}`,
+  return BUILTIN_LEXICON.map((e) => ({
+    id: e.id,
     pattern: e.pattern,
     replacement: e.replacement,
     isRegex: e.isRegex,
@@ -32,8 +44,17 @@ function builtinRecords(): LexiconEntry[] {
   }));
 }
 
-function builtinIndex(id: string): number {
-  return Number(id.slice(2)) || 0;
+/** Position in the pipeline; unknown ids sort last so a stale row cannot jump ahead. */
+function builtinOrder(id: string): number {
+  return BUILTIN_ORDER.get(id) ?? Number.MAX_SAFE_INTEGER;
+}
+
+/**
+ * Which toggleable group an entry belongs to. Drug respellings can be switched
+ * off as one group without touching the notation rules.
+ */
+export function entryGroup(id: string): 'core' | 'drug' {
+  return id.startsWith('rx-') ? 'drug' : 'core';
 }
 
 // ---------------------------------------------------------------------------
@@ -128,7 +149,7 @@ async function enabledEntries(): Promise<LexiconEntry[]> {
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const builtin = all
     .filter((e) => e.source === 'builtin' && e.enabled)
-    .sort((a, b) => builtinIndex(a.id) - builtinIndex(b.id));
+    .sort((a, b) => builtinOrder(a.id) - builtinOrder(b.id));
   enabledCache = [...user, ...builtin];
   return enabledCache;
 }
@@ -167,7 +188,7 @@ export async function listLexiconEntries(): Promise<LexiconEntry[]> {
   const all = await db.lexicon.toArray();
   return [
     ...all.filter((e) => e.source === 'user').sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
-    ...all.filter((e) => e.source === 'builtin').sort((a, b) => builtinIndex(a.id) - builtinIndex(b.id)),
+    ...all.filter((e) => e.source === 'builtin').sort((a, b) => builtinOrder(a.id) - builtinOrder(b.id)),
   ];
 }
 
