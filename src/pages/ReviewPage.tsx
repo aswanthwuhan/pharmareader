@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { db } from '../core/db';
 import type { BookRecord, CardRecord } from '../core/types';
@@ -53,6 +53,78 @@ function DownloadIcon() {
   );
 }
 
+function ChevronDownIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+      <path d="m6 9.5 6 6 6-6" />
+    </svg>
+  );
+}
+
+function CrossIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round">
+      <path d="M7 7l10 10M17 7 7 17" />
+    </svg>
+  );
+}
+
+/**
+ * The topic filter lives behind a sheet: one compact chip on the page opens the
+ * full picker, so the reading column keeps its space for the card.
+ */
+function TopicFilterSheet({
+  topicIds,
+  onChange,
+  onClose,
+}: {
+  topicIds: string[];
+  onChange: (ids: string[]) => void;
+  onClose: () => void;
+}) {
+  const titleId = useId();
+  const doneRef = useRef<HTMLButtonElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  // A sheet opens with focus inside it, and closes on Escape. Mount-only, so a
+  // live-query render cannot steal focus back while the user picks topics.
+  useEffect(() => {
+    doneRef.current?.focus();
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') closeRef.current();
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  return (
+    <>
+      <div className="sheet-backdrop" onClick={onClose} />
+      <div className="sheet study-sheet" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+        <h2 id={titleId} className="sheet-title">
+          Filter by topic
+        </h2>
+        <p className="study-sheet-sub">Show only the cards tagged with the topics you pick.</p>
+        <TopicPicker label="Topics" value={topicIds} onChange={onChange} />
+        <div className="sheet-actions">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={topicIds.length === 0}
+            onClick={() => onChange([])}
+          >
+            Clear all
+          </button>
+          <button ref={doneRef} type="button" className="btn btn-primary" onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function ReviewPage() {
   const [tab, setTab] = useState<TabId>('review');
   const [searchParams] = useSearchParams();
@@ -67,8 +139,28 @@ export default function ReviewPage() {
   const [editing, setEditing] = useState<CardRecord | 'new' | null>(null);
   const [exportBookId, setExportBookId] = useState('');
   const [status, setStatus] = useState('');
+  const [filterOpen, setFilterOpen] = useState(false);
+  // The sheet and the clear button both remove themselves; keep focus on the chip that opened them.
+  const filterButtonRef = useRef<HTMLButtonElement>(null);
+  const closeFilter = () => {
+    setFilterOpen(false);
+    filterButtonRef.current?.focus();
+  };
 
   const cards = useLiveQuery(() => listCards(), [], []);
+  // Topics are small rows: reading them all is how the filter chip gets its name.
+  const topics = useLiveQuery(() => db.topics.toArray(), [], []);
+  const topicTitles = topicIds
+    .map((id) => topics.find((topic) => topic.id === id)?.title)
+    .filter((title): title is string => Boolean(title));
+  const filterLabel =
+    topicIds.length === 0
+      ? 'All topics'
+      : topicTitles.length === 1
+        ? topicTitles[0]
+        : topicTitles.length > 1
+          ? `${topicTitles.length} topics`
+          : 'Selected topic';
   // Book records carry their file blob, so only read them when the export tab needs the list.
   const books = useLiveQuery<BookRecord[], BookRecord[]>(
     () => (tab === 'export' ? db.books.orderBy('title').toArray() : Promise.resolve([])),
@@ -126,23 +218,56 @@ export default function ReviewPage() {
         </div>
       </header>
 
-      <div className="study-tabs" role="group" aria-label="Study">
-        {TABS.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            aria-pressed={tab === item.id}
-            className="chip chip-tap study-tab"
-            onClick={() => setTab(item.id)}
-          >
-            {item.label}
-          </button>
-        ))}
+      <div className="study-controls">
+        <div className="study-tabs" role="group" aria-label="Study">
+          {TABS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              aria-pressed={tab === item.id}
+              className="study-tab"
+              onClick={() => setTab(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'review' ? (
+          <div className={`study-filter${topicIds.length > 0 ? ' is-filtered' : ''}`}>
+            <button
+              type="button"
+              ref={filterButtonRef}
+              className="study-filter-main"
+              aria-haspopup="dialog"
+              aria-expanded={filterOpen}
+              aria-label={topicIds.length > 0 ? `Filter by topic: ${filterLabel}` : 'Filter by topic'}
+              onClick={() => setFilterOpen(true)}
+            >
+              <span className="study-filter-text" title={topicTitles[0]}>
+                {filterLabel}
+              </span>
+              {topicIds.length === 0 ? <ChevronDownIcon /> : null}
+            </button>
+            {topicIds.length > 0 ? (
+              <button
+                type="button"
+                className="study-filter-clear"
+                aria-label="Clear topic filter"
+                onClick={() => {
+                  setTopicIds([]);
+                  filterButtonRef.current?.focus();
+                }}
+              >
+                <CrossIcon />
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       {tab === 'review' ? (
         <div className="study-panel">
-          <TopicPicker label="Filter by topic" value={topicIds} onChange={setTopicIds} />
           <ReviewSession topicIds={topicIds} />
         </div>
       ) : null}
@@ -254,6 +379,10 @@ export default function ReviewPage() {
           onSave={(draft) => void saveCard(draft)}
           onCancel={() => setEditing(null)}
         />
+      ) : null}
+
+      {filterOpen ? (
+        <TopicFilterSheet topicIds={topicIds} onChange={setTopicIds} onClose={closeFilter} />
       ) : null}
 
       {status ? (

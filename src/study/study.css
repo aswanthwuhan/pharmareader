@@ -14,15 +14,130 @@
   padding-bottom: 0;
 }
 
-/* Segmented tabs: the shared chip supplies the shape and pressed state. */
-.study-tabs {
+/* View switch and topic filter share one compact row above the session. */
+.study-controls {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--space-2);
 }
 
+/* Segmented control: one sunken track, the active view a raised paper face.
+   The face is 36px tall; the button's ::before still gives a 44px tap. */
+.study-tabs {
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+
 .study-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.study-tab::before {
+  content: '';
+  position: absolute;
+  inset: -4px 0;
+}
+
+.study-tab:hover {
+  color: var(--text);
+}
+
+.study-tab[aria-pressed='true'] {
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raise);
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+}
+
+/* Topic filter: a chip that opens the picker in a sheet. */
+.study-filter {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+}
+
+.study-filter-main {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  min-height: var(--tap);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.study-filter-main:hover {
+  background: var(--surface-sunken);
+}
+
+.study-filter.is-filtered .study-filter-main {
+  border-radius: var(--radius-full) 0 0 var(--radius-full);
+}
+
+.study-filter-text {
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.study-filter-main svg {
+  width: 16px;
+  height: 16px;
   flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.study-filter-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap);
+  min-height: var(--tap);
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-radius: 0 var(--radius-full) var(--radius-full) 0;
+  background: none;
+  color: var(--muted);
+}
+
+.study-filter-clear:hover {
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+
+.study-filter-clear svg {
+  width: 16px;
+  height: 16px;
 }
 
 .study-panel {
@@ -48,17 +163,21 @@
 .review {
   display: grid;
   gap: var(--space-4);
+  /* Reserve the fixed rating dock's height at the end of the scroll. */
+  padding-bottom: calc(var(--tap-comfort) + var(--space-5));
 }
 
+/* Status row: due count with its dot, then the position in the session. */
 .review-meter {
   display: grid;
   gap: var(--space-2);
 }
 
-.review-count {
+.review-status {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
+  justify-content: space-between;
   gap: var(--space-2);
   margin: 0;
   color: var(--muted);
@@ -67,11 +186,24 @@
   line-height: var(--lh-snug);
 }
 
-.review-count-sep {
-  color: var(--border-control);
+.review-due {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
-/* The card holds the whole task: prompt, then answer behind a hairline. */
+.review-due-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+
+.review-card-count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The card holds the whole task: prompt, then answer in a sunken tray. */
 .review-card {
   display: grid;
   align-content: start;
@@ -85,29 +217,48 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
 }
 
-.review-state {
+.review-source {
+  min-width: 0;
+  overflow: hidden;
   color: var(--muted);
+  font-family: var(--font-read);
   font-size: var(--fs-xs);
-  font-weight: var(--fw-medium);
-  line-height: 1;
+  font-style: italic;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .review-front {
   max-width: var(--measure);
   margin: 0;
   color: var(--text);
-  font-size: var(--fs-xl);
-  font-weight: var(--fw-semibold);
-  letter-spacing: var(--ls-tight);
-  line-height: var(--lh-snug);
+  font-family: var(--font-read);
+  font-size: var(--fs-lg);
+  line-height: 1.55;
   overflow-wrap: anywhere;
 }
 
+/* The answer gets a paper tray of its own, labelled so it is never mistaken
+   for the prompt. */
 .review-answer {
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--border);
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+
+.review-answer-label {
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.09em;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .review-back {
@@ -120,15 +271,20 @@
   overflow-wrap: anywhere;
 }
 
-/* A cloze blank reads as a marker stroke over the text, filled with the ink. */
+/* A cloze blank is a slot in the sentence: sunken paper, pencil-thin accent. */
 .cloze-gap {
   display: inline-block;
-  padding: 0 0.2em;
+  min-width: 3.2em;
+  margin: 0 0.1em;
+  padding: 0 0.35em;
+  border: 1px solid var(--accent);
   border-radius: var(--radius-xs);
-  background: var(--hl-yellow);
-  color: var(--hl-yellow-ink);
-  font-weight: var(--fw-bold);
+  background: var(--surface-sunken);
+  color: var(--muted);
+  font-weight: var(--fw-semibold);
   letter-spacing: 0.08em;
+  line-height: 1.35;
+  text-align: center;
   white-space: nowrap;
 }
 
@@ -156,11 +312,31 @@
 }
 
 .btn.review-reveal {
-  min-height: calc(var(--tap) + var(--space-3));
+  min-height: var(--tap-comfort);
   font-size: var(--fs-base);
 }
 
-/* Four ratings: one wash each, so the scale is readable without reading. */
+/* Ratings live in a fixed dock above the app nav, so they are reachable at
+   once and never scroll away from the card. */
+.review-dock {
+  position: fixed;
+  right: 0;
+  bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
+  left: 0;
+  z-index: calc(var(--z-nav) - 1);
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  padding: var(--space-2) var(--space-4);
+}
+
+.review-dock-inner {
+  display: grid;
+  gap: var(--space-2);
+  max-width: var(--app-max);
+  margin: 0 auto;
+}
+
+/* Four equal buttons, two lines each: the label and the interval it buys. */
 .review-ratings {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -169,12 +345,15 @@
 
 .btn.review-rate {
   flex-direction: column;
-  gap: 2px;
-  min-height: calc(var(--tap) + var(--space-2));
+  gap: 1px;
+  height: var(--tap-comfort);
+  min-height: var(--tap-comfort);
   padding: 0 var(--space-1);
-  font-size: var(--fs-sm);
+  border-width: 1px;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-xs);
   font-weight: var(--fw-semibold);
-  line-height: 1.15;
+  line-height: 1.2;
 }
 
 .btn.review-rate:hover:not(:disabled) {
@@ -193,28 +372,36 @@
 }
 
 .btn.review-rate.rate-2 {
-  border-color: var(--warning-border);
-  background: var(--warning-bg);
-  color: var(--warning);
+  border-color: var(--border);
+  background: var(--surface-sunken);
+  color: var(--text);
 }
 
 .btn.review-rate.rate-3 {
-  border-color: var(--success-border);
-  background: var(--success-bg);
-  color: var(--success);
-}
-
-.btn.review-rate.rate-4 {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+/* Easy is the commitment: the one filled button on the page. */
+.btn.review-rate.rate-4 {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.btn.review-rate.rate-4:hover:not(:disabled) {
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
 }
 
 .rate-gap {
   font-size: var(--fs-2xs);
   font-weight: var(--fw-medium);
+  line-height: 1.1;
   letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
+  opacity: 0.85;
 }
 
 /* Keys are a bonus for a keyboard, not an instruction for a thumb. */
@@ -230,6 +417,18 @@
 @media (hover: hover) and (pointer: fine) {
   .review-hint {
     display: block;
+  }
+
+  .review {
+    /* The dock gains the keyboard hint here, so it is taller than on touch. */
+    padding-bottom: calc(var(--tap-comfort) * 2);
+  }
+}
+
+@media (min-width: 900px) {
+  .review-dock {
+    left: var(--rail-w);
+    padding-inline: var(--space-8);
   }
 }
 

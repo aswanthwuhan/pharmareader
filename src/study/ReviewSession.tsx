@@ -1,8 +1,12 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { fsrs, type Grade } from 'ts-fsrs';
+import { db } from '../core/db';
 import type { CardRecord } from '../core/types';
 import { dueCards, fromFsrs, reviewCard } from './api';
 import './study.css';
+
+/** Book rows carry the file blob and the parsed document, so load a title once. */
+const bookTitleCache = new Map<string, string>();
 
 /** One scheduler for the whole module: `fsrs()` builds models and is not cheap. */
 const scheduler = fsrs();
@@ -127,6 +131,35 @@ export default function ReviewSession({ topicIds }: { topicIds?: string[] }) {
   const current = queue[pos];
   const previews = useMemo(() => (current ? previewIntervals(current) : null), [current]);
 
+  // Source caption: the book a card came from, never the whole books table.
+  const [sourceTitle, setSourceTitle] = useState<string | null>(null);
+  const bookId = current?.bookId;
+  useEffect(() => {
+    if (!bookId) {
+      setSourceTitle(null);
+      return;
+    }
+    const cached = bookTitleCache.get(bookId);
+    if (cached !== undefined) {
+      setSourceTitle(cached || null);
+      return;
+    }
+    let alive = true;
+    setSourceTitle(null);
+    db.books
+      .get(bookId)
+      .then((book) => {
+        bookTitleCache.set(bookId, book?.title ?? '');
+        if (alive) setSourceTitle(book?.title ?? null);
+      })
+      .catch(() => {
+        bookTitleCache.set(bookId, '');
+      });
+    return () => {
+      alive = false;
+    };
+  }, [bookId]);
+
   async function rate(rating: 1 | 2 | 3 | 4) {
     if (!current || busy) return;
     setBusy(true);
@@ -195,41 +228,49 @@ export default function ReviewSession({ topicIds }: { topicIds?: string[] }) {
   }
 
   const cardLabel = current.kind === 'cloze' ? 'Cloze' : 'Q&A';
+  const done = pos + 1;
+  const percentage = (done / queue.length) * 100;
 
   return (
     <section className="review" aria-label="Review session">
       <div className="review-meter">
+        <p className="review-status tnum" aria-live="polite">
+          <span className="review-due">
+            <span className="review-due-dot" aria-hidden="true" />
+            {queue.length - pos} due
+          </span>{' '}
+          <span className="review-card-count">
+            Card {done} of {queue.length}
+          </span>
+        </p>
         <div
           className="progress"
           role="progressbar"
-          aria-label={`${pos} of ${queue.length} cards rated`}
-          aria-valuemin={0}
+          aria-label="Review progress"
+          aria-valuetext={`Card ${done} of ${queue.length}`}
+          aria-valuemin={1}
           aria-valuemax={queue.length}
-          aria-valuenow={pos}
+          aria-valuenow={done}
         >
-          <span style={{ width: `${(pos / queue.length) * 100}%` }} />
+          <span style={{ width: `${percentage}%` }} />
         </div>
-        <p className="review-count tnum" aria-live="polite">
-          <span>{queue.length - pos} due</span>
-          <span className="review-count-sep" aria-hidden="true">
-            ·
-          </span>
-          <span>
-            Card {pos + 1} of {queue.length}
-          </span>
-        </p>
       </div>
 
       <article className="card review-card">
         <div className="review-card-head">
           <span className="badge">{cardLabel}</span>
-          <span className="review-state">{revealed ? 'Answer' : 'Answer hidden'}</span>
+          {sourceTitle ? (
+            <span className="review-source" title={sourceTitle}>
+              {sourceTitle}
+            </span>
+          ) : null}
         </div>
         <p className="review-front">
           {current.kind === 'cloze' ? <ClozeText text={current.front} /> : current.front}
         </p>
         {revealed ? (
           <div className="review-answer">
+            <span className="review-answer-label">Answer</span>
             <p className="review-back">
               {current.kind === 'cloze' ? <ClozeText text={current.back} /> : current.back}
             </p>
@@ -243,37 +284,41 @@ export default function ReviewSession({ topicIds }: { topicIds?: string[] }) {
         </p>
       ) : null}
 
-      {revealed ? (
-        <>
-          <div className="review-ratings" role="group" aria-label="Rate this card">
-            {RATINGS.map(({ value, label }) => (
-              <button
-                key={value}
-                type="button"
-                className={`btn review-rate rate-${value}`}
-                disabled={busy}
-                aria-label={`${label}, next review in ${previews?.[value] ?? 'unknown'}`}
-                onClick={() => void rate(value)}
-              >
-                <span className="review-rate-label">{label}</span>
-                <small className="rate-gap">{previews?.[value]}</small>
+      <div className="review-dock">
+        <div className="review-dock-inner">
+          {revealed ? (
+            <>
+              <div className="review-ratings" role="group" aria-label="Rate this card">
+                {RATINGS.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`btn review-rate rate-${value}`}
+                    disabled={busy}
+                    aria-label={`${label}, next review in ${previews?.[value] ?? 'unknown'}`}
+                    onClick={() => void rate(value)}
+                  >
+                    <span className="review-rate-label">{label}</span>
+                    <small className="rate-gap">{previews?.[value]}</small>
+                  </button>
+                ))}
+              </div>
+              <p className="review-hint">
+                Press <kbd>1</kbd>–<kbd>4</kbd> to rate.
+              </p>
+            </>
+          ) : (
+            <>
+              <button type="button" className="btn btn-primary btn-block review-reveal" onClick={() => setRevealed(true)}>
+                Show answer
               </button>
-            ))}
-          </div>
-          <p className="review-hint">
-            Press <kbd>1</kbd>–<kbd>4</kbd> to rate.
-          </p>
-        </>
-      ) : (
-        <>
-          <button type="button" className="btn btn-primary btn-block review-reveal" onClick={() => setRevealed(true)}>
-            Show answer
-          </button>
-          <p className="review-hint">
-            Press <kbd>Space</kbd> to show the answer.
-          </p>
-        </>
-      )}
+              <p className="review-hint">
+                Press <kbd>Space</kbd> to show the answer.
+              </p>
+            </>
+          )}
+        </div>
+      </div>
     </section>
   );
 }

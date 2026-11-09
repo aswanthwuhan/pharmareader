@@ -108,7 +108,7 @@ describe('ReviewPage card delete', () => {
 });
 
 describe('ReviewPage topic deep link', () => {
-  it('preselects the topic named in ?topic=', async () => {
+  it('preselects the topic named in ?topic= and shows it on the filter chip', async () => {
     await ensureSyllabusSeeded();
     await act(async () => {
       root?.render(
@@ -117,7 +117,23 @@ describe('ReviewPage topic deep link', () => {
         </MemoryRouter>,
       );
     });
+
+    // The page itself stays quiet: one chip names the active filter.
+    await waitFor(
+      () => container.querySelector('.study-filter-text')?.textContent?.includes('Antihypertensives') ?? false,
+      'the filter chip label',
+    );
+    expect(container.querySelector('.study-filter-clear')).not.toBeNull();
+
+    const open = container.querySelector<HTMLButtonElement>('.study-filter-main');
+    expect(open?.getAttribute('aria-haspopup')).toBe('dialog');
+    await act(async () => {
+      open?.click();
+    });
+
+    // The chip opens the full picker in a sheet, with the topic already selected.
     await waitFor(() => container.querySelector('.tp-chip') !== null, 'the preselected topic chip');
     expect(container.querySelector('.tp-chip')?.textContent).toContain('Antihypertensives');
+    expect(container.querySelector('.sheet[role="dialog"]')).not.toBeNull();
   });
 });
