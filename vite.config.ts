@@ -2,10 +2,12 @@ import { configDefaults, defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     VitePWA({
+      // native shell bundles its own assets; a service worker there would serve stale code after app updates
+      disable: mode === 'native',
       registerType: 'autoUpdate',
       includeAssets: ['icon.svg'],
       manifest: {
@@ -31,4 +33,4 @@ export default defineConfig({
     // Scratch work under .tmp/ must never leak into the suite.
     exclude: [...configDefaults.exclude, '.tmp/**'],
   },
-});
+}));
