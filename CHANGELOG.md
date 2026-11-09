@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.2 — 2026-11-09
+- Medical pronunciation: 32 new rules (`med-` group) for words every TTS engine mangled — hypo/hyperglycaemia, -kalaemia, -natraemia, -calcaemia, hepatomegaly, pyelonephritis, gynaecomastia, empyema, epididymitis, hemiplegia and more. Each was checked by speaking it through Kokoro and Windows voices and transcribing with Whisper; respellings that made any engine worse were dropped.
+
 ## 0.1.1 — 2026-11-09
 Tested end to end on an Android emulator (clean install, offline) and in desktop Chrome.
 
