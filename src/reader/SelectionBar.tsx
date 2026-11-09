@@ -2,7 +2,7 @@
  * The toolbar that appears over a text selection: highlight it, annotate it,
  * bookmark the sentence, turn it into a card, or hand it to the AI.
  */
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink';
 
@@ -38,9 +38,29 @@ export default function SelectionBar({
 }: Props) {
   const [noteOpen, setNoteOpen] = useState(false);
   const [note, setNote] = useState('');
+  const box = useRef<HTMLDivElement>(null);
+
+  // Keyboard and screen-reader users land in the toolbar, not back at the top
+  // of the document.
+  useEffect(() => {
+    box.current?.focus();
+  }, []);
 
   return (
-    <div className="rd-select" role="dialog" aria-label={`Actions for ${count} selected sentence(s)`}>
+    <div
+      ref={box}
+      className="rd-select"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Actions for ${count} selected sentence${count === 1 ? '' : 's'}`}
+      tabIndex={-1}
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+      }}
+    >
       <p className="rd-select-text">{text.length > 140 ? `${text.slice(0, 140)}…` : text}</p>
 
       {noteOpen ? (
@@ -82,7 +102,7 @@ export default function SelectionBar({
           </div>
 
           <div className="rd-select-actions">
-            <button type="button" className="rd-btn" onClick={onExtend}>
+            <button type="button" className="rd-btn" aria-label="Extend selection by one sentence" onClick={onExtend}>
               + Sentence
             </button>
             <button type="button" className="rd-btn" onClick={() => setNoteOpen(true)}>
@@ -97,7 +117,7 @@ export default function SelectionBar({
             <button type="button" className="rd-btn" onClick={() => onCard('cloze')}>
               Cloze card
             </button>
-            <button type="button" className="rd-btn" onClick={onAi}>
+            <button type="button" className="rd-btn" aria-label="AI actions" onClick={onAi}>
               AI
             </button>
             <button type="button" className="rd-btn rd-select-close" aria-label="Close actions" onClick={onClose}>

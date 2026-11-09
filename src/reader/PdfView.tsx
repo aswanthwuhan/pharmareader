@@ -10,7 +10,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist';
-import type { PDFDocumentProxy } from 'pdfjs-dist';
+import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type { PdfRect } from '../core/types';
 
@@ -51,16 +51,23 @@ export default function PdfView({ docKey, file, page, rects, onPageChange }: Pro
 
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
-  const renderTask = useRef<{ cancel(): void; promise: Promise<void> } | null>(null);
+  const renderTask = useRef<{ cancel(): void; promise: Promise<unknown> } | null>(null);
+  const shownPage = useRef<{ num: number; page: PDFPageProxy } | null>(null);
   const fileRef = useRef(file);
   fileRef.current = file;
   const pinch = useRef<{ distance: number; zoom: number } | null>(null);
+  const zoomFrame = useRef(0);
+  const pendingZoom = useRef<number | null>(null);
+
+  /** The page number that is actually painted (the prop may be out of range). */
+  const painted = pageCount > 0 ? clampNumber(page, 1, pageCount) : page;
 
   // Load the document once; the pages are rendered on demand below.
   useEffect(() => {
     let alive = true;
     let loadingTask: ReturnType<typeof getDocument> | null = null;
     setDoc(null);
+    setPageCount(0);
     setLoading(true);
     setError(null);
     void (async () => {
@@ -83,9 +90,33 @@ export default function PdfView({ docKey, file, page, rects, onPageChange }: Pro
 
     return () => {
       alive = false;
+      // Drop the bitmap and the decoded page with the view: a 2000-page book
+      // should not keep a full-page canvas alive after the reader leaves.
+      renderTask.current?.cancel();
+      renderTask.current = null;
+      const last = shownPage.current;
+      shownPage.current = null;
+      try {
+        last?.page.cleanup();
+      } catch {
+        // already torn down with the document
+      }
       void loadingTask?.destroy();
     };
   }, [docKey]);
+
+  // Free the full-page bitmap when the reader leaves. This effect has to own
+  // its element: React detaches refs before passive cleanups, so looking at
+  // `canvas.current` from the load effect's cleanup would find null.
+  useEffect(() => {
+    const element = canvas.current;
+    return () => {
+      if (element) {
+        element.width = 0;
+        element.height = 0;
+      }
+    };
+  }, []);
 
   // Fit to the available width; a rotation or a side panel changes it too.
   useEffect(() => {
@@ -117,7 +148,7 @@ export default function PdfView({ docKey, file, page, rects, onPageChange }: Pro
           try {
             await previous.promise;
           } catch {
-            // the cancelled task always rejects
+            // a cancelled task always rejects
           }
           if (cancelled) return;
         }
@@ -127,8 +158,14 @@ export default function PdfView({ docKey, file, page, rects, onPageChange }: Pro
         const viewport = pdfPage.getViewport({ scale: fit * zoom });
         const ratio = Math.min(window.devicePixelRatio || 1, 2);
 
+        // Publish the geometry *before* painting, so the sentence overlay is
+        // never drawn at the previous page's scale.
+        setScale(viewport.scale);
+        setSize({ w: viewport.width, h: viewport.height });
+
         renderTask.current?.cancel();
-        element.width = Math.floor(viewport.width * ratio);        element.height = Math.floor(viewport.height * ratio);
+        element.width = Math.floor(viewport.width * ratio);
+        element.height = Math.floor(viewport.height * ratio);
         const context = element.getContext('2d');
         if (!context) return;
         const task = pdfPage.render({
@@ -140,8 +177,17 @@ export default function PdfView({ docKey, file, page, rects, onPageChange }: Pro
         renderTask.current = task;
         await task.promise;
         if (cancelled) return;
-        setScale(viewport.scale);
-        setSize({ w: viewport.width, h: viewport.height });
+
+        // Only one page's operator list is worth keeping on a phone.
+        const last = shownPage.current;
+        if (last && last.num !== pdfPage.pageNumber) {
+          try {
+            last.page.cleanup();
+          } catch {
+            // the page proxy may already be gone with the document
+          }
+        }
+        shownPage.current = { num: pdfPage.pageNumber, page: pdfPage };
       } catch (err) {
         // Cancelling a render is normal when the reader turns pages quickly.
         const name = err instanceof Error ? err.name : '';
@@ -156,6 +202,26 @@ export default function PdfView({ docKey, file, page, rects, onPageChange }: Pro
     };
   }, [doc, page, zoom, width]);
 
+  // Pinch rerenders the whole page; coalesce touchmove bursts to one per frame.
+  function scheduleZoom(value: number): void {
+    pendingZoom.current = value;
+    if (zoomFrame.current || typeof requestAnimationFrame === 'undefined') {
+      if (!zoomFrame.current) setZoom(value);
+      return;
+    }
+    zoomFrame.current = requestAnimationFrame(() => {
+      zoomFrame.current = 0;
+      const next = pendingZoom.current;
+      if (next !== null) setZoom(next);
+    });
+  }
+
+  useEffect(() => {
+    return () => {
+      if (zoomFrame.current && typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(zoomFrame.current);
+    };
+  }, []);
+
   return (
     <div className="rd-pdf">
       <div
@@ -167,28 +233,37 @@ export default function PdfView({ docKey, file, page, rects, onPageChange }: Pro
         onTouchMove={(event) => {
           if (!pinch.current || event.touches.length !== 2) return;
           const factor = touchDistance(event.touches) / (pinch.current.distance || 1);
-          setZoom(clampNumber(pinch.current.zoom * factor, ZOOM_MIN, ZOOM_MAX));
+          scheduleZoom(clampNumber(pinch.current.zoom * factor, ZOOM_MIN, ZOOM_MAX));
         }}
         onTouchEnd={() => {
           pinch.current = null;
         }}
       >
         <div className="rd-pdf-page" style={{ width: size.w || undefined, height: size.h || undefined }}>
-          <canvas ref={canvas} className="rd-pdf-canvas" style={{ width: size.w || undefined, height: size.h || undefined }} />
-          {rects
-            .filter((rect) => rect.page === page)
-            .map((rect, i) => (
-              <div
-                key={`${rect.page}-${i}`}
-                className="rd-pdf-rect"
-                style={{
-                  left: `${rect.x * scale}px`,
-                  top: `${rect.y * scale}px`,
-                  width: `${Math.max(rect.w * scale, 2)}px`,
-                  height: `${Math.max(rect.h * scale, 2)}px`,
-                }}
-              />
-            ))}
+          <canvas
+            ref={canvas}
+            className="rd-pdf-canvas"
+            role="img"
+            aria-label={`Page ${painted}${pageCount ? ` of ${pageCount}` : ''}`}
+            style={{ width: size.w || undefined, height: size.h || undefined }}
+          />
+          {scale > 0
+            ? rects
+                .filter((rect) => rect.page === painted)
+                .map((rect, i) => (
+                  <div
+                    key={`${rect.page}-${i}`}
+                    className="rd-pdf-rect"
+                    aria-hidden="true"
+                    style={{
+                      left: `${rect.x * scale}px`,
+                      top: `${rect.y * scale}px`,
+                      width: `${Math.max(rect.w * scale, 2)}px`,
+                      height: `${Math.max(rect.h * scale, 2)}px`,
+                    }}
+                  />
+                ))
+            : null}
         </div>
       </div>
 
@@ -199,17 +274,17 @@ export default function PdfView({ docKey, file, page, rects, onPageChange }: Pro
       ) : null}
 
       <div className="rd-pdf-controls">
-        <button type="button" className="rd-btn" onClick={() => onPageChange(page - 1)} disabled={page <= 1}>
+        <button type="button" className="rd-btn" onClick={() => onPageChange(painted - 1)} disabled={painted <= 1}>
           <span aria-hidden="true">‹</span> Prev
         </button>
         <span className="rd-pdf-count" aria-live="polite">
-          {loading ? '…' : `Page ${page} / ${pageCount || '?'}`}
+          {loading ? '…' : `Page ${painted} / ${pageCount || '?'}`}
         </span>
         <button
           type="button"
           className="rd-btn"
-          onClick={() => onPageChange(page + 1)}
-          disabled={pageCount > 0 && page >= pageCount}
+          onClick={() => onPageChange(painted + 1)}
+          disabled={pageCount > 0 && painted >= pageCount}
         >
           Next <span aria-hidden="true">›</span>
         </button>

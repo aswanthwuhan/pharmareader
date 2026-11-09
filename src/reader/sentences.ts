@@ -85,6 +85,26 @@ export function highlightBySentence(highlights: Highlight[]): Map<string, Highli
   return map;
 }
 
+/**
+ * The sentences to render for one chapter.
+ *
+ * A PDF fallback chapter can hold ~1500 sentences (20 pages), and a phone has
+ * no business laying out that many spans at once. The reader renders a window
+ * around the cursor instead and grows it as the reader moves — full render
+ * when the chapter fits.
+ */
+export function windowRange(total: number, focus: number | null, radius: number): { start: number; end: number } {
+  const size = radius * 2 + 1;
+  if (total <= size) return { start: 0, end: Math.max(0, total) };
+  const center = focus === null || focus < 0 ? 0 : Math.min(focus, total - 1);
+  let start = Math.max(0, center - radius);
+  let end = Math.min(total, center + radius + 1);
+  // Keep a full window at the edges so the first page is not half-sized.
+  if (start === 0) end = size;
+  if (end === total) start = total - size;
+  return { start, end };
+}
+
 /** Move `delta` sentences, crossing chapter boundaries; null at either end. */
 export function stepPos(index: BookIndex, pos: Pos, delta: number): Pos | null {
   let chapterIndex = pos.chapterIndex;

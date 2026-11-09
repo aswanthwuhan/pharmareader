@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Highlight, ParsedDoc } from '../core/types';
-import { highlightBySentence, indexBook, posForSaved, sentenceAt, stepPos } from './sentences';
+import { highlightBySentence, indexBook, posForSaved, sentenceAt, stepPos, windowRange } from './sentences';
 
 const doc: ParsedDoc = {
   title: 'Doc',
@@ -74,6 +74,25 @@ describe('stepPos', () => {
   it('crosses back into the previous chapter', () => {
     const index = indexBook(doc);
     expect(stepPos(index, { chapterIndex: 1, index: 0 }, -1)).toEqual({ chapterIndex: 0, index: 2 });
+  });
+});
+
+describe('windowRange', () => {
+  it('renders everything when the chapter is short', () => {
+    expect(windowRange(50, 20, 200)).toEqual({ start: 0, end: 50 });
+    expect(windowRange(401, 0, 200)).toEqual({ start: 0, end: 401 });
+  });
+
+  it('renders a window around the cursor, with a full size at the edges', () => {
+    expect(windowRange(2000, 1000, 200)).toEqual({ start: 800, end: 1201 });
+    expect(windowRange(2000, 0, 200)).toEqual({ start: 0, end: 401 });
+    expect(windowRange(2000, 1999, 200)).toEqual({ start: 1599, end: 2000 });
+  });
+
+  it('does not run past the paragraph list it is given', () => {
+    expect(windowRange(0, 0, 200)).toEqual({ start: 0, end: 0 });
+    expect(windowRange(500, null, 200)).toEqual({ start: 0, end: 401 });
+    expect(windowRange(500, 9999, 200)).toEqual({ start: 99, end: 500 });
   });
 });
 

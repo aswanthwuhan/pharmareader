@@ -4,10 +4,13 @@
  * Sentences are inline spans rather than blocks so a paragraph keeps its
  * natural shape while each sentence stays individually addressable by the
  * player, the highlights and the selection toolbar.
+ *
+ * Long chapters (a PDF fallback page can be ~1500 sentences) render a window
+ * around the cursor — see `windowRange` — and grow it as the reader moves.
  */
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Chapter, Highlight } from '../core/types';
-import type { FlatSentence } from './sentences';
+import { windowRange, type FlatSentence } from './sentences';
 
 interface Props {
   chapter: Chapter;
@@ -23,6 +26,12 @@ interface Props {
 
 /** Long-press duration that selects a sentence instead of starting playback. */
 const LONG_PRESS_MS = 450;
+/** A pointer that travels further than this is scrolling, not pressing. */
+const PRESS_SLOP_PX = 10;
+/** Render this many sentences on either side of the reading position. */
+const WINDOW_RADIUS = 200;
+/** Grow the window before the reader actually reaches its edge. */
+const GROW_AHEAD = 20;
 
 export default function ReflowView({
   chapter,
@@ -37,14 +46,30 @@ export default function ReflowView({
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const pressTimer = useRef<number | null>(null);
+  const pressAt = useRef<{ x: number; y: number } | null>(null);
   const longFired = useRef(false);
+  const selectionTimer = useRef<number | null>(null);
+  const moreRef = useRef<HTMLButtonElement>(null);
+
+  const orderOf = useMemo(() => new Map(sentences.map((sentence, i) => [sentence.id, i])), [sentences]);
   const byId = useMemo(() => new Map(sentences.map((sentence) => [sentence.id, sentence])), [sentences]);
   const selectedSet = useMemo(() => new Set(selected), [selected]);
 
-  // Follow the spoken sentence, but only when it is actually out of view —
-  // scrolling on every sentence would fight the reader who is looking ahead.
+  const [win, setWin] = useState(() =>
+    windowRange(sentences.length, readingId ? (orderOf.get(readingId) ?? 0) : 0, WINDOW_RADIUS)
+  );
+
+  // Follow the spoken sentence and keep the rendered window around it.
   useEffect(() => {
-    if (!readingId) return;
+    const at = readingId ? orderOf.get(readingId) : undefined;
+    if (at === undefined) return;
+    setWin((current) => {
+      if (at < current.start || at >= current.end) return windowRange(sentences.length, at, WINDOW_RADIUS);
+      if (at >= current.end - GROW_AHEAD && current.end < sentences.length) {
+        return { start: current.start, end: Math.min(sentences.length, current.end + WINDOW_RADIUS) };
+      }
+      return current;
+    });
     const element = host.current?.querySelector<HTMLElement>(`[data-sid="${readingId}"]`);
     if (!element) return;
     const box = element.getBoundingClientRect();
@@ -53,7 +78,16 @@ export default function ReflowView({
     if (box.top < top || box.bottom > bottom) {
       element.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
     }
-  }, [readingId]);
+    // onSentence fires often with the same id; the window check is cheap.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readingId, orderOf, sentences.length]);
+
+  useEffect(() => {
+    return () => {
+      if (pressTimer.current !== null) window.clearTimeout(pressTimer.current);
+      if (selectionTimer.current !== null) window.clearTimeout(selectionTimer.current);
+    };
+  }, []);
 
   function sentenceIdOf(target: EventTarget | null): string | null {
     if (!(target instanceof Element)) return null;
@@ -61,6 +95,7 @@ export default function ReflowView({
   }
 
   function clearPress(): void {
+    pressAt.current = null;
     if (pressTimer.current !== null) {
       window.clearTimeout(pressTimer.current);
       pressTimer.current = null;
@@ -72,11 +107,22 @@ export default function ReflowView({
     if (!id) return;
     longFired.current = false;
     clearPress();
+    pressAt.current = { x: event.clientX, y: event.clientY };
     pressTimer.current = window.setTimeout(() => {
       pressTimer.current = null;
+      pressAt.current = null;
       longFired.current = true;
       onSelect([id], (byId.get(id)?.text ?? '').trim());
     }, LONG_PRESS_MS);
+  }
+
+  // A finger that moves is scrolling; the long-press must not fire mid-scroll.
+  function handlePointerMove(event: React.PointerEvent<HTMLDivElement>): void {
+    const start = pressAt.current;
+    if (!start || pressTimer.current === null) return;
+    if (Math.abs(event.clientX - start.x) > PRESS_SLOP_PX || Math.abs(event.clientY - start.y) > PRESS_SLOP_PX) {
+      clearPress();
+    }
   }
 
   function handleClick(event: React.MouseEvent<HTMLDivElement>): void {
@@ -110,19 +156,60 @@ export default function ReflowView({
     onSelect(ids, selection.toString().replace(/\s+/g, ' ').trim());
   }
 
-  function spans(block: Chapter['blocks'][number]) {
-    return block.sentences.map((sentence) => {
-      const highlight = highlights.get(sentence.id);
-      const classes = ['rd-s'];
-      if (sentence.id === readingId) classes.push('reading');
-      if (selectedSet.has(sentence.id)) classes.push('selected');
-      return (
-        <span key={sentence.id} className={classes.join(' ')} data-sid={sentence.id} data-hl={highlight?.color}>
-          {sentence.text}{' '}
-        </span>
-      );
-    });
+  // Dragging a native selection fires selectionchange continuously; collapse
+  // it to one update per pause instead of re-rendering the chapter per word.
+  function scheduleSelection(): void {
+    if (selectionTimer.current !== null) window.clearTimeout(selectionTimer.current);
+    selectionTimer.current = window.setTimeout(() => {
+      selectionTimer.current = null;
+      handleSelection();
+    }, 120);
   }
+
+  useEffect(() => {
+    document.addEventListener('selectionchange', scheduleSelection);
+    return () => document.removeEventListener('selectionchange', scheduleSelection);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function spans(block: Chapter['blocks'][number]) {
+    return block.sentences
+      .filter((sentence) => {
+        const at = orderOf.get(sentence.id);
+        return at !== undefined && at >= win.start && at < win.end;
+      })
+      .map((sentence) => {
+        const highlight = highlights.get(sentence.id);
+        const classes = ['rd-s'];
+        if (sentence.id === readingId) classes.push('reading');
+        if (selectedSet.has(sentence.id)) classes.push('selected');
+        return (
+          <span key={sentence.id} className={classes.join(' ')} data-sid={sentence.id} data-hl={highlight?.color}>
+            {sentence.text}{' '}
+          </span>
+        );
+      });
+  }
+
+  const before = win.start > 0;
+  const after = win.end < sentences.length;
+
+  // Reading down the page should keep going without a tap: grow the window when
+  // the end of the rendered range comes near the viewport.
+  useEffect(() => {
+    if (!after) return;
+    const onScroll = () => {
+      const box = moreRef.current?.getBoundingClientRect();
+      if (!box || box.top > window.innerHeight + 200) return;
+      setWin((current) =>
+        current.end >= sentences.length
+          ? current
+          : { start: current.start, end: Math.min(sentences.length, current.end + WINDOW_RADIUS) }
+      );
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, [after, sentences.length]);
 
   return (
     <div
@@ -130,16 +217,28 @@ export default function ReflowView({
       className="rd-text"
       style={{ fontSize: `${fontSize}px`, lineHeight }}
       onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
       onPointerUp={clearPress}
       onPointerCancel={clearPress}
       onPointerLeave={clearPress}
       onClick={handleClick}
       onMouseUp={handleSelection}
       onTouchEnd={handleSelection}
+      onContextMenu={(event) => event.preventDefault()}
     >
       <h2 className="rd-chapter-title">{chapter.title}</h2>
+      {before ? (
+        <button
+          type="button"
+          className="rd-btn rd-more"
+          onClick={() => setWin((current) => ({ start: Math.max(0, current.start - WINDOW_RADIUS), end: current.end }))}
+        >
+          Show earlier
+        </button>
+      ) : null}
       {chapter.blocks.map((block) => {
         const content = spans(block);
+        if (!content.length) return null;
         switch (block.kind) {
           case 'h':
             return (
@@ -172,6 +271,21 @@ export default function ReflowView({
             return <p key={block.id}>{content}</p>;
         }
       })}
+      {after ? (
+        <button
+          ref={moreRef}
+          type="button"
+          className="rd-btn rd-more"
+          onClick={() =>
+            setWin((current) => ({
+              start: current.start,
+              end: Math.min(sentences.length, current.end + WINDOW_RADIUS),
+            }))
+          }
+        >
+          Show more ({win.end} of {sentences.length})
+        </button>
+      ) : null}
     </div>
   );
 }

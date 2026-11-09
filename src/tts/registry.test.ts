@@ -125,6 +125,24 @@ describe('resolveEngine', () => {
     expect((await describeEngine()).preferred).toBe(false);
   });
 
+  it('auto falls through to pocket when kokoro is installed but too slow', async () => {
+    h.ready.kokoro = true;
+    h.ready.pocket = true;
+    await setSetting('tts.rtf.kokoro', 1.5);
+    await setSetting('tts.rtf.pocket', 0.7);
+    const info = await describeEngine();
+    expect(info.engine.id).toBe('pocket');
+    expect(info.preferred).toBe(true);
+  });
+
+  it('treats an explicit system choice as preferred, not a fallback', async () => {
+    await setSetting('tts.engine', 'system');
+    const info = await describeEngine();
+    expect(info.engine.id).toBe('system');
+    expect(info.preferred).toBe(true);
+    expect((await resolveEngine()).id).toBe('system');
+  });
+
   it('types the resolved engines as TtsEngine', async () => {
     const engine: TtsEngine = await resolveEngine();
     expect(typeof engine.speak).toBe('function');

@@ -294,6 +294,11 @@
   overflow: auto;
 }
 
+.rd-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .rd-select-text {
   margin: 0 0 8px;
   font-size: 0.85rem;
@@ -396,6 +401,18 @@
   padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
   max-height: 84vh;
   overflow: auto;
+}
+
+.rd-sheet-body:focus {
+  outline: none;
+}
+
+/* "Show more" at the edge of a windowed chapter. */
+.rd-more {
+  display: block;
+  width: 100%;
+  margin: 8px 0;
+  border-style: dashed;
 }
 
 .rd-tabs {

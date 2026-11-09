@@ -9,10 +9,10 @@ import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../core/db';
-import { setSetting, useSetting } from '../core/settings';
-import type { Highlight } from '../core/types';
+import { getSetting, setSetting, useSetting } from '../core/settings';
+import type { BookRecord, Highlight } from '../core/types';
 import { createPlayer, type Player } from '../tts/player';
-import { describeEngine, type EngineInfo } from '../tts/registry';
+import { describeEngine, ENGINE_SETTING, type EngineInfo } from '../tts/registry';
 import { prerenderChapter } from '../tts/neural/prerender';
 import { addBookmark, addHighlight, cardFromHighlight, createCard, listHighlights } from '../study/api';
 import HighlightList from '../study/HighlightList';
@@ -44,6 +44,23 @@ const FONT_MIN = 14;
 const FONT_MAX = 32;
 const LINE_HEIGHTS = [1.5, 1.7, 1.9];
 const SAVE_POS_MS = 700;
+const RATE_RESTART_MS = 350;
+
+/**
+ * Reading position lives in settings, not in the book record: a book carries
+ * its parsed document (tens of MB on a textbook) and rewriting it every few
+ * seconds while playing would re-serialise that whole record. `books.lastPos`
+ * is still kept up to date — the library needs it — but only when the reader
+ * leaves a chapter or the screen.
+ */
+function lastPosKey(bookId: string): string {
+  return `reader.lastPos.${bookId}`;
+}
+
+interface SavedPos {
+  chapterId: string;
+  sentenceId: string;
+}
 
 interface Picked {
   ids: string[];
@@ -52,12 +69,17 @@ interface Picked {
 
 export default function ReaderView() {
   const { bookId } = useParams<{ bookId: string }>();
-  const book = useLiveQuery(async () => (bookId ? ((await db.books.get(bookId)) ?? null) : null), [bookId]);
+
+  // Loaded once, not live: the record includes `parsed` (and the original
+  // file), so a live query would re-read the whole book on every position save.
+  const [book, setBook] = useState<BookRecord | null | undefined>(undefined);
+  const [topicIds, setTopicIds] = useState<string[]>([]);
 
   const fontSize = useSetting<number>(FONT_KEY, DEFAULT_FONT);
   const lineHeight = useSetting<number>(LINE_KEY, LINE_HEIGHTS[0] ?? 1.5);
   const rate = useSetting<number>(RATE_KEY, 1);
   const voiceId = useSetting<string>(VOICE_KEY, '');
+  const engineChoice = useSetting<string>(ENGINE_SETTING, 'auto');
 
   const [cursor, setCursor] = useState<Pos | null>(null);
   const [mode, setMode] = useState<'text' | 'page'>('text');
@@ -79,10 +101,25 @@ export default function ReaderView() {
   const playerRef = useRef<Player | null>(null);
   const generation = useRef(0);
   const engineRef = useRef<EngineInfo | null>(null);
+  // `rateRef` is the authoritative rate for the next player. It must not be
+  // re-read from the (asynchronously persisted) setting on every render: a
+  // release right after a slider move would then start at the stale rate.
   const rateRef = useRef(rate);
-  rateRef.current = rate;
+  useEffect(() => {
+    rateRef.current = rate;
+  }, [rate]);
+  const voiceRef = useRef(voiceId);
+  voiceRef.current = voiceId;
+  const cursorRef = useRef<Pos | null>(cursor);
+  cursorRef.current = cursor;
+  const playStateRef = useRef<PlayState>(playState);
+  playStateRef.current = playState;
   const abortRef = useRef<AbortController | null>(null);
   const restored = useRef(false);
+  const lastSavedKey = useRef('');
+  const pendingPos = useRef<{ bookId: string; pos: SavedPos } | null>(null);
+  const rateTimer = useRef<number | null>(null);
+  const sheetBody = useRef<HTMLDivElement>(null);
 
   const chapterIndex = cursor?.chapterIndex ?? 0;
   const chapter = book?.parsed.chapters[chapterIndex];
@@ -91,36 +128,125 @@ export default function ReaderView() {
 
   // -- position ------------------------------------------------------------
 
+  /** Hand the latest reading position back to the library (one write, not one per sentence). */
+  function flushBookPos(): void {
+    const pending = pendingPos.current;
+    if (!pending) return;
+    pendingPos.current = null;
+    void db.books.update(pending.bookId, { lastPos: pending.pos }).catch(() => {
+      // The position is a convenience; a failed write must never break reading.
+    });
+  }
+
+  useEffect(() => {
+    let alive = true;
+    restored.current = false;
+    lastSavedKey.current = '';
+    setBook(undefined);
+    setCursor(null);
+    setTopicIds([]);
+    releasePlayer();
+    if (!bookId) {
+      setBook(null);
+      return () => {
+        alive = false;
+      };
+    }
+    void db.books
+      .get(bookId)
+      .then((record) => {
+        if (!alive) return;
+        setBook(record ?? null);
+        setTopicIds(record?.topicIds ?? []);
+      })
+      .catch(() => {
+        if (alive) setBook(null);
+      });
+    return () => {
+      alive = false;
+    };
+    // releasePlayer is stable enough for this purpose (refs + setState only).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookId]);
+
   useEffect(() => {
     if (!book || !index || restored.current) return;
     restored.current = true;
-    setCursor(posForSaved(book.parsed, index, book.lastPos));
+    const parsed = book.parsed;
+    const fallback = book.lastPos;
+    let alive = true;
+
+    void getSetting<SavedPos | undefined>(lastPosKey(book.id), undefined)
+      .catch(() => undefined)
+      .then((stored) => {
+        if (!alive) return;
+        const pos = posForSaved(parsed, index, stored ?? fallback);
+        const sentence = sentenceAt(index, pos);
+        if (sentence) lastSavedKey.current = `${parsed.chapters[pos.chapterIndex]?.id ?? ''}:${sentence.id}`;
+        setCursor(pos);
+      });
+
+    return () => {
+      alive = false;
+    };
   }, [book, index]);
 
   useEffect(() => {
-    if (!book || !cursor) return;
-    const sentence = index ? sentenceAt(index, cursor) : null;
+    if (!book || !cursor || !index) return;
+    const sentence = sentenceAt(index, cursor);
     if (!sentence) return;
     const chapterId = book.parsed.chapters[cursor.chapterIndex]?.id ?? '';
-    const timer = setTimeout(() => {
-      void db.books.update(book.id, { lastPos: { chapterId, sentenceId: sentence.id } });
+    const key = `${chapterId}:${sentence.id}`;
+    if (lastSavedKey.current === key) return;
+
+    const id = book.id;
+    const pos: SavedPos = { chapterId, sentenceId: sentence.id };
+    const timer = window.setTimeout(() => {
+      lastSavedKey.current = key;
+      pendingPos.current = { bookId: id, pos };
+      void setSetting(lastPosKey(id), pos);
     }, SAVE_POS_MS);
-    return () => clearTimeout(timer);
-  }, [book?.id, cursor?.chapterIndex, cursor?.index]);
+    return () => window.clearTimeout(timer);
+  }, [book, index, cursor]);
+
+  // Crossing a chapter boundary is the natural moment to persist the heavier
+  // `books.lastPos` for the library progress bar.
+  useEffect(() => {
+    flushBookPos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chapterIndex]);
 
   useEffect(() => {
     window.scrollTo?.({ top: 0 });
   }, [chapterIndex]);
 
-  // Show the engine that will actually speak before the first tap.
+  // Resolve the engine before the first tap for two reasons: the Play handler
+  // must call player.play() synchronously (autoplay gesture), and a slow model
+  // probe must not delay it. Re-resolve when the user changes the engine.
   useEffect(() => {
-    if (book && !engineRef.current) void engineForPlay();
-  }, [book?.id]);
+    let alive = true;
+    releasePlayer();
+    engineRef.current = null;
+    setEngineInfo(null);
+    void describeEngine()
+      .then((info) => {
+        if (!alive) return;
+        engineRef.current = info;
+        setEngineInfo(info);
+      })
+      .catch(() => {
+        // describeEngine already falls back to system; a throw here means no TTS.
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookId, engineChoice]);
 
   // Auto-turn the PDF page when the spoken sentence lives on another page.
   useEffect(() => {
     const first = reading?.pdfRects?.[0];
-    if (first && mode === 'page') setPdfPage(first.page);
+    if (first && mode === 'page') setPdfPage(Math.max(1, first.page));
   }, [readingId, mode]);
 
   // -- playback ------------------------------------------------------------
@@ -146,21 +272,35 @@ export default function ReaderView() {
     return (index?.chapters[ci] ?? []).map((sentence) => ({ id: sentence.id, text: sentence.text }));
   }
 
-  async function startFrom(ci: number, at: number): Promise<void> {
+  /**
+   * Start speaking, synchronously. Called straight from the tap handler so the
+   * element's first `play()` happens inside the user gesture; everything slow
+   * (engine probe, voice list) has already been resolved.
+   */
+  function beginPlayback(info: EngineInfo, ci: number, at: number): void {
     if (!book || !index) return;
     releasePlayer();
     const mine = ++generation.current;
-    const info = await engineForPlay();
-    if (mine !== generation.current) return;
-    setEngineInfo(info);
 
-    const items = chapterItems(ci);
+    // Skip empty chapters (an import can produce one) rather than stall.
+    let chapterIdx = ci;
+    let startIndex = at;
+    while (chapterIdx < index.chapters.length && (index.chapters[chapterIdx]?.length ?? 0) === 0) {
+      chapterIdx += 1;
+      startIndex = 0;
+    }
+    if (chapterIdx >= index.chapters.length) return;
+
+    const items = chapterItems(chapterIdx);
     if (!items.length) return;
+    const firstIndex = Math.min(Math.max(0, startIndex), items.length - 1);
+
+    setError(null);
     const player = createPlayer({
       engine: info.engine,
       items,
-      startIndex: at,
-      voiceId: voiceId || undefined,
+      startIndex: firstIndex,
+      voiceId: voiceRef.current || undefined,
       rate: rateRef.current,
       onSentence: (id) => {
         if (mine !== generation.current) return;
@@ -169,9 +309,12 @@ export default function ReaderView() {
       },
       onDone: () => {
         if (mine !== generation.current) return;
-        const next = ci + 1;
-        if (next < index.chapters.length) void startFrom(next, 0);
-        else setPlayState('idle');
+        const nextInfo = engineRef.current ?? info;
+        if (chapterIdx + 1 < index.chapters.length) {
+          beginPlayback(nextInfo, chapterIdx + 1, 0);
+          return;
+        }
+        setPlayState('idle');
       },
       onError: (err) => {
         if (mine !== generation.current) return;
@@ -181,44 +324,90 @@ export default function ReaderView() {
     });
     playerRef.current = player;
     setPlayState('playing');
+    // Move the page to what is being spoken now, not when the first clip is
+    // ready: auto-advance into the next chapter must show that chapter at once.
+    setCursor({ chapterIndex: chapterIdx, index: firstIndex });
     player.play();
   }
 
-  function togglePlay(): void {
-    if (!cursor) return;
-    if (playState === 'playing') {
-      playerRef.current?.pause();
-      setPlayState('paused');
-      return;
-    }
-    if (playState === 'paused') {
-      playerRef.current?.resume();
+  /** Async entry point for paths that are not a tap (or a tap before resolution). */
+  async function startFrom(ci: number, at: number): Promise<void> {
+    const mine = generation.current;
+    const info = await engineForPlay();
+    if (mine !== generation.current) return;
+    beginPlayback(info, ci, at);
+  }
+
+  function pauseOnly(): void {
+    if (playStateRef.current !== 'playing') return;
+    playerRef.current?.pause();
+    setPlayState('paused');
+  }
+
+  function startOrResume(): void {
+    const pos = cursorRef.current;
+    if (!pos) return;
+    if (playStateRef.current === 'playing') return;
+    if (playStateRef.current === 'paused' && playerRef.current) {
+      playerRef.current.resume();
       setPlayState('playing');
       return;
     }
-    void startFrom(cursor.chapterIndex, cursor.index);
+    const info = engineRef.current;
+    if (info) beginPlayback(info, pos.chapterIndex, pos.index);
+    else void startFrom(pos.chapterIndex, pos.index);
+  }
+
+  function togglePlay(): void {
+    if (playStateRef.current === 'playing') pauseOnly();
+    else startOrResume();
   }
 
   function stopPlayback(): void {
     releasePlayer();
+    flushBookPos();
   }
 
   function step(delta: number): void {
     if (!index || !cursor) return;
     const target = stepPos(index, cursor, delta);
     if (!target) return;
-    if (playState === 'playing') {
-      void startFrom(target.chapterIndex, target.index);
+    if (playStateRef.current === 'playing') {
+      const info = engineRef.current;
+      if (info) beginPlayback(info, target.chapterIndex, target.index);
+      else void startFrom(target.chapterIndex, target.index);
       return;
     }
-    if (playState === 'paused') releasePlayer();
+    if (playStateRef.current === 'paused') releasePlayer();
     setCursor(target);
+  }
+
+  function goToChapter(ci: number): void {
+    if (!index || ci < 0 || ci >= index.chapters.length) return;
+    if (playStateRef.current !== 'idle') releasePlayer();
+    flushBookPos();
+    setCursor({ chapterIndex: ci, index: 0 });
   }
 
   function changeRate(next: number): void {
     rateRef.current = next;
     void setSetting(RATE_KEY, next);
-    if (playState === 'playing' && cursor) void startFrom(cursor.chapterIndex, cursor.index);
+    // The player's rate is fixed at creation. A paused clip would ignore the
+    // new rate on resume, so drop it and let Play start fresh with this rate.
+    if (playStateRef.current === 'paused') {
+      releasePlayer();
+      return;
+    }
+    // A slider drag fires many updates; restart once it settles.
+    if (rateTimer.current !== null) window.clearTimeout(rateTimer.current);
+    if (playStateRef.current !== 'playing') return;
+    rateTimer.current = window.setTimeout(() => {
+      rateTimer.current = null;
+      const info = engineRef.current;
+      const pos = cursorRef.current;
+      if (!info || !pos || playStateRef.current !== 'playing') return;
+      beginPlayback(info, pos.chapterIndex, pos.index);
+    }, RATE_RESTART_MS);
   }
 
   function changeFont(delta: number): void {
@@ -249,7 +438,7 @@ export default function ReaderView() {
       const report = await prerenderChapter(
         info.engine,
         items,
-        { voiceId: voiceId || undefined, rate: rateRef.current, signal: controller.signal },
+        { voiceId: voiceRef.current || undefined, rate: rateRef.current, signal: controller.signal },
         (p) => setProgress({ done: p.done, total: p.total })
       );
       if (!report.aborted) {
@@ -303,7 +492,7 @@ export default function ReaderView() {
         sentenceIds: selection.ids,
         text: selection.text,
         color,
-        topicIds: book.topicIds,
+        topicIds,
         ...(note ? { note } : {}),
       });
       clearSelection();
@@ -342,7 +531,8 @@ export default function ReaderView() {
   function jumpTo(sentenceId: string): void {
     const pos = index?.byId.get(sentenceId);
     if (!pos) return;
-    if (playState !== 'idle') releasePlayer();
+    if (playStateRef.current !== 'idle') releasePlayer();
+    flushBookPos();
     setCursor(pos);
     setMode('text');
     setDrawer('none');
@@ -350,27 +540,85 @@ export default function ReaderView() {
 
   // -- lock-screen controls ------------------------------------------------
 
-  const actions = useRef({ togglePlay, step, stopPlayback });
-  actions.current = { togglePlay, step, stopPlayback };
+  const actions = useRef({ play: startOrResume, pause: pauseOnly, step, stop: stopPlayback });
+  actions.current = { play: startOrResume, pause: pauseOnly, step, stop: stopPlayback };
 
   useEffect(() => {
     if (typeof navigator === 'undefined' || !('mediaSession' in navigator) || !book) return;
     const session = navigator.mediaSession;
+    const handlers: [MediaSessionAction, (() => void) | null][] = [
+      ['play', () => actions.current.play()],
+      ['pause', () => actions.current.pause()],
+      ['stop', () => actions.current.stop()],
+      ['nexttrack', () => actions.current.step(1)],
+      ['previoustrack', () => actions.current.step(-1)],
+    ];
     try {
       session.metadata = new MediaMetadata({
         title: book.title,
         artist: book.author ?? 'PharmaReader',
         album: chapter?.title ?? '',
       });
-      session.setActionHandler('play', () => actions.current.togglePlay());
-      session.setActionHandler('pause', () => actions.current.togglePlay());
-      session.setActionHandler('nexttrack', () => actions.current.step(1));
-      session.setActionHandler('previoustrack', () => actions.current.step(-1));
-      session.setActionHandler('stop', () => actions.current.stopPlayback());
     } catch {
       // Some Android webviews expose mediaSession but no MediaMetadata.
     }
+    try {
+      for (const [action, handler] of handlers) session.setActionHandler(action, handler);
+    } catch {
+      // An unsupported action must not cost us the others.
+    }
+    return () => {
+      try {
+        for (const [action] of handlers) session.setActionHandler(action, null);
+      } catch {
+        // Nothing to clear on a session that never accepted the handlers.
+      }
+    };
   }, [book?.id, chapter?.id, book?.title, book?.author]);
+
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    try {
+      navigator.mediaSession.playbackState = playState === 'playing' ? 'playing' : playState === 'paused' ? 'paused' : 'none';
+    } catch {
+      // Unsupported playbackState is harmless.
+    }
+  }, [playState]);
+
+  // -- sheets: Escape + focus ----------------------------------------------
+
+  useEffect(() => {
+    const open = drawer !== 'none' || topicOpen || aiText !== null;
+    if (!open) return;
+    sheetBody.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (aiText !== null) setAiText(null);
+      else if (topicOpen) setTopicOpen(false);
+      else setDrawer('none');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [drawer, topicOpen, aiText]);
+
+  // -- unmount / app hidden ------------------------------------------------
+
+  useEffect(() => {
+    const flush = () => flushBookPos();
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', flush);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', flush);
+      flushBookPos();
+      if (rateTimer.current !== null) window.clearTimeout(rateTimer.current);
+      generation.current += 1;
+      abortRef.current?.abort();
+      playerRef.current?.stop();
+      playerRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // -- render --------------------------------------------------------------
 
@@ -427,7 +675,7 @@ export default function ReaderView() {
             </button>
           ) : null}
           <button type="button" className="rd-btn" onClick={() => setTopicOpen(true)}>
-            Topics{book.topicIds.length ? ` (${book.topicIds.length})` : ''}
+            Topics{topicIds.length ? ` (${topicIds.length})` : ''}
           </button>
         </div>
       </header>
@@ -463,11 +711,11 @@ export default function ReaderView() {
           lineHeight={lineHeight}
           onTap={(sentence: FlatSentence) => {
             setSelection(null);
-            if (playState === 'playing') {
+            if (playStateRef.current === 'playing') {
               void startFrom(sentence.chapterIndex, sentence.index);
               return;
             }
-            if (playState === 'paused') releasePlayer();
+            if (playStateRef.current === 'paused') releasePlayer();
             setCursor({ chapterIndex: sentence.chapterIndex, index: sentence.index });
           }}
           onSelect={(ids, text) => setSelection({ ids, text: text || textsOf(ids) })}
@@ -477,14 +725,14 @@ export default function ReaderView() {
       )}
 
       <nav className="rd-chapter-nav" aria-label="Chapter navigation">
-        <button type="button" className="rd-btn" disabled={chapterIndex <= 0} onClick={() => setCursor({ chapterIndex: chapterIndex - 1, index: 0 })}>
+        <button type="button" className="rd-btn" disabled={chapterIndex <= 0} onClick={() => goToChapter(chapterIndex - 1)}>
           ‹ Previous chapter
         </button>
         <button
           type="button"
           className="rd-btn"
           disabled={chapterIndex >= index.chapters.length - 1}
-          onClick={() => setCursor({ chapterIndex: chapterIndex + 1, index: 0 })}
+          onClick={() => goToChapter(chapterIndex + 1)}
         >
           Next chapter ›
         </button>
@@ -525,20 +773,44 @@ export default function ReaderView() {
       ) : null}
 
       {aiText !== null ? (
-        <div className="rd-sheet" role="dialog" aria-modal="true" aria-label="AI actions">
-          <div className="rd-sheet-body">
-            <AiActions text={aiText} bookId={book.id} topicIds={book.topicIds} onClose={() => setAiText(null)} />
+        <div
+          className="rd-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-label="AI actions"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setAiText(null);
+          }}
+        >
+          <div className="rd-sheet-body" ref={sheetBody} tabIndex={-1}>
+            <AiActions
+              text={aiText}
+              bookId={book.id}
+              topicIds={topicIds}
+              onClose={() => setAiText(null)}
+            />
           </div>
         </div>
       ) : null}
 
       {topicOpen ? (
-        <div className="rd-sheet" role="dialog" aria-modal="true" aria-label="Book topics">
-          <div className="rd-sheet-body">
+        <div
+          className="rd-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Book topics"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setTopicOpen(false);
+          }}
+        >
+          <div className="rd-sheet-body" ref={sheetBody} tabIndex={-1}>
             <TopicPicker
               label="Topics for this book"
-              value={book.topicIds}
-              onChange={(ids) => void db.books.update(book.id, { topicIds: ids })}
+              value={topicIds}
+              onChange={(ids) => {
+                setTopicIds(ids);
+                void db.books.update(book.id, { topicIds: ids });
+              }}
             />
             <button type="button" className="rd-btn" onClick={() => setTopicOpen(false)}>
               Done
@@ -548,8 +820,16 @@ export default function ReaderView() {
       ) : null}
 
       {drawer !== 'none' ? (
-        <div className="rd-sheet" role="dialog" aria-modal="true" aria-label="Chapters and notes">
-          <div className="rd-sheet-body">
+        <div
+          className="rd-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Chapters and notes"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setDrawer('none');
+          }}
+        >
+          <div className="rd-sheet-body" ref={sheetBody} tabIndex={-1}>
             <div className="rd-tabs" role="tablist">
               <button
                 type="button"
@@ -580,10 +860,7 @@ export default function ReaderView() {
                     <button
                       type="button"
                       className={i === chapterIndex ? 'rd-toc-link active' : 'rd-toc-link'}
-                      onClick={() => {
-                        setCursor({ chapterIndex: i, index: 0 });
-                        setDrawer('none');
-                      }}
+                      onClick={() => goToChapter(i)}
                     >
                       {entry.title}
                     </button>
