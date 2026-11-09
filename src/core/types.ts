@@ -35,7 +35,11 @@ export interface Sentence {
 /** A content block inside a chapter. */
 export interface Block {
   id: string;
-  kind: 'p' | 'h' | 'li' | 'table' | 'figure';
+  /**
+   * Layout role. 'p'/'h'/'li' are body text; the rest come from layout detection
+   * (PP-DocLayout on PDFs, DOM structure elsewhere) and can be skipped when reading aloud.
+   */
+  kind: 'p' | 'h' | 'li' | 'table' | 'figure' | 'caption' | 'formula' | 'header' | 'footer' | 'footnote' | 'reference' | 'code';
   sentences: Sentence[];
 }
 
