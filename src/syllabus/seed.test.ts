@@ -21,11 +21,20 @@ describe('ensureSyllabusSeeded', () => {
     expect(second.map((t) => t.id).sort()).toEqual(first.map((t) => t.id).sort());
   });
 
-  it('leaves an existing syllabus alone', async () => {
+  it('upgrades an older syllabus by adding missing defaults without touching existing rows', async () => {
     await db.topics.put({ id: 'mine', parentId: null, title: 'My own domain', level: 'basic', order: 1, custom: true });
+    await db.topics.put({ ...DEFAULT_TOPICS[0], title: 'Renamed by me' });
     await ensureSyllabusSeeded();
-    expect(await db.topics.count()).toBe(1);
+    expect(await db.topics.count()).toBe(DEFAULT_TOPICS.length + 1);
     expect((await db.topics.get('mine'))?.title).toBe('My own domain');
+    expect((await db.topics.get(DEFAULT_TOPICS[0].id))?.title).toBe('Renamed by me');
+  });
+
+  it('does not resurrect a deleted built-in topic on the next launch', async () => {
+    await ensureSyllabusSeeded();
+    await db.topics.delete('cvs-antianginals');
+    await ensureSyllabusSeeded();
+    expect(await db.topics.get('cvs-antianginals')).toBeUndefined();
   });
 });
 

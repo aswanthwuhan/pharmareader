@@ -14,7 +14,16 @@ import type { BookRecord, Highlight } from '../core/types';
 import { createPlayer, type Player } from '../tts/player';
 import { describeEngine, ENGINE_SETTING, type EngineInfo } from '../tts/registry';
 import { prerenderChapter } from '../tts/neural/prerender';
-import { addBookmark, addHighlight, cardFromHighlight, createCard, listHighlights } from '../study/api';
+import {
+  addBookmark,
+  addHighlight,
+  cardFromHighlight,
+  createCard,
+  findRangeHighlight,
+  listHighlights,
+  rangeHighlightPatch,
+  updateHighlight,
+} from '../study/api';
 import HighlightList from '../study/HighlightList';
 import AiActions from '../ai/AiActions';
 import TopicPicker from '../syllabus/TopicPicker';
@@ -487,6 +496,15 @@ export default function ReaderView() {
   async function highlightSelection(color: HighlightColor, note?: string): Promise<Highlight | null> {
     if (!book || !selection) return null;
     try {
+      // One row per sentence range: noting, recolouring or carding a sentence
+      // that already has a highlight must change it, not duplicate it.
+      const existing = findRangeHighlight(highlightsFor ?? [], selection.ids);
+      if (existing) {
+        const patch = rangeHighlightPatch(existing, color, note);
+        if (Object.keys(patch).length > 0) await updateHighlight(existing.id, patch);
+        clearSelection();
+        return { ...existing, ...patch };
+      }
       const highlight = await addHighlight({
         bookId: book.id,
         sentenceIds: selection.ids,

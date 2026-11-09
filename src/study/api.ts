@@ -85,6 +85,27 @@ export async function updateHighlight(id: string, patch: Partial<Omit<Highlight,
   await db.highlights.update(id, patch);
 }
 
+/** The highlight covering exactly this sentence range, if one exists. */
+export function findRangeHighlight(highlights: Highlight[], sentenceIds: string[]): Highlight | undefined {
+  return highlights.find(
+    (h) => h.sentenceIds.length === sentenceIds.length && h.sentenceIds.every((id, i) => id === sentenceIds[i]),
+  );
+}
+
+/**
+ * Change a range that is already highlighted instead of stacking a second row
+ * on it. A colour tap recolours; adding a note keeps the colour the reader
+ * already picked (the note action has no colour of its own).
+ */
+export function rangeHighlightPatch(
+  existing: Highlight,
+  color: Highlight['color'],
+  note?: string,
+): Partial<Omit<Highlight, 'id'>> {
+  if (note?.trim()) return { note };
+  return existing.color === color ? {} : { color };
+}
+
 /**
  * Remove a highlight. Cards made from it stay useful, so they are kept and
  * only unlinked — a dangling `highlightId` would break "jump to source".

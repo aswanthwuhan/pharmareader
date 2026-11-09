@@ -1,11 +1,23 @@
 import { db } from '../core/db';
+import { getSetting, setSetting } from '../core/settings';
 import { DEFAULT_TOPICS } from './defaults';
 import { normalizeOrders } from './topics';
 
-/** Writes the shipped tree the first time the app runs. Safe to call on every mount. */
+/** Bump when nmc-md-pharm.json gains topics, so existing installs pick them up once. */
+export const SEED_VERSION = 2;
+const SEED_KEY = 'syllabus.seedVersion';
+
+/**
+ * Writes the shipped tree on first run; after an app update with a newer SEED_VERSION, adds
+ * only the default topics the device lacks. Existing rows (user renames/levels/moves) are never
+ * overwritten, and built-in topics the user deleted stay deleted until the next version bump.
+ */
 export async function ensureSyllabusSeeded(): Promise<void> {
-  if ((await db.topics.count()) > 0) return;
-  await db.topics.bulkPut(DEFAULT_TOPICS.map((t) => ({ ...t })));
+  if ((await getSetting<number>(SEED_KEY, 0)) >= SEED_VERSION) return;
+  const have = new Set(await db.topics.toCollection().primaryKeys());
+  const missing = DEFAULT_TOPICS.filter((t) => !have.has(t.id));
+  if (missing.length > 0) await db.topics.bulkAdd(missing.map((t) => ({ ...t })));
+  await setSetting(SEED_KEY, SEED_VERSION);
 }
 
 /**

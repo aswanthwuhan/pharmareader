@@ -181,6 +181,16 @@ function playButton(): HTMLButtonElement | null {
   return buttonByLabel('Play') ?? buttonByLabel('Pause') ?? buttonByLabel('Resume');
 }
 
+/** Open the selection bar the way a touch long-press does. */
+async function longPress(id: string): Promise<void> {
+  await act(async () => {
+    sentence(id)?.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+  });
+}
+
 function engineLabel(): string {
   return container.querySelector('.rd-engine')?.textContent?.trim() ?? '';
 }
@@ -560,5 +570,32 @@ describe('ReaderView reflow', () => {
     expect(saved?.sentenceIds).toEqual(['0-0-0']);
     expect(saved?.color).toBe('yellow');
     expect(saved?.bookId).toBe(BOOK_ID);
+  });
+
+  it('changes an existing sentence highlight instead of stacking a duplicate row', async () => {
+    await db.books.put(makeBook());
+    await renderReader();
+    await waitFor(() => sentence('0-0-0') !== null, 'first sentence');
+
+    await longPress('0-0-0');
+    await act(async () => {
+      buttonByLabel('Green highlight')?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await waitFor(async () => (await db.highlights.count()) === 1, 'first highlight');
+    const first = await db.highlights.toCollection().first();
+
+    // Highlighting the same sentence again with another colour must update it.
+    await longPress('0-0-0');
+    await act(async () => {
+      buttonByLabel('Blue highlight')?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await waitFor(async () => (await db.highlights.get(first?.id ?? ''))?.color === 'blue', 'recoloured');
+
+    expect(await db.highlights.count()).toBe(1);
+    const saved = await db.highlights.toCollection().first();
+    expect(saved?.id).toBe(first?.id);
+    expect(saved?.color).toBe('blue');
   });
 });

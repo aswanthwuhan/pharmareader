@@ -12,9 +12,11 @@ import {
   dueCards,
   exportCardsCsv,
   exportNotesMarkdown,
+  findRangeHighlight,
   fromFsrs,
   listBookmarks,
   listHighlights,
+  rangeHighlightPatch,
   reviewCard,
   toFsrs,
   updateHighlight,
@@ -335,5 +337,27 @@ describe('exports', () => {
     expect(csv.split('\n')[1]).toBe('#tags column:3');
     // Anki splits tags on whitespace, so a spaced title has to become one tag.
     expect(csv).toContain('Q;A;Drug_metabolism');
+  });
+});
+
+describe('range highlights', () => {
+  it('finds only the highlight covering exactly the same sentences', () => {
+    const single = highlight('book', 'one sentence');
+    const pair = { ...highlight('book', 'two sentences'), sentenceIds: ['s1', 's2'] };
+
+    expect(findRangeHighlight([single, pair], ['s1'])?.id).toBe(single.id);
+    expect(findRangeHighlight([single, pair], ['s2'])).toBeUndefined();
+    expect(findRangeHighlight([single, pair], ['s1', 's2'])?.id).toBe(pair.id);
+    expect(findRangeHighlight([single, pair], ['s2', 's1'])).toBeUndefined();
+  });
+
+  it('recolours on a colour tap and keeps the colour when a note is added', () => {
+    const existing = { ...highlight('book', 'text'), color: 'green' as const };
+
+    // A swatch tap always means "this colour now".
+    expect(rangeHighlightPatch(existing, 'blue')).toEqual({ color: 'blue' });
+    // The note action has no colour of its own: adding a note must not recolour.
+    expect(rangeHighlightPatch(existing, 'yellow', 'remember this')).toEqual({ note: 'remember this' });
+    expect(rangeHighlightPatch(existing, 'green')).toEqual({});
   });
 });

@@ -7,13 +7,10 @@ export default function SettingsPage() {
   return (
     <section className="page">
       <h1>Settings</h1>
-      <h2>Voice</h2>
       <TtsSettings />
       <h2>On-device voice models</h2>
       <NeuralModelsPanel />
-      <h2>AI (optional)</h2>
       <AiSettings />
-      <h2>Backup</h2>
       <BackupPanel />
       <h2>About</h2>
       <p>

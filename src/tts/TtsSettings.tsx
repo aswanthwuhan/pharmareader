@@ -375,7 +375,7 @@ export default function TtsSettings() {
               </option>
             ))}
           </select>
-          <p className="tts-hint">On-device models are set up under Models. “Auto” falls back to system voices when nothing is ready.</p>
+          <p className="tts-hint">On-device models are set up under “On-device voice models” below. “Auto” falls back to system voices when nothing is ready.</p>
         </div>
 
         <div className="tts-field">
