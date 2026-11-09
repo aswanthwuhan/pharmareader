@@ -40,7 +40,7 @@ function previewIntervals(card: CardRecord): Record<number, string> {
 
 /** Renders a cloze gap (`[...]`) as a styled blank, announced as "blank". */
 function ClozeText({ text }: { text: string }) {
-  const parts = text.split(/\[\.\.\.\]|\[…\]/);
+  const parts = text.split(/\[\s*(?:\.{3}|…)\s*\]/);
   return (
     <>
       {parts.map((part, index) => (
@@ -57,6 +57,28 @@ function ClozeText({ text }: { text: string }) {
         </Fragment>
       ))}
     </>
+  );
+}
+
+/* --- Icons -----------------------------------------------------------------
+   Inline SVG, one drawing hand: 1.7 stroke, round joins, currentColor.
+   -------------------------------------------------------------------------- */
+function CompleteMark() {
+  return (
+    <svg className="empty-state-mark" viewBox="0 0 48 48" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M24 5.5 40 12v11.6c0 8.3-6.4 15.4-16 18.9-9.6-3.5-16-10.6-16-18.9V12L24 5.5Z" />
+      <path d="m17.4 24.3 4.6 4.6 8.8-9.4" />
+    </svg>
+  );
+}
+
+function QuietMark() {
+  return (
+    <svg className="empty-state-mark" viewBox="0 0 48 48" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 13.5h26v25H11z" />
+      <path d="M11 20.5h26M18 8.5v6M30 8.5v6" />
+      <path d="M17 27h6M17 32.5h10" />
+    </svg>
   );
 }
 
@@ -148,58 +170,108 @@ export default function ReviewSession({ topicIds }: { topicIds?: string[] }) {
   if (loading) return <p className="muted">Loading cards…</p>;
 
   if (!current) {
+    // Pos is the number of ratings given; an empty queue straight away means nothing was rated.
+    const rated = pos;
     return (
-      <section className="study-card" aria-label="Review session">
-        <p>{queue.length === 0 ? 'No cards are due right now.' : 'Session complete.'}</p>
-        <button type="button" className="study-btn" onClick={() => setLoadToken((token) => token + 1)}>
-          Check for more
-        </button>
+      <section className="empty-state study-done" aria-label="Review session">
+        {rated > 0 ? <CompleteMark /> : <QuietMark />}
+        <h2>{rated > 0 ? 'Session complete' : 'Nothing due'}</h2>
+        <p>
+          {rated > 0
+            ? `You rated ${rated} ${rated === 1 ? 'card' : 'cards'}. Each one comes back when its interval ends, so there is nothing to repeat today.`
+            : 'No cards are due right now. Cards return when their interval ends; new cards come from highlights in the reader and from the Cards tab.'}
+        </p>
+        <div className="empty-state-actions">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => setLoadToken((token) => token + 1)}
+          >
+            Check for more
+          </button>
+        </div>
       </section>
     );
   }
 
-  return (
-    <section className="study-card" aria-label="Review session">
-      <p className="muted" aria-live="polite">
-        {queue.length - pos} due · card {pos + 1} of {queue.length}
-      </p>
+  const cardLabel = current.kind === 'cloze' ? 'Cloze' : 'Q&A';
 
-      <p className="study-front">
-        {current.kind === 'cloze' ? <ClozeText text={current.front} /> : current.front}
-      </p>
+  return (
+    <section className="review" aria-label="Review session">
+      <div className="review-meter">
+        <div
+          className="progress"
+          role="progressbar"
+          aria-label={`${pos} of ${queue.length} cards rated`}
+          aria-valuemin={0}
+          aria-valuemax={queue.length}
+          aria-valuenow={pos}
+        >
+          <span style={{ width: `${(pos / queue.length) * 100}%` }} />
+        </div>
+        <p className="review-count tnum" aria-live="polite">
+          <span>{queue.length - pos} due</span>
+          <span className="review-count-sep" aria-hidden="true">
+            ·
+          </span>
+          <span>
+            Card {pos + 1} of {queue.length}
+          </span>
+        </p>
+      </div>
+
+      <article className="card review-card">
+        <div className="review-card-head">
+          <span className="badge">{cardLabel}</span>
+          <span className="review-state">{revealed ? 'Answer' : 'Answer hidden'}</span>
+        </div>
+        <p className="review-front">
+          {current.kind === 'cloze' ? <ClozeText text={current.front} /> : current.front}
+        </p>
+        {revealed ? (
+          <div className="review-answer">
+            <p className="review-back">
+              {current.kind === 'cloze' ? <ClozeText text={current.back} /> : current.back}
+            </p>
+          </div>
+        ) : null}
+      </article>
 
       {error ? (
-        <p className="study-error" role="alert">
+        <p className="review-error" role="alert">
           {error}
         </p>
       ) : null}
 
       {revealed ? (
         <>
-          <p className="study-back">{current.kind === 'cloze' ? <ClozeText text={current.back} /> : current.back}</p>
-          <div className="study-row" role="group" aria-label="Rate this card">
+          <div className="review-ratings" role="group" aria-label="Rate this card">
             {RATINGS.map(({ value, label }) => (
               <button
                 key={value}
                 type="button"
-                className={`study-btn rate-${value}`}
+                className={`btn review-rate rate-${value}`}
                 disabled={busy}
                 aria-label={`${label}, next review in ${previews?.[value] ?? 'unknown'}`}
                 onClick={() => void rate(value)}
               >
-                <span>{label}</span>
+                <span className="review-rate-label">{label}</span>
                 <small className="rate-gap">{previews?.[value]}</small>
               </button>
             ))}
           </div>
-          <p className="muted study-hint">Keys 1–4 rate the card.</p>
+          <p className="review-hint">
+            Press <kbd>1</kbd>–<kbd>4</kbd> to rate.
+          </p>
         </>
       ) : (
         <>
-          <button type="button" className="study-btn primary" onClick={() => setRevealed(true)}>
+          <button type="button" className="btn btn-primary btn-block review-reveal" onClick={() => setRevealed(true)}>
             Show answer
           </button>
-          <p className="muted study-hint">Space also shows the answer.</p>
+          <p className="review-hint">
+            Press <kbd>Space</kbd> to show the answer.
+          </p>
         </>
       )}
     </section>

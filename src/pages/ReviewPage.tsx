@@ -29,14 +29,36 @@ function downloadFile(filename: string, text: string, mime: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/* --- Icons -----------------------------------------------------------------
+   Inline SVG, one drawing hand: 24px grid, 1.7 stroke, round joins, currentColor.
+   -------------------------------------------------------------------------- */
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4.5 7h15" />
+      <path d="M9.5 7V4.8h5V7" />
+      <path d="M6.6 7l.8 12.3a1.8 1.8 0 0 0 1.8 1.7h5.6a1.8 1.8 0 0 0 1.8-1.7L17.4 7" />
+      <path d="M10.4 11v6M13.6 11v6" />
+    </svg>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 4v11" />
+      <path d="m7.5 10.5 4.5 4.5 4.5-4.5" />
+      <path d="M5 19.5h14" />
+    </svg>
+  );
+}
+
 export default function ReviewPage() {
   const [tab, setTab] = useState<TabId>('review');
   const [searchParams] = useSearchParams();
   const topicParam = searchParams.get('topic');
   // Syllabus rows link here as /review?topic=<id>; start with that topic pre-selected.
-  const [topicIds, setTopicIds] = useState<string[]>(() =>
-    topicParam ? [topicParam] : [],
-  );
+  const [topicIds, setTopicIds] = useState<string[]>(() => (topicParam ? [topicParam] : []));
   // Keep the filter in step when only the query string changes (back/forward).
   useEffect(() => {
     if (topicParam) setTopicIds([topicParam]);
@@ -94,8 +116,15 @@ export default function ReviewPage() {
   }
 
   return (
-    <section className="page">
-      <h1>Review</h1>
+    <section className="page study-page">
+      <header className="app-bar">
+        <div>
+          <h1>Review</h1>
+          <p className="app-bar-sub">
+            {cards.length === 1 ? '1 card in your deck' : `${cards.length} cards in your deck`}
+          </p>
+        </div>
+      </header>
 
       <div className="study-tabs" role="group" aria-label="Study">
         {TABS.map((item) => (
@@ -103,7 +132,7 @@ export default function ReviewPage() {
             key={item.id}
             type="button"
             aria-pressed={tab === item.id}
-            className="study-tab"
+            className="chip chip-tap study-tab"
             onClick={() => setTab(item.id)}
           >
             {item.label}
@@ -112,60 +141,53 @@ export default function ReviewPage() {
       </div>
 
       {tab === 'review' ? (
-        <div>
-          <div className="study-field">
-            <span className="study-label">Filter by topic</span>
-            <TopicPicker value={topicIds} onChange={setTopicIds} />
-          </div>
+        <div className="study-panel">
+          <TopicPicker label="Filter by topic" value={topicIds} onChange={setTopicIds} />
           <ReviewSession topicIds={topicIds} />
         </div>
       ) : null}
 
       {tab === 'cards' ? (
-        <div>
-          <div className="study-row">
-            <button type="button" className="study-btn primary" onClick={() => setEditing('new')}>
+        <div className="study-panel">
+          <div className="cards-toolbar">
+            <label className="field cards-search" htmlFor="card-search">
+              <span className="field-label">Search cards</span>
+              <input
+                id="card-search"
+                className="input"
+                type="search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Front or back"
+              />
+            </label>
+            <button type="button" className="btn btn-primary cards-new" onClick={() => setEditing('new')}>
               New card
             </button>
           </div>
 
-          {editing ? (
-            <CardEditor
-              key={editing === 'new' ? 'new' : editing.id}
-              card={editing === 'new' ? undefined : editing}
-              onSave={(draft) => void saveCard(draft)}
-              onCancel={() => setEditing(null)}
-            />
+          {cards.length === 0 ? (
+            <p className="muted study-note">
+              No cards yet. Make one from a highlight in the reader, or write one with “New card”.
+            </p>
+          ) : null}
+          {cards.length > 0 && visibleCards.length === 0 ? (
+            <p className="muted study-note">No cards match “{search}”.</p>
           ) : null}
 
-          <div className="study-field">
-            <label htmlFor="card-search">Search cards</label>
-            <input
-              id="card-search"
-              className="study-input"
-              type="search"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Front or back"
-            />
-          </div>
-
-          {cards.length === 0 ? <p className="muted">No cards yet. Make one from a highlight or with “New card”.</p> : null}
-          {cards.length > 0 && visibleCards.length === 0 ? <p className="muted">No cards match “{search}”.</p> : null}
-
-          <ul className="study-list">
-            {visibleCards.map((card) => (
-              <li key={card.id} className="study-card">
-                <span className="study-badge">{card.kind === 'qa' ? 'Q&A' : 'Cloze'}</span>
-                <p className="study-front">{card.front}</p>
-                <p className="study-meta">{card.back.length > 160 ? `${card.back.slice(0, 160)}…` : card.back}</p>
-                <div className="study-row">
-                  <button type="button" className="study-btn" onClick={() => setEditing(card)}>
-                    Edit
+          {visibleCards.length > 0 ? (
+            <ul className="list study-cards">
+              {visibleCards.map((card) => (
+                <li key={card.id} className="list-row card-row">
+                  <button type="button" className="card-open" onClick={() => setEditing(card)}>
+                    <span className="badge card-kind">{card.kind === 'qa' ? 'Q&A' : 'Cloze'}</span>
+                    <span className="card-front">{card.front}</span>
+                    <span className="card-back">{card.back.length > 160 ? `${card.back.slice(0, 160)}…` : card.back}</span>
                   </button>
                   <button
                     type="button"
-                    className="study-btn danger"
+                    className="btn btn-icon btn-ghost card-delete"
+                    aria-label={`Delete card: ${card.front}`}
                     onClick={() => {
                       if (!window.confirm('Delete this card and its review history?')) return;
                       void deleteCard(card.id)
@@ -177,25 +199,26 @@ export default function ReviewPage() {
                         .catch(() => setStatus('Could not delete the card.'));
                     }}
                   >
-                    Delete
+                    <TrashIcon />
+                    <span className="visually-hidden">Delete</span>
                   </button>
-                </div>
-              </li>
-            ))}
-          </ul>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
       ) : null}
 
       {tab === 'export' ? (
-        <div>
-          <div className="study-card">
-            <h2>Notes</h2>
-            <p className="muted">Highlights with their notes, grouped by book and chapter, as Markdown.</p>
-            <div className="study-field">
-              <label htmlFor="export-book">Book</label>
+        <div className="study-panel">
+          <section className="card export-card">
+            <h2 className="card-title">Notes</h2>
+            <p className="card-body">Highlights with their notes, grouped by book and chapter, as Markdown.</p>
+            <label className="field" htmlFor="export-book">
+              <span className="field-label">Book</span>
               <select
                 id="export-book"
-                className="study-select"
+                className="input"
                 value={exportBookId}
                 onChange={(event) => setExportBookId(event.target.value)}
               >
@@ -206,25 +229,38 @@ export default function ReviewPage() {
                   </option>
                 ))}
               </select>
-            </div>
-            <button type="button" className="study-btn primary" onClick={() => void downloadNotes()}>
+            </label>
+            <button type="button" className="btn btn-primary btn-block" onClick={() => void downloadNotes()}>
+              <DownloadIcon />
               Download notes (.md)
             </button>
-          </div>
+          </section>
 
-          <div className="study-card">
-            <h2>Flashcards</h2>
-            <p className="muted">Anki text import: front;back;tags. Tags are syllabus topic titles.</p>
-            <button type="button" className="study-btn primary" onClick={() => void downloadCards()}>
+          <section className="card export-card">
+            <h2 className="card-title">Flashcards</h2>
+            <p className="card-body">Anki text import: front;back;tags. Tags are syllabus topic titles.</p>
+            <button type="button" className="btn btn-secondary btn-block" onClick={() => void downloadCards()}>
+              <DownloadIcon />
               Download cards (.csv)
             </button>
-          </div>
+          </section>
         </div>
       ) : null}
 
-      <p className="muted" role="status">
-        {status}
-      </p>
+      {editing ? (
+        <CardEditor
+          key={editing === 'new' ? 'new' : editing.id}
+          card={editing === 'new' ? undefined : editing}
+          onSave={(draft) => void saveCard(draft)}
+          onCancel={() => setEditing(null)}
+        />
+      ) : null}
+
+      {status ? (
+        <p className="study-status" role="status">
+          {status}
+        </p>
+      ) : null}
     </section>
   );
 }

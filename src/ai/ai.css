@@ -1,191 +1,153 @@
-/* AI settings + selection actions. Uses the app's shared colour variables. */
-.ai-section {
-  display: grid;
-  gap: 14px;
-  margin: 20px 0;
-  padding: 16px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-}
+/* ============================================================================
+   AI action sheet — the panel that opens on a passage selected in the reader.
+   It sits inside the reader's own sheet, so it never draws sheet chrome
+   itself: only the sheet's contents. Tokens come from src/styles.css.
+   ========================================================================== */
 
-.ai-section h2 {
-  margin: 0;
-  font-size: 1.05rem;
-  color: var(--accent);
+.ai-sheet {
+  display: grid;
+  gap: var(--space-3);
 }
 
 .ai-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
-.ai-row {
-  display: grid;
-  gap: 4px;
+.ai-title {
+  margin: 0;
 }
 
-.ai-row > label {
-  font-size: 0.9rem;
-  font-weight: 600;
-}
-
-.ai-section input[type='text'],
-.ai-section input[type='password'],
-.ai-section select {
-  width: 100%;
-  min-height: 44px;
-  padding: 8px 10px;
-  font: inherit;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
-
-.ai-key-row {
-  display: flex;
-  gap: 8px;
-}
-
-.ai-key-row input {
-  flex: 1;
-  min-width: 0;
-}
-
-.ai-btn {
-  min-height: 44px;
-  padding: 0 14px;
-  font: inherit;
-  font-weight: 600;
-  color: var(--text);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  cursor: pointer;
-}
-
-.ai-btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.ai-btn.primary {
-  color: var(--accent-text);
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-.ai-actions-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.ai-check {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-}
-
-.ai-check input {
-  width: 22px;
-  height: 22px;
-  margin: 2px 0 0;
+.ai-close {
   flex: none;
 }
 
-.ai-check label {
-  display: grid;
-  gap: 2px;
-  font-weight: 600;
+/* Two equal actions: the pair is the whole decision at this point. */
+.ai-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
-.ai-notice {
+.ai-actions .btn {
+  flex: 1 1 8rem;
+}
+
+.ai-banner-body p {
   margin: 0;
-  font-size: 0.85rem;
-  font-weight: 400;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+
+.ai-banner-body .banner-title {
+  margin-bottom: var(--space-1);
+}
+
+.ai-hint {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
   color: var(--muted);
 }
 
-.ai-error {
-  margin: 0;
-  font-size: 0.9rem;
-  color: #b3261e;
-}
-
-.ai-ok {
-  margin: 0;
-  font-size: 0.9rem;
-  color: #1b7f3b;
-}
-
-.ai-summary {
-  max-height: 320px;
-  margin: 0;
-  padding: 10px;
-  overflow: auto;
-  font: inherit;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
-
-.ai-cards {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+/* --- Generated cards --------------------------------------------------------
+   A flat list: the sheet's own surface is the card, so rows stay hairline-separated.
+   -------------------------------------------------------------------------- */
+.ai-card-list {
+  max-height: 45dvh;
+  overflow-y: auto;
 }
 
 .ai-card {
-  display: flex;
-  gap: 10px;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  align-items: flex-start;
 }
 
-.ai-card input {
-  width: 22px;
-  height: 22px;
-  margin: 2px 0 0;
+.ai-card-check {
   flex: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin: var(--space-1) 0 0;
+  accent-color: var(--accent);
 }
 
-.ai-card label {
+.ai-card-label {
   display: grid;
-  gap: 4px;
+  flex: 1 1 auto;
+  gap: var(--space-1);
+  min-width: 0;
   cursor: pointer;
 }
 
+.ai-card .ai-kind {
+  justify-self: start;
+}
+
 .ai-front {
-  font-weight: 600;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+  color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .ai-back {
-  font-size: 0.9rem;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
-.ai-kind {
-  width: fit-content;
-  padding: 1px 8px;
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+/* --- Summary ---------------------------------------------------------------- */
+.ai-summary-block {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ai-summary-title {
+  margin: 0;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+}
+
+.ai-summary {
+  max-height: 45dvh;
+  margin: 0;
+  padding: var(--space-3);
+  overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font-family: var(--font-read);
+  font-size: var(--fs-md);
+  line-height: var(--lh-read);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.ai-kind-cloze {
-  border-color: var(--accent);
-  color: var(--accent);
+/* --- Status ----------------------------------------------------------------- */
+.ai-ok,
+.ai-error {
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--status-line);
+  border-radius: var(--radius-md);
+  background: var(--status-wash);
+  color: var(--status-ink);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+
+.ai-ok {
+  --status-wash: var(--success-bg);
+  --status-line: var(--success-border);
+  --status-ink: var(--success);
+}
+
+.ai-error {
+  --status-wash: var(--danger-bg);
+  --status-line: var(--danger-border);
+  --status-ink: var(--danger);
 }

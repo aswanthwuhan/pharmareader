@@ -1,181 +1,137 @@
-/* Study screens: highlights, flashcards, review, export. */
+/* ============================================================================
+   Study — Review, Cards, Export, and the highlight list inside the reader.
+   Colour, type, space and shape come from src/styles.css tokens; this file
+   positions the study pieces and composes shared components.
+   ========================================================================== */
 
+.study-page {
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+}
+
+.study-page .app-bar {
+  padding-bottom: 0;
+}
+
+/* Segmented tabs: the shared chip supplies the shape and pressed state. */
 .study-tabs {
   display: flex;
-  gap: 8px;
-  margin: 12px 0 16px;
-  overflow-x: auto;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 .study-tab {
   flex: 0 0 auto;
-  min-height: 44px;
-  padding: 0 16px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
 }
 
-.study-tab[aria-pressed='true'] {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--accent-text);
-}
-
-.study-card {
-  padding: 12px 14px;
-  margin: 12px 0;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-}
-
-.study-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.study-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.study-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin: 10px 0;
-}
-
-.study-field > label,
-.study-label {
-  font-weight: 600;
-  font-size: 0.9rem;
-}
-
-.study-input,
-.study-select,
-.study-textarea {
-  width: 100%;
-  min-height: 44px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-}
-
-.study-textarea {
-  resize: vertical;
-}
-
-.study-btn {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 44px;
-  min-width: 44px;
-  padding: 6px 14px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.study-btn:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-.study-btn.primary {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--accent-text);
-}
-
-.study-btn.danger {
-  border-color: #b3261e;
-  color: #b3261e;
-}
-
-.study-link {
-  display: block;
-  width: 100%;
-  min-height: 44px;
-  padding: 6px 0;
-  border: 0;
-  background: none;
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-  white-space: pre-wrap;
-  cursor: pointer;
-}
-
-.study-link:disabled {
-  cursor: default;
-  opacity: 0.8;
-}
-
-.study-inline-field {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.9rem;
-}
-
-.study-inline-field .study-select {
-  width: auto;
-  min-height: 44px;
+.study-panel {
+  display: grid;
+  gap: var(--space-4);
 }
 
 .study-note {
-  margin: 4px 0 8px;
-  padding-left: 10px;
-  border-left: 3px solid var(--border);
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+
+.study-status,
+.hl-status {
+  margin: 0;
   color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
 }
 
-.study-front {
-  margin: 16px 0;
-  font-size: 1.15rem;
-  line-height: 1.5;
-  white-space: pre-wrap;
+/* --- Review session ------------------------------------------------------- */
+.review {
+  display: grid;
+  gap: var(--space-4);
 }
 
-.study-back {
-  margin: 16px 0;
-  padding-top: 12px;
+.review-meter {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.review-count {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: var(--lh-snug);
+}
+
+.review-count-sep {
+  color: var(--border-control);
+}
+
+/* The card holds the whole task: prompt, then answer behind a hairline. */
+.review-card {
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+  min-height: 10rem;
+  padding: var(--space-5);
+}
+
+.review-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.review-state {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+}
+
+.review-front {
+  max-width: var(--measure);
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-snug);
+  overflow-wrap: anywhere;
+}
+
+.review-answer {
+  padding-top: var(--space-4);
   border-top: 1px solid var(--border);
-  line-height: 1.5;
-  white-space: pre-wrap;
 }
 
-.study-hint {
-  margin: 8px 0 0;
+.review-back {
+  max-width: var(--measure);
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-read);
+  font-size: var(--fs-md);
+  line-height: var(--lh-read);
+  overflow-wrap: anywhere;
 }
 
+/* A cloze blank reads as a marker stroke over the text, filled with the ink. */
 .cloze-gap {
-  padding: 0 6px;
-  border-radius: 4px;
-  background: color-mix(in srgb, #f6d743 45%, var(--surface));
-  font-weight: 700;
+  display: inline-block;
+  padding: 0 0.2em;
+  border-radius: var(--radius-xs);
+  background: var(--hl-yellow);
+  color: var(--hl-yellow-ink);
+  font-weight: var(--fw-bold);
   letter-spacing: 0.08em;
+  white-space: nowrap;
 }
 
-/* Text alternative for the cloze gap, which is drawn with an aria-hidden glyph. */
 .cloze-blank-label {
   position: absolute;
   width: 1px;
@@ -183,75 +139,494 @@
   margin: -1px;
   padding: 0;
   overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
+  clip-path: inset(50%);
   border: 0;
+  white-space: nowrap;
 }
 
-.study-error {
-  margin: 8px 0 0;
-  color: #b3261e;
-  font-weight: 600;
+.review-error {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-sm);
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+
+.btn.review-reveal {
+  min-height: calc(var(--tap) + var(--space-3));
+  font-size: var(--fs-base);
+}
+
+/* Four ratings: one wash each, so the scale is readable without reading. */
+.review-ratings {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.btn.review-rate {
+  flex-direction: column;
+  gap: 2px;
+  min-height: calc(var(--tap) + var(--space-2));
+  padding: 0 var(--space-1);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  line-height: 1.15;
+}
+
+.btn.review-rate:hover:not(:disabled) {
+  border-color: currentColor;
+}
+
+.btn.review-rate:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.btn.review-rate.rate-1 {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.btn.review-rate.rate-2 {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.btn.review-rate.rate-3 {
+  border-color: var(--success-border);
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.btn.review-rate.rate-4 {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .rate-gap {
-  font-size: 0.75rem;
-  font-weight: 500;
-  opacity: 0.8;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
 }
 
-.study-btn.rate-1 {
-  border-color: #b3261e;
+/* Keys are a bonus for a keyboard, not an instruction for a thumb. */
+.review-hint {
+  display: none;
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+  text-align: center;
 }
 
-.study-btn.rate-2 {
-  border-color: #a05a00;
+@media (hover: hover) and (pointer: fine) {
+  .review-hint {
+    display: block;
+  }
 }
 
-.study-btn.rate-3 {
-  border-color: #1f6f43;
+kbd {
+  display: inline-block;
+  min-width: 1.5em;
+  padding: 0 0.3em;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-bold);
+  line-height: 1.6;
+  text-align: center;
 }
 
-.study-btn.rate-4 {
-  border-color: #0f4c5c;
+.study-done {
+  margin-top: var(--space-4);
+}
+
+/* --- Cards tab ------------------------------------------------------------ */
+.cards-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.cards-search {
+  flex: 1 1 12rem;
+}
+
+.cards-new {
+  flex: 0 0 auto;
+}
+
+.study-cards {
+  margin: 0;
+}
+
+.card-row {
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.card-open {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: 4.25rem minmax(0, 1fr);
+  column-gap: var(--space-3);
+  row-gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-1) 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.card-kind {
+  align-self: start;
+  grid-column: 1;
+  grid-row: 1;
+  margin-top: 2px;
+}
+
+.card-front {
+  display: -webkit-box;
+  overflow: hidden;
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-snug);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  transition: color var(--dur-1) var(--ease-standard);
+}
+
+.card-open:hover .card-front {
+  color: var(--accent);
+}
+
+.card-back {
+  overflow: hidden;
+  grid-column: 2;
+  grid-row: 2;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn.card-delete {
+  flex: none;
+  color: var(--muted);
+}
+
+.btn.card-delete:hover {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+/* --- Card editor sheet ---------------------------------------------------- */
+.study-sheet {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.study-sheet-sub {
+  margin: 0 0 var(--space-3);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+
+.study-form {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.study-form .field textarea {
+  min-height: 5.5rem;
+}
+
+.study-form .sheet-actions {
+  margin-top: var(--space-2);
+}
+
+/* --- Export tab ----------------------------------------------------------- */
+.export-card {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.export-card h2 {
+  margin: 0;
+  font-size: var(--fs-lg);
+}
+
+.export-card .card-body {
+  margin: 0;
+}
+
+.export-card .btn-block {
+  margin-top: var(--space-1);
+}
+
+/* --- Highlights and bookmarks (reader drawer) ----------------------------- */
+.highlights {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.hl-section {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.hl-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.hl-head h2 {
+  margin: 0;
+  font-size: var(--fs-lg);
+}
+
+.hl-count {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.hl-empty {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+
+.hl-list {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The highlight's own colour tints the surface; the ink variant draws its edge. */
+.hl-item {
+  --hl-tint: var(--hl-yellow);
+  --hl-ink: var(--hl-yellow-ink);
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--hl-ink) 26%, var(--border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--hl-tint) 16%, var(--surface));
 }
 
 .hl-yellow {
-  --hl: #f6d743;
+  --hl-tint: var(--hl-yellow);
+  --hl-ink: var(--hl-yellow-ink);
 }
 
 .hl-green {
-  --hl: #7bc47f;
+  --hl-tint: var(--hl-green);
+  --hl-ink: var(--hl-green-ink);
 }
 
 .hl-blue {
-  --hl: #6fa8dc;
+  --hl-tint: var(--hl-blue);
+  --hl-ink: var(--hl-blue-ink);
 }
 
 .hl-pink {
-  --hl: #e78fb3;
+  --hl-tint: var(--hl-pink);
+  --hl-ink: var(--hl-pink-ink);
 }
 
-.study-card.hl-yellow,
-.study-card.hl-green,
-.study-card.hl-blue,
-.study-card.hl-pink {
-  border-left: 4px solid var(--hl);
-  background: color-mix(in srgb, var(--hl) 14%, var(--surface));
+.hl-item-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
 }
 
-.study-meta {
-  margin: 4px 0 8px;
-  color: var(--muted);
-  font-size: 0.85rem;
+.hl-swatch {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-top: 0.5em;
+  border: 1px solid color-mix(in srgb, var(--hl-ink) 60%, var(--border));
+  border-radius: var(--radius-full);
+  background: var(--hl-tint);
 }
 
-.study-badge {
-  display: inline-block;
-  padding: 2px 8px;
+.hl-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-family: var(--font-read);
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+  text-align: left;
+  cursor: pointer;
+}
+
+.hl-text:hover:not(:disabled) {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+.hl-text:disabled {
+  color: var(--text);
+  cursor: default;
+}
+
+.hl-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  overflow-wrap: anywhere;
+}
+
+.hl-note-label {
+  display: block;
+  margin-bottom: 2px;
   color: var(--muted);
-  font-size: 0.75rem;
-  text-transform: uppercase;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-wide);
+  line-height: 1;
+}
+
+.btn.hl-note-btn {
+  justify-self: start;
+  min-height: var(--tap);
+  padding: 0 var(--space-2);
+  margin-left: calc(var(--space-1) * -1);
+  color: var(--accent);
+  font-weight: var(--fw-medium);
+}
+
+.btn.hl-note-btn:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+}
+
+.hl-note-editor {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.hl-note-editor textarea {
+  min-height: 6rem;
+}
+
+.hl-note-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.hl-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid color-mix(in srgb, var(--hl-ink) 20%, var(--border));
+}
+
+.hl-colour {
+  order: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+}
+
+.hl-select {
+  width: auto;
+  min-height: var(--tap);
+  padding: 0 var(--space-2);
+  font-size: var(--fs-sm);
+  text-transform: capitalize;
+}
+
+.hl-action {
+  flex: 1 1 calc(50% - var(--space-1));
+  order: 3;
+  font-size: var(--fs-sm);
+}
+
+.hl-delete {
+  order: 2;
+  margin-left: auto;
+}
+
+.hl-delete:hover {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.hl-bookmarks {
+  margin: 0;
+}
+
+.hl-bookmark {
+  gap: var(--space-2);
+}
+
+.hl-bookmark-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--space-2) 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-family: var(--font-read);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.hl-bookmark-text:hover {
+  color: var(--accent);
 }

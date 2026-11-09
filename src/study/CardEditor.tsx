@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { CardRecord } from '../core/types';
 import TopicPicker from '../syllabus/TopicPicker';
 import './study.css';
@@ -29,64 +29,94 @@ export default function CardEditor({
   const kindId = `${fieldId}-kind`;
   const frontId = `${fieldId}-front`;
   const backId = `${fieldId}-back`;
+  const titleId = `${fieldId}-title`;
+  const frontRef = useRef<HTMLTextAreaElement>(null);
 
   const canSave = front.trim().length > 0 && back.trim().length > 0;
 
+  // A sheet opens with the cursor where the typing starts, and closes on Escape.
+  useEffect(() => {
+    frontRef.current?.focus();
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') onCancel();
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [onCancel]);
+
   return (
-    <form
-      className="study-card"
-      aria-label={card ? 'Edit card' : 'New card'}
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (!canSave) return;
-        onSave({ id: card?.id, front: front.trim(), back, kind, topicIds });
-      }}
-    >
-      <div className="study-field">
-        <label htmlFor={kindId}>Card type</label>
-        <select id={kindId} className="study-select" value={kind} onChange={(event) => setKind(event.target.value as 'qa' | 'cloze')}>
-          <option value="qa">Q&amp;A</option>
-          <option value="cloze">Cloze</option>
-        </select>
-      </div>
+    <>
+      <div className="sheet-backdrop" onClick={onCancel} />
+      <div className="sheet study-sheet" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+        <h2 id={titleId} className="sheet-title">
+          {card ? 'Edit card' : 'New card'}
+        </h2>
+        <p className="study-sheet-sub">
+          {kind === 'cloze'
+            ? 'The gap is written as […] inside the text.'
+            : 'A short question on the front, the answer on the back.'}
+        </p>
 
-      <div className="study-field">
-        <label htmlFor={frontId}>Front</label>
-        <textarea
-          id={frontId}
-          className="study-textarea"
-          rows={3}
-          value={front}
-          onChange={(event) => setFront(event.target.value)}
-          placeholder={kind === 'cloze' ? 'Use [...] for the gap' : 'Question'}
-        />
-      </div>
+        <form
+          className="study-form"
+          aria-label={card ? 'Edit card' : 'New card'}
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!canSave) return;
+            onSave({ id: card?.id, front: front.trim(), back, kind, topicIds });
+          }}
+        >
+          <label className="field" htmlFor={kindId}>
+            <span className="field-label">Card type</span>
+            <select
+              id={kindId}
+              className="input"
+              value={kind}
+              onChange={(event) => setKind(event.target.value as 'qa' | 'cloze')}
+            >
+              <option value="qa">Q&amp;A</option>
+              <option value="cloze">Cloze</option>
+            </select>
+          </label>
 
-      <div className="study-field">
-        <label htmlFor={backId}>Back</label>
-        <textarea
-          id={backId}
-          className="study-textarea"
-          rows={4}
-          value={back}
-          onChange={(event) => setBack(event.target.value)}
-          placeholder="Answer"
-        />
-      </div>
+          <label className="field" htmlFor={frontId}>
+            <span className="field-label">Front</span>
+            <textarea
+              id={frontId}
+              ref={frontRef}
+              rows={3}
+              value={front}
+              onChange={(event) => setFront(event.target.value)}
+              placeholder={kind === 'cloze' ? 'Use [...] for the gap' : 'Question'}
+            />
+            {kind === 'cloze' ? (
+              <span className="field-hint">Mark the missing word with [...]. It becomes a blank to fill in.</span>
+            ) : null}
+          </label>
 
-      <div className="study-field">
-        <span className="study-label">Topics</span>
-        <TopicPicker value={topicIds} onChange={setTopicIds} />
-      </div>
+          <label className="field" htmlFor={backId}>
+            <span className="field-label">Back</span>
+            <textarea
+              id={backId}
+              rows={4}
+              value={back}
+              onChange={(event) => setBack(event.target.value)}
+              placeholder="Answer"
+            />
+          </label>
 
-      <div className="study-row">
-        <button type="submit" className="study-btn primary" disabled={!canSave}>
-          Save card
-        </button>
-        <button type="button" className="study-btn" onClick={onCancel}>
-          Cancel
-        </button>
+          <TopicPicker value={topicIds} onChange={setTopicIds} />
+
+          <div className="sheet-actions">
+            <button type="button" className="btn btn-secondary" onClick={onCancel}>
+              Cancel
+            </button>
+            <button type="submit" className="btn btn-primary" disabled={!canSave}>
+              Save card
+            </button>
+          </div>
+        </form>
       </div>
-    </form>
+    </>
   );
 }

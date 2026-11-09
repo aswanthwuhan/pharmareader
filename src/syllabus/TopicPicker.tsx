@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+} from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../core/db';
 import type { Topic } from '../core/types';
@@ -20,19 +29,67 @@ interface Row {
   hasChildren: boolean;
 }
 
+interface PanelBox {
+  left: number;
+  width: number;
+  top?: number;
+  bottom?: number;
+  maxHeight: number;
+}
+
+function CheckIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+      <path d="m5 12.5 4.5 4.5L19 7" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      className={open ? 'tp-chevron is-open' : 'tp-chevron'}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.7}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="m9 5.5 7 6.5-7 6.5" />
+    </svg>
+  );
+}
+
+function CrossIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round">
+      <path d="M7 7l10 10M17 7 7 17" />
+    </svg>
+  );
+}
+
 /**
  * Compact multi-select for topics: chips of what is chosen, a searchable
  * dropdown tree of everything else. The input keeps focus and drives the
  * listbox through aria-activedescendant, so it works from the keyboard.
+ *
+ * The panel is positioned with fixed coordinates taken from the input, because
+ * the picker is used inside bottom sheets whose scroll container would clip it.
  */
 export default function TopicPicker({ value, onChange, label = 'Topics' }: TopicPickerProps) {
   const reactId = useId();
+  const inputId = `${reactId}-input`;
   const listId = `${reactId}-list`;
   const rootRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [active, setActive] = useState(0);
+  const [panelBox, setPanelBox] = useState<PanelBox | null>(null);
 
   const topics = useLiveQuery(() => db.topics.toArray(), []) ?? [];
   const tree = useMemo(() => buildTopicTree(topics), [topics]);
@@ -68,6 +125,38 @@ export default function TopicPicker({ value, onChange, label = 'Topics' }: Topic
     if (!open || !activeId) return;
     document.getElementById(activeId)?.scrollIntoView?.({ block: 'nearest' });
   }, [open, activeId]);
+
+  // Keep the floating panel glued to the input while the sheet scrolls or the window resizes.
+  useEffect(() => {
+    if (!open) {
+      setPanelBox(null);
+      return;
+    }
+    const measure = () => {
+      const el = inputRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const gap = 8;
+      const width = Math.min(rect.width, window.innerWidth - gap * 2);
+      const left = Math.max(gap, Math.min(rect.left, window.innerWidth - width - gap));
+      const spaceBelow = window.innerHeight - rect.bottom - gap;
+      const spaceAbove = rect.top - gap;
+      const above = spaceBelow < 240 && spaceAbove > spaceBelow;
+      setPanelBox({
+        left,
+        width,
+        maxHeight: Math.max(160, Math.min(360, above ? spaceAbove : spaceBelow)),
+        ...(above ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 }),
+      });
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    document.addEventListener('scroll', measure, true);
+    return () => {
+      window.removeEventListener('resize', measure);
+      document.removeEventListener('scroll', measure, true);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -150,9 +239,10 @@ export default function TopicPicker({ value, onChange, label = 'Topics' }: Topic
 
   return (
     <div className="tp-root" ref={rootRef}>
-      <label className="muted" htmlFor={`${reactId}-input`}>
+      <label className="tp-label" htmlFor={inputId}>
         {label}
       </label>
+
       {value.length > 0 && (
         <div className="tp-chips">
           {value.map((id) => {
@@ -160,18 +250,20 @@ export default function TopicPicker({ value, onChange, label = 'Topics' }: Topic
             if (!title) return null;
             return (
               <span className="tp-chip" key={id}>
-                {title}
-                <button type="button" aria-label={`Remove ${title}`} onClick={() => toggle(id)}>
-                  ×
+                <span className="tp-chip-text">{title}</span>
+                <button type="button" className="tp-chip-remove" aria-label={`Remove ${title}`} onClick={() => toggle(id)}>
+                  <CrossIcon />
                 </button>
               </span>
             );
           })}
         </div>
       )}
+
       <input
-        id={`${reactId}-input`}
-        className="tp-input"
+        ref={inputRef}
+        id={inputId}
+        className="input tp-input"
         type="text"
         role="combobox"
         aria-expanded={open}
@@ -190,11 +282,25 @@ export default function TopicPicker({ value, onChange, label = 'Topics' }: Topic
         onClick={openPicker}
         onKeyDown={onKeyDown}
       />
-      {open && (
-        <div className="tp-panel" id={listId} role="listbox" aria-label={label} aria-multiselectable="true">
+
+      {open && panelBox && (
+        <div
+          className="tp-panel"
+          id={listId}
+          role="listbox"
+          aria-label={label}
+          aria-multiselectable="true"
+          style={{
+            left: panelBox.left,
+            width: panelBox.width,
+            maxHeight: panelBox.maxHeight,
+            ...(panelBox.bottom !== undefined ? { bottom: panelBox.bottom } : { top: panelBox.top }),
+          }}
+        >
           {rows.length === 0 && <p className="tp-empty">No topic matches “{query}”.</p>}
           {rows.map((row, index) => {
             const selected = value.includes(row.id);
+            const rowExpanded = expanded.has(row.id);
             return (
               <div
                 key={row.id}
@@ -202,25 +308,24 @@ export default function TopicPicker({ value, onChange, label = 'Topics' }: Topic
                 role="option"
                 aria-selected={selected}
                 className={`tp-option${index === active ? ' is-active' : ''}`}
-                style={{ paddingLeft: 8 + row.depth * 16 }}
+                style={{ '--depth': row.depth } as CSSProperties}
                 onMouseEnter={() => setActive(index)}
                 onClick={() => toggle(row.id)}
               >
                 <span className="tp-box" aria-hidden="true">
-                  {selected ? '✓' : ''}
+                  {selected ? <CheckIcon /> : null}
                 </span>
                 <span className="tp-name">
-                  {row.title}
+                  <span className="tp-title">{row.title}</span>
                   {row.parent && <span className="tp-parent">{row.parent}</span>}
                 </span>
-                <span className={`syl-badge lvl-${row.level}`}>{LEVEL_LABEL[row.level]}</span>
+                {row.depth === 0 && <span className="tp-level">{LEVEL_LABEL[row.level]}</span>}
                 {row.hasChildren && (
                   <button
                     type="button"
                     tabIndex={-1}
-                    aria-label={expanded.has(row.id) ? `Collapse ${row.title}` : `Expand ${row.title}`}
-                    className="syl-twisty"
-                    style={{ width: 32, flexBasis: 32 }}
+                    aria-label={rowExpanded ? `Collapse ${row.title}` : `Expand ${row.title}`}
+                    className="tp-twisty syl-twisty"
                     onClick={(event) => {
                       event.stopPropagation();
                       setExpanded((prev) => {
@@ -231,7 +336,7 @@ export default function TopicPicker({ value, onChange, label = 'Topics' }: Topic
                       });
                     }}
                   >
-                    {expanded.has(row.id) ? '▾' : '▸'}
+                    <ChevronIcon open={rowExpanded} />
                   </button>
                 )}
               </div>

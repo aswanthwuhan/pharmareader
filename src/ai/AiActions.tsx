@@ -101,18 +101,20 @@ export default function AiActions({ text, bookId, topicIds, onClose }: AiActions
   }
 
   return (
-    <section className="ai-section" aria-labelledby="ai-actions-heading">
+    <section className="ai-sheet" aria-labelledby="ai-actions-heading">
       <div className="ai-head">
-        <h2 id="ai-actions-heading">AI</h2>
-        <button type="button" className="ai-btn" onClick={onClose}>
+        <h2 id="ai-actions-heading" className="sheet-title ai-title">
+          AI
+        </h2>
+        <button type="button" className="btn btn-ghost ai-close" onClick={onClose}>
           Close
         </button>
       </div>
 
-      <div className="ai-actions-row">
+      <div className="ai-actions">
         <button
           type="button"
-          className="ai-btn primary"
+          className="btn btn-primary"
           onClick={() => void makeCards()}
           disabled={!enabled || busy !== null}
         >
@@ -120,7 +122,7 @@ export default function AiActions({ text, bookId, topicIds, onClose }: AiActions
         </button>
         <button
           type="button"
-          className="ai-btn"
+          className="btn btn-secondary"
           onClick={() => void makeSummary()}
           disabled={!enabled || busy !== null}
         >
@@ -129,24 +131,35 @@ export default function AiActions({ text, bookId, topicIds, onClose }: AiActions
       </div>
 
       {!enabled && (
-        <p className="ai-notice">Turn on AI in Settings → AI to make cards or summaries from this text.</p>
+        <div className="banner banner-info">
+          <div className="ai-banner-body">
+            <p className="banner-title">AI is off</p>
+            <p>Turn on AI in Settings → AI to make cards or summaries from this text.</p>
+          </div>
+        </div>
       )}
       {enabled && !rows && !summary && (
-        <p className="ai-notice">
-          The selected text is sent to the AI provider configured in Settings → AI. Nothing is saved until you press
-          Save.
-        </p>
+        <div className="banner banner-info">
+          <div className="ai-banner-body">
+            <p className="banner-title">Privacy</p>
+            <p>
+              The selected text is sent to the AI provider configured in Settings → AI. Nothing is saved until you
+              press Save.
+            </p>
+          </div>
+        </div>
       )}
 
       {rows && (
         <>
-          <p className="ai-notice">Uncheck anything you do not want to save.</p>
-          <ul className="ai-cards">
+          <p className="ai-hint">Uncheck anything you do not want to save.</p>
+          <ul className="list ai-card-list">
             {rows.map((row, i) => (
-              <li key={`${i}-${row.front.slice(0, 24)}`} className="ai-card">
+              <li key={`${i}-${row.front.slice(0, 24)}`} className="list-row ai-card">
                 <input
                   type="checkbox"
                   id={`ai-card-${i}`}
+                  className="ai-card-check"
                   checked={row.checked}
                   onChange={(e) =>
                     setRows((prev) =>
@@ -154,24 +167,24 @@ export default function AiActions({ text, bookId, topicIds, onClose }: AiActions
                     )
                   }
                 />
-                <label htmlFor={`ai-card-${i}`}>
-                  <span className={`ai-kind ai-kind-${row.kind}`}>{row.kind === 'qa' ? 'Q&A' : 'Cloze'}</span>
+                <label htmlFor={`ai-card-${i}`} className="ai-card-label">
+                  <span className="badge ai-kind">{row.kind === 'qa' ? 'Q&A' : 'Cloze'}</span>
                   <span className="ai-front">{row.front}</span>
                   <span className="ai-back">{row.back}</span>
                 </label>
               </li>
             ))}
           </ul>
-          <div className="ai-actions-row">
+          <div className="ai-actions">
             <button
               type="button"
-              className="ai-btn primary"
+              className="btn btn-primary"
               onClick={() => void saveSelected()}
               disabled={selected === 0 || busy !== null}
             >
               {busy === 'save' ? 'Saving…' : `Save ${selected} card${selected === 1 ? '' : 's'}`}
             </button>
-            <button type="button" className="ai-btn" onClick={() => setRows(null)} disabled={busy !== null}>
+            <button type="button" className="btn btn-secondary" onClick={() => setRows(null)} disabled={busy !== null}>
               Discard
             </button>
           </div>
@@ -179,14 +192,15 @@ export default function AiActions({ text, bookId, topicIds, onClose }: AiActions
       )}
 
       {summary && (
-        <>
+        <div className="ai-summary-block">
+          <h3 className="ai-summary-title">Summary</h3>
           <pre className="ai-summary">{summary}</pre>
-          <div className="ai-actions-row">
-            <button type="button" className="ai-btn" onClick={() => void copySummary()}>
+          <div className="ai-actions">
+            <button type="button" className="btn btn-secondary" onClick={() => void copySummary()}>
               {copied ? 'Copied' : 'Copy'}
             </button>
           </div>
-        </>
+        </div>
       )}
 
       {saved > 0 && (

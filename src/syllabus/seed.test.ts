@@ -36,6 +36,11 @@ describe('ensureSyllabusSeeded', () => {
     await ensureSyllabusSeeded();
     expect(await db.topics.get('cvs-antianginals')).toBeUndefined();
   });
+
+  it('survives two mounts seeding at the same time', async () => {
+    await Promise.all([ensureSyllabusSeeded(), ensureSyllabusSeeded()]);
+    expect(await db.topics.count()).toBe(DEFAULT_TOPICS.length);
+  });
 });
 
 describe('resetToDefault', () => {

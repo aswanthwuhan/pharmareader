@@ -1,375 +1,566 @@
-/* Syllabus + TopicPicker styles. Imported by the components so the shared
-   src/styles.css stays untouched; colours come from its CSS variables. */
+/* ============================================================================
+   Syllabus — the NMC topic tree, its book tags and progress, plus the topic
+   picker used by Review, cards and the reader. Colour, type, space and shape
+   come from src/styles.css tokens; this file only arranges them.
+   ========================================================================== */
 
+.syl-page {
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+}
+
+.syl-page .app-bar {
+  padding-bottom: 0;
+}
+
+/* --- Toolbar ----------------------------------------------------------------
+   Chips are the filter; Reset is a quiet ghost action that never competes.
+   -------------------------------------------------------------------------- */
 .syl-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  margin: 12px 0 16px;
+  display: grid;
+  gap: var(--space-2);
 }
 
 .syl-filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
-.syl-filter,
-.syl-btn {
-  min-height: 44px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  font-size: 0.9rem;
-  cursor: pointer;
+.syl-filter {
+  flex: 0 0 auto;
 }
 
-.syl-filter[aria-pressed='true'] {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-text);
+.syl-reset {
+  justify-self: start;
 }
 
-.syl-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  text-decoration: none;
+@media (min-width: 640px) {
+  .syl-toolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
 }
 
-.syl-btn.danger {
-  color: #b3261e;
-}
-
-.syl-btn:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
+/* --- Tree -------------------------------------------------------------------
+   Depth comes in as a number on --depth, so a row's indent is one calc() and
+   the twisty stays a full 44px touch target at every level.
+   -------------------------------------------------------------------------- */
 .syl-list,
 .syl-sublist {
-  list-style: none;
   margin: 0;
   padding: 0;
+  list-style: none;
 }
 
-.syl-node + .syl-node {
+.syl-list {
   border-top: 1px solid var(--border);
 }
 
-/* A parent kept only for context while a level filter is on. */
-.syl-title.is-ancestor {
-  font-weight: 500;
-  color: var(--muted);
+.syl-node {
+  border-bottom: 1px solid var(--border);
 }
 
 .syl-row {
   display: flex;
-  flex-wrap: wrap;
   align-items: flex-start;
-  gap: 4px;
-  padding: 6px 4px;
+  padding: var(--space-1) 0 var(--space-1) calc(var(--space-1) + var(--depth, 0) * var(--space-4));
 }
 
 .syl-twisty {
-  flex: 0 0 36px;
-  width: 36px;
-  min-height: 44px;
+  display: inline-flex;
+  flex: 0 0 var(--tap);
+  align-items: center;
+  justify-content: center;
+  width: var(--tap);
+  height: var(--tap);
+  padding: 0;
   border: 0;
+  border-radius: var(--radius-sm);
   background: none;
   color: var(--muted);
-  font-size: 1rem;
   cursor: pointer;
+}
+
+.syl-twisty:hover {
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+
+/* Holds the twisty's column when a filter hides the control. */
+.syl-twisty-spacer {
+  flex: 0 0 var(--tap);
+  width: var(--tap);
+  height: var(--tap);
+}
+
+.syl-chevron {
+  width: 1.25rem;
+  height: 1.25rem;
+  transition: transform var(--dur-1) var(--ease-standard);
+}
+
+.syl-chevron.is-open {
+  transform: rotate(90deg);
+}
+
+.syl-row-content {
+  flex: 1 1 auto;
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
 }
 
 .syl-title {
-  flex: 1 1 120px;
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-wrap: nowrap;
   align-items: center;
-  min-height: 44px;
-  min-width: 0;
-  padding: 0;
+  gap: var(--space-1) var(--space-2);
+  min-height: var(--tap);
+  width: 100%;
+  margin: 0;
+  padding: 0 var(--space-2) 0 0;
   border: 0;
   background: none;
   color: var(--text);
-  font: inherit;
-  font-weight: 600;
+  font-family: inherit;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
   text-align: left;
-  overflow-wrap: anywhere;
   cursor: pointer;
 }
 
-.syl-badge {
-  border-radius: 999px;
-  padding: 1px 8px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  border: 1px solid var(--border);
+.syl-title-text {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.syl-title:hover .syl-title-text {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.syl-title.is-ancestor {
   color: var(--muted);
+  font-weight: var(--fw-medium);
 }
 
-.syl-badge.lvl-basic {
-  border-color: #6a9f4b;
-  color: #4b7a2f;
+/* Level badges carry one semantic triad each; the ink stays legible on the wash. */
+.badge.syl-badge {
+  flex: none;
+  margin-left: auto;
+  border: 1px solid var(--badge-line);
+  background: var(--badge-wash);
+  color: var(--badge-ink);
 }
 
-.syl-badge.lvl-intermediate {
-  border-color: #b98a1f;
-  color: #8a650f;
+.badge.syl-badge.lvl-basic {
+  --badge-wash: var(--success-bg);
+  --badge-line: var(--success-border);
+  --badge-ink: var(--success);
 }
 
-.syl-badge.lvl-advanced {
-  border-color: #a3502c;
-  color: #8a3d20;
+.badge.syl-badge.lvl-intermediate {
+  --badge-wash: var(--warning-bg);
+  --badge-line: var(--warning-border);
+  --badge-ink: var(--warning);
 }
 
+.badge.syl-badge.lvl-advanced {
+  --badge-wash: var(--info-bg);
+  --badge-line: var(--info-border);
+  --badge-ink: var(--info);
+}
+
+/* Progress always shows a number next to the bar, and no bar when nothing exists. */
 .syl-meta {
-  flex: 1 0 100%;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 10px;
   align-items: center;
-  padding-left: 40px;
+  gap: var(--space-1) var(--space-3);
+  font-size: var(--fs-xs);
   color: var(--muted);
-  font-size: 0.78rem;
 }
 
 .syl-bar {
-  flex: 1 1 120px;
-  height: 6px;
-  border-radius: 999px;
-  background: var(--border);
-  overflow: hidden;
+  flex: 0 0 4.5rem;
+  width: 4.5rem;
 }
 
-.syl-bar > span {
-  display: block;
-  height: 100%;
-  background: var(--accent);
+.syl-stat {
+  white-space: nowrap;
 }
 
+.syl-stat.tnum {
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+}
+
+/* --- Open topic ------------------------------------------------------------- */
 .syl-detail {
-  padding: 4px 8px 14px 40px;
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-1);
+  padding: var(--space-3) 0 var(--space-4);
+  border-top: 1px solid var(--border);
 }
 
 .syl-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 10px;
+  align-items: center;
+  gap: var(--space-2);
 }
 
-.syl-move {
+.syl-level {
   display: inline-flex;
-  gap: 8px;
+  align-items: center;
+  gap: var(--space-2);
 }
 
-.syl-actions select {
-  min-height: 44px;
-  padding: 0 8px;
+.syl-level-label {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--muted);
+}
+
+.syl-select {
+  width: auto;
+  min-height: var(--tap);
+}
+
+/* The occasional actions live behind one menu button, not a row of buttons. */
+.syl-menu-wrap {
+  position: relative;
+  margin-left: auto;
+}
+
+.syl-menu-btn svg {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+.syl-menu {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  z-index: var(--z-nav);
+  display: grid;
+  gap: 2px;
+  min-width: 11rem;
+  padding: var(--space-1);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+
+.syl-menu-item {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap);
+  width: 100%;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
   color: var(--text);
-  font: inherit;
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.syl-menu-item:hover:not(:disabled) {
+  background: var(--surface-sunken);
+}
+
+.syl-menu-item:disabled {
+  color: var(--muted);
+  opacity: 0.6;
+  cursor: default;
+}
+
+.syl-menu-danger {
+  color: var(--danger);
+}
+
+.syl-menu-danger:hover:not(:disabled) {
+  background: var(--danger-bg);
 }
 
 .syl-edit-row {
   display: flex;
-  gap: 8px;
-  margin-bottom: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
 }
 
-.syl-edit-row input {
-  flex: 1;
-  min-height: 44px;
-  min-width: 0;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
+.syl-edit-row .input {
+  flex: 1 1 10rem;
+  width: auto;
+}
+
+/* --- Linked books ----------------------------------------------------------- */
+.syl-block {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.syl-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.syl-block-head h3 {
+  margin: 0;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
 }
 
 .syl-books {
-  margin: 0 0 10px;
-  padding-left: 18px;
-  color: var(--muted);
-  font-size: 0.85rem;
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-sm);
+}
+
+.syl-books li {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
 }
 
 .syl-empty {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
   color: var(--muted);
-  font-size: 0.85rem;
 }
 
-/* Book tagging dialog */
-.syl-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
+.syl-cta {
+  margin-top: var(--space-1);
+}
+
+.syl-add-domain {
   display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  padding: 16px;
-  padding-bottom: calc(16px + env(safe-area-inset-bottom));
-  background: rgba(0, 0, 0, 0.45);
 }
 
-.syl-dialog {
-  width: 100%;
-  max-width: 520px;
-  max-height: 80vh;
-  overflow: auto;
-  padding: 16px;
-  border-radius: 14px;
-  background: var(--surface);
-  border: 1px solid var(--border);
+/* --- Tag books sheet -------------------------------------------------------- */
+.syl-sheet-sub {
+  margin: 0 0 var(--space-3);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+  color: var(--muted);
 }
 
-.syl-dialog h2 {
-  margin: 0 0 4px;
-  font-size: 1.1rem;
+.syl-check-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 50dvh;
+  overflow-y: auto;
 }
 
 .syl-check {
   display: flex;
-  gap: 10px;
   align-items: center;
-  min-height: 44px;
-  padding: 2px 0;
+  gap: var(--space-3);
+  min-height: var(--tap);
+  padding: var(--space-2) 0;
   border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.syl-check-list li:last-child .syl-check {
+  border-bottom: 0;
 }
 
 .syl-check input {
-  width: 20px;
-  height: 20px;
+  flex: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin: 0;
   accent-color: var(--accent);
 }
 
-/* TopicPicker */
+/* ============================================================================
+   Topic picker
+   ========================================================================== */
+
 .tp-root {
   position: relative;
-  display: block;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.tp-label {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
 }
 
 .tp-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 6px;
+  gap: var(--space-2);
 }
 
 .tp-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  max-width: 100%;
-  padding: 2px 4px 2px 10px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
-  font-size: 0.82rem;
+  min-height: var(--tap);
+  padding-left: var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+  font-size: var(--fs-sm);
 }
 
-.tp-chip button {
-  min-width: 32px;
-  min-height: 32px;
+.tp-chip-text {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tp-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap);
+  height: var(--tap);
+  margin-left: var(--space-1);
+  padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: none;
-  color: var(--muted);
-  font-size: 1rem;
-  line-height: 1;
+  color: var(--accent);
   cursor: pointer;
 }
 
-.tp-input {
-  width: 100%;
-  min-height: 44px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+.tp-chip-remove:hover {
   background: var(--surface);
   color: var(--text);
-  font: inherit;
 }
 
+.tp-chip-remove svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+/* Fixed, because the picker often lives inside a scrolling sheet. */
 .tp-panel {
-  position: absolute;
-  z-index: 10;
-  left: 0;
-  right: 0;
-  max-height: 320px;
-  overflow: auto;
-  margin-top: 4px;
-  padding: 4px;
+  position: fixed;
+  z-index: calc(var(--z-sheet) + 1);
+  overflow-y: auto;
+  padding: var(--space-1);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--surface);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-pop);
 }
 
 .tp-option {
   display: flex;
-  gap: 8px;
-  align-items: center;
-  min-height: 44px;
-  padding: 2px 8px;
-  border-radius: 8px;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-height: var(--tap);
+  padding: var(--space-2) var(--space-2) var(--space-2) calc(var(--space-2) + var(--depth, 0) * var(--space-4));
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
-.tp-option[aria-selected='true'] {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-
 .tp-option.is-active {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+  background: var(--surface-sunken);
 }
 
 .tp-box {
-  flex: 0 0 18px;
-  width: 18px;
-  height: 18px;
   display: inline-flex;
+  flex: none;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--muted);
-  border-radius: 4px;
-  font-size: 0.75rem;
+  width: 1.125rem;
+  height: 1.125rem;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-xs);
+  background: var(--surface);
   color: var(--accent-text);
 }
 
 .tp-option[aria-selected='true'] .tp-box {
-  background: var(--accent);
   border-color: var(--accent);
+  background: var(--accent);
+}
+
+.tp-box svg {
+  width: 0.875rem;
+  height: 0.875rem;
 }
 
 .tp-name {
-  flex: 1;
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
   min-width: 0;
 }
 
+.tp-title {
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.tp-option[aria-selected='true'] .tp-title {
+  font-weight: var(--fw-semibold);
+}
+
 .tp-parent {
-  display: block;
+  font-size: var(--fs-2xs);
+  line-height: var(--lh-tight);
   color: var(--muted);
-  font-size: 0.72rem;
+}
+
+/* Level is quiet here: the syllabus tree is where it carries weight. */
+.tp-level {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--muted);
 }
 
 .tp-empty {
-  padding: 12px;
+  margin: 0;
+  padding: var(--space-3);
+  font-size: var(--fs-sm);
   color: var(--muted);
-  font-size: 0.85rem;
+}
+
+/* A nested expander: 32px is enough inside a 44px option row. */
+.tp-twisty {
+  flex: 0 0 2rem;
+  width: 2rem;
+  height: 2rem;
+  margin-top: calc((var(--fs-sm) * var(--lh-snug) - 2rem) / 2);
+}
+
+.tp-chevron {
+  width: 1rem;
+  height: 1rem;
+  transition: transform var(--dur-1) var(--ease-standard);
+}
+
+.tp-chevron.is-open {
+  transform: rotate(90deg);
 }
