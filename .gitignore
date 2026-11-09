@@ -12,3 +12,5 @@ public/ort/
 # Tauri/Rust build output and generated schemas
 src-tauri/target/
 src-tauri/gen/schemas/
+# third-party PDFs used only by local real-file tests (tests skip when absent)
+src/import/__fixtures__/*.pdf
