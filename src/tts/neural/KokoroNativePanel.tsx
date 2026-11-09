@@ -26,6 +26,7 @@ import {
   resumeFraction,
   storageWarning,
 } from '../native/kokoroDownload';
+import { measureRtf, rtfSettingKey } from './benchmark';
 import { isKokoroNativeAvailable, Kokoro, type KokoroStatus } from '../native/kokoroPlugin';
 
 const ATTRIBUTION = 'Kokoro-82M by hexgrad (Apache-2.0) via sherpa-onnx (Apache-2.0)';
@@ -98,6 +99,8 @@ export default function KokoroNativePanel(): React.JSX.Element {
     try {
       await kokoroNativeEngine.prepare((value) => setFraction(clamp01(value)));
       await refresh();
+      // 'auto' engine choice only picks a model with a stored RTF, so measure right away.
+      void measureRtf(kokoroNativeEngine).catch(() => undefined);
     } catch (err) {
       setState('error');
       setError(message(err));
@@ -140,11 +143,12 @@ export default function KokoroNativePanel(): React.JSX.Element {
     setError(null);
     setMeasure(null);
     try {
-      setMeasure(
-        await kokoroNativeEngine.measure(SPEED_TEST_SENTENCE, { rate: 1 }, (value) =>
-          setFraction(clamp01(value))
-        )
+      const result = await kokoroNativeEngine.measure(SPEED_TEST_SENTENCE, { rate: 1 }, (value) =>
+        setFraction(clamp01(value))
       );
+      setMeasure(result);
+      // Same key measureRtf writes; the engine registry reads it for 'auto'.
+      await setSetting(rtfSettingKey('kokoro'), result.rtf);
       await refresh();
     } catch (err) {
       setError(message(err));

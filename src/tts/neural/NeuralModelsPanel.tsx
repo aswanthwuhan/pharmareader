@@ -217,6 +217,8 @@ export default function NeuralModelsPanel() {
         await engine.prepare((fraction) => setState({ kind: 'downloading', fraction }));
         setVoices(await engine.listVoices());
         setState({ kind: 'ready' });
+        // 'auto' engine choice only picks a model with a stored RTF, so measure right away.
+        void measureRtf(engine).catch(() => undefined);
       } catch (err) {
         setState({ kind: 'error', message: messageOf(err) });
       }
