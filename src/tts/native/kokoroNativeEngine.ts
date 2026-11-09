@@ -8,6 +8,7 @@
  */
 import { getSetting } from '../../core/settings';
 import type { SpeakEvents, TtsEngine, TtsVoice } from '../../core/types';
+import type { KokoroStage } from './kokoroFailure';
 import { isKokoroNativeAvailable, Kokoro } from './kokoroPlugin';
 
 /** Voice used when nothing is configured: `af_heart` (sid 3). */
@@ -151,19 +152,30 @@ class KokoroNativeEngine implements TtsEngine {
   }
 
   /** Download the model if needed, then load it into memory with the saved threads. */
-  async prepare(onProgress?: (fraction: number) => void): Promise<void> {
+  async prepare(
+    onProgress?: (fraction: number) => void,
+    onStage?: (stage: KokoroStage) => void
+  ): Promise<void> {
     requireNative();
+    onStage?.('status');
     let status = await Kokoro.status();
     if (!status.downloaded) {
-      const handle = await Kokoro.addListener('downloadProgress', (progress) =>
-        onProgress?.(clampNumber(progress.fraction, 0, 1))
-      );
+      onStage?.('download');
+      const handle = await Kokoro.addListener('downloadProgress', (progress) => {
+        const fraction = clampNumber(progress.fraction, 0, 1);
+        // The archive is complete at 1, but the HTTP phase ends there; everything after it is
+        // the bunzip2 + tar pass, which is where a weak phone spends minutes.
+        if (fraction >= 1) onStage?.('unpack');
+        onProgress?.(fraction);
+      });
       try {
         await Kokoro.download();
       } finally {
         await handle.remove().catch(() => undefined);
       }
       onProgress?.(1);
+      onStage?.('unpack');
+      onStage?.('status');
       status = await Kokoro.status();
     }
     if (!status.downloaded) throw new Error('Kokoro model files are missing after the download.');
@@ -172,6 +184,7 @@ class KokoroNativeEngine implements TtsEngine {
     // status.threads is read from the loaded session, so an engine that is already warm in
     // this process (a second reader mount) is reused instead of reloading the model.
     if (status.loaded && status.threads === threads) return;
+    onStage?.('load');
     await Kokoro.load({ threads });
   }
 

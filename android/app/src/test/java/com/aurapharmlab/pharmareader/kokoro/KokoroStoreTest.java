@@ -124,6 +124,31 @@ public class KokoroStoreTest {
         KokoroStore.deleteRecursively(null);
     }
 
+    // ------------------------------------------------------- unpacker dependencies
+
+    @Test
+    public void archiveUnpackerHasItsCommonsIoDependency() throws Exception {
+        // commons-compress's bzip2 reader builds a BitInputStream that counts bytes through
+        // commons-io. 0.1.0 shipped without it, so every extraction died with
+        // "org/apache/commons/io/input/CountingInputStream" right after the download finished.
+        assertNotNull(
+                "commons-io must stay on the app classpath (android/app/libs/commons-io-*.jar)",
+                Class.forName("org.apache.commons.io.input.CountingInputStream"));
+        assertNotNull(Class.forName("org.apache.commons.io.file.attribute.FileTimes"));
+    }
+
+    @Test
+    public void missingUnpackerClassIsExplainedInWords() {
+        String message = KokoroStore.unpackerMessage(
+                new NoClassDefFoundError("org/apache/commons/io/input/CountingInputStream"));
+        assertTrue(message, message.contains("org.apache.commons.io.input.CountingInputStream"));
+        assertTrue(message, message.contains("commons-io"));
+        assertTrue(message, message.contains("Reinstall"));
+
+        String blank = KokoroStore.unpackerMessage(new NoClassDefFoundError());
+        assertTrue(blank, blank.contains(NoClassDefFoundError.class.getName()));
+    }
+
     private static void writeFile(File file, int bytes) throws IOException {
         try (OutputStream out = new FileOutputStream(file)) {
             out.write("x".repeat(bytes).getBytes(StandardCharsets.UTF_8));

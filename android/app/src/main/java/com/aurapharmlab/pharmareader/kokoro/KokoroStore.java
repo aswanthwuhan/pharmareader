@@ -69,7 +69,33 @@ public final class KokoroStore {
     private final File root;
 
     public KokoroStore(Context context) {
-        this.root = new File(context.getFilesDir(), ROOT_DIR);
+        this(new File(context.getFilesDir(), ROOT_DIR));
+    }
+
+    /**
+     * Rooted at an explicit directory instead of {@code filesDir}. The download, extraction and
+     * verification are plain {@code java.io}, so the JVM tests drive this constructor to run the
+     * real thing on a desktop.
+     */
+    KokoroStore(File root) {
+        this.root = root;
+    }
+
+    /** {@code android.util.Log} is a stub in the JVM tests; fall back to the console there. */
+    private static void info(String message) {
+        try {
+            Log.i(TAG, message);
+        } catch (Throwable notAndroid) {
+            System.out.println(TAG + ": " + message);
+        }
+    }
+
+    private static void warn(String message) {
+        try {
+            Log.w(TAG, message);
+        } catch (Throwable notAndroid) {
+            System.err.println(TAG + ": " + message);
+        }
     }
 
     public File rootDir() {
@@ -178,7 +204,7 @@ public final class KokoroStore {
             if (progress != null) {
                 progress.onProgress(1d, archiveBytes, archiveBytes);
             }
-            Log.i(TAG, "archive ready: " + archiveBytes + " bytes");
+            info("archive ready: " + archiveBytes + " bytes");
 
             long freeAfterDownload = freeBytes();
             if (freeAfterDownload > 0
@@ -224,7 +250,7 @@ public final class KokoroStore {
             }
             writeMarker(target);
             success = true;
-            Log.i(TAG, "Kokoro model ready at " + target.getAbsolutePath());
+            info("Kokoro model ready at " + target.getAbsolutePath());
             return sizeBytes();
         } finally {
             deleteRecursively(scratch);
@@ -252,7 +278,7 @@ public final class KokoroStore {
     /** Resume the archive download until it is complete, retrying once on a network error. */
     private long fetchArchive(File part, Progress progress) throws IOException {
         if (part.isFile() && part.length() >= KokoroModel.ARCHIVE_BYTES) {
-            Log.i(TAG, "archive already downloaded: " + part.length() + " bytes");
+            info("archive already downloaded: " + part.length() + " bytes");
             return part.length();
         }
         IOException last = null;
@@ -263,7 +289,7 @@ public final class KokoroStore {
                 throw e;
             } catch (IOException e) {
                 last = e;
-                Log.w(TAG, "download attempt " + attempt + " failed: " + e);
+                warn("download attempt " + attempt + " failed: " + e);
                 if (attempt == MAX_ATTEMPTS) {
                     break;
                 }
@@ -313,7 +339,7 @@ public final class KokoroStore {
             } else {
                 throw new IOException("HTTP " + code + " while downloading the model");
             }
-            Log.i(TAG, String.format(
+            info(String.format(
                     Locale.US,
                     "GET model -> %d, resuming at %d of %d bytes", code, existing, total));
             copyToPart(connection.getInputStream(), part, existing, total, progress);
@@ -398,6 +424,18 @@ public final class KokoroStore {
     // ---------------------------------------------------------------- extraction
 
     private File extractArchive(File archive, File scratch) throws IOException {
+        try {
+            return extractArchiveNow(archive, scratch);
+        } catch (NoClassDefFoundError error) {
+            // commons-compress loads its stream plumbing (bit/byte counters) from commons-io. When
+            // that jar is missing from the APK, the tar reader dies with
+            // "org/apache/commons/io/input/CountingInputStream" *after* the 334 MB download has
+            // finished, which reads to the user as a failed download. Say what is actually wrong.
+            throw new IOException(unpackerMessage(error), error);
+        }
+    }
+
+    private File extractArchiveNow(File archive, File scratch) throws IOException {
         try (InputStream raw = new BufferedInputStream(new FileInputStream(archive), BUFFER_BYTES);
              BZip2CompressorInputStream bz = new BZip2CompressorInputStream(raw, true);
              TarArchiveInputStream tar = new TarArchiveInputStream(bz)) {
@@ -431,6 +469,19 @@ public final class KokoroStore {
             }
         }
         return findModelDir(scratch);
+    }
+
+    /**
+     * Message for a missing unpacker support class. {@code NoClassDefFoundError} only carries the
+     * class name, which is meaningless to a reader, so name the cause and the missing piece.
+     */
+    static String unpackerMessage(Throwable error) {
+        String missing = error.getMessage();
+        if (missing == null || missing.isEmpty()) {
+            missing = error.getClass().getName();
+        }
+        return "The app is missing part of its archive unpacker (" + missing.replace('/', '.')
+                + "). Reinstall the app: the build has to ship commons-io next to commons-compress.";
     }
 
     /** The archive contains a single {@code kokoro-multi-lang-v1_0/} directory. */
@@ -516,7 +567,7 @@ public final class KokoroStore {
             }
         }
         if (!file.delete() && file.exists()) {
-            Log.w(TAG, "Could not delete " + file.getAbsolutePath());
+            warn("Could not delete " + file.getAbsolutePath());
         }
     }
 

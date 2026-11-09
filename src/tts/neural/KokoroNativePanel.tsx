@@ -27,6 +27,12 @@ import {
   storageWarning,
 } from '../native/kokoroDownload';
 import { measureRtf, rtfSettingKey } from './benchmark';
+import {
+  copyText,
+  describeKokoroFailure,
+  type KokoroFailure,
+  type KokoroStage,
+} from '../native/kokoroFailure';
 import { isKokoroNativeAvailable, Kokoro, type KokoroStatus } from '../native/kokoroPlugin';
 
 const ATTRIBUTION = 'Kokoro-82M by hexgrad (Apache-2.0) via sherpa-onnx (Apache-2.0)';
@@ -36,16 +42,24 @@ const THREAD_OPTIONS = [2, 4, 6] as const;
 const DEFAULT_THREADS = 4;
 /** Minimum touch target the rest of the app uses. */
 const TAP_TARGET = { minHeight: 44, minWidth: 44, display: 'inline-flex', alignItems: 'center' } as const;
+/** The diagnostic block is plain text; no stylesheet rule exists for a <pre> in the panel. */
+const DETAILS_STYLE = {
+  margin: '8px 0 0',
+  padding: '8px',
+  maxWidth: '100%',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+  fontSize: 12,
+  lineHeight: 1.45,
+  textAlign: 'left',
+} as const;
 
 type PanelState = 'unsupported' | 'loading' | 'absent' | 'downloading' | 'ready' | 'error';
+type CopyState = 'idle' | 'copied' | 'failed';
 
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.min(1, Math.max(0, value));
-}
-
-function message(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 function formatThreads(value: number): string {
@@ -63,7 +77,9 @@ export default function KokoroNativePanel(): React.JSX.Element {
   const [status, setStatus] = useState<KokoroStatus | null>(null);
   const [voices, setVoices] = useState<TtsVoice[]>([]);
   const [fraction, setFraction] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<KokoroFailure | null>(null);
+  const [stage, setStage] = useState<KokoroStage | null>(null);
+  const [copied, setCopied] = useState<CopyState>('idle');
   const [measuring, setMeasuring] = useState(false);
   const [measure, setMeasure] = useState<KokoroMeasureResult | null>(null);
 
@@ -79,11 +95,12 @@ export default function KokoroNativePanel(): React.JSX.Element {
       const next = await Kokoro.status();
       setStatus(next);
       setState(next.downloaded ? 'ready' : 'absent');
-      setError(null);
+      setFailure(null);
       setVoices(await kokoroNativeEngine.listVoices());
     } catch (err) {
       setState('error');
-      setError(message(err));
+      // The query itself failed, so there is no status object to describe the model with.
+      setFailure(describeKokoroFailure('status', err, null));
     }
   }, []);
 
@@ -91,31 +108,55 @@ export default function KokoroNativePanel(): React.JSX.Element {
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    if (copied === 'idle') return;
+    const timer = window.setTimeout(() => setCopied('idle'), 2500);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
   const download = async (): Promise<void> => {
     setState('downloading');
     setFraction(resumeFraction(status?.partialBytes, status?.archiveBytes));
-    setError(null);
+    setFailure(null);
     setMeasure(null);
+    setCopied('idle');
+    // The engine reports the stage it is in; it is kept in a local as well because the state
+    // update is asynchronous and the catch block needs the stage that actually failed.
+    let failedAt: KokoroStage = 'status';
     try {
-      await kokoroNativeEngine.prepare((value) => setFraction(clamp01(value)));
+      await kokoroNativeEngine.prepare(
+        (value) => setFraction(clamp01(value)),
+        (next) => {
+          failedAt = next;
+          setStage(next);
+        }
+      );
+      setStage(null);
       await refresh();
       // 'auto' engine choice only picks a model with a stored RTF, so measure right away.
       void measureRtf(kokoroNativeEngine).catch(() => undefined);
     } catch (err) {
+      setStage(null);
       setState('error');
-      setError(message(err));
+      setFailure(describeKokoroFailure(failedAt, err, status));
     }
   };
 
+  const copyDetails = async (): Promise<void> => {
+    if (!failure) return;
+    setCopied((await copyText(failure.details)) ? 'copied' : 'failed');
+  };
+
   const remove = async (): Promise<void> => {
-    setError(null);
+    setFailure(null);
     setMeasure(null);
+    setCopied('idle');
     try {
       await kokoroNativeEngine.deleteModel();
       await refresh();
     } catch (err) {
       setState('error');
-      setError(message(err));
+      setFailure(describeKokoroFailure('delete', err, status));
     }
   };
 
@@ -123,24 +164,24 @@ export default function KokoroNativePanel(): React.JSX.Element {
     try {
       await setSetting(KOKORO_VOICE_SETTING, voiceId);
     } catch (err) {
-      setError(message(err));
+      setFailure(describeKokoroFailure('status', err, status));
     }
   };
 
   const changeThreads = async (threads: number): Promise<void> => {
-    setError(null);
+    setFailure(null);
     try {
       await setSetting(KOKORO_THREADS_SETTING, threads);
       if (status?.loaded) await Kokoro.load({ threads });
       await refresh();
     } catch (err) {
-      setError(message(err));
+      setFailure(describeKokoroFailure('load', err, status));
     }
   };
 
   const measureSpeed = async (): Promise<void> => {
     setMeasuring(true);
-    setError(null);
+    setFailure(null);
     setMeasure(null);
     try {
       const result = await kokoroNativeEngine.measure(SPEED_TEST_SENTENCE, { rate: 1 }, (value) =>
@@ -151,7 +192,7 @@ export default function KokoroNativePanel(): React.JSX.Element {
       await setSetting(rtfSettingKey('kokoro'), result.rtf);
       await refresh();
     } catch (err) {
-      setError(message(err));
+      setFailure(describeKokoroFailure('measure', err, status));
     } finally {
       setMeasuring(false);
     }
@@ -241,11 +282,13 @@ export default function KokoroNativePanel(): React.JSX.Element {
             aria-label="Kokoro model download progress"
           />
           <p className="tts-status" role="status">
-            {fraction >= 1
-              ? 'Unpacking and loading the model…'
-              : `Downloading model… ${Math.round(clamp01(fraction) * 100)}%${
-                  resumable > 0 && resumable < 1 ? ' (resumed)' : ''
-                }`}
+            {stage === 'unpack' || fraction >= 1
+              ? 'Unpacking the model archive… (this is the slow part)'
+              : stage === 'load'
+                ? 'Loading the model into memory…'
+                : `Downloading model… ${Math.round(clamp01(fraction) * 100)}%${
+                    resumable > 0 && resumable < 1 ? ' (resumed)' : ''
+                  }`}
           </p>
         </div>
       )}
@@ -277,10 +320,28 @@ export default function KokoroNativePanel(): React.JSX.Element {
         </p>
       )}
 
-      {error && (
-        <p className="tts-error" role="alert">
-          {error}
-        </p>
+      {failure && (
+        <div className="tts-field">
+          <p className="tts-error" role="alert">
+            {failure.message}
+          </p>
+          <details className="tts-hint">
+            <summary>Error details</summary>
+            <pre style={DETAILS_STYLE}>{failure.details}</pre>
+          </details>
+          <button
+            type="button"
+            className="tts-button"
+            style={TAP_TARGET}
+            onClick={() => void copyDetails()}
+          >
+            {copied === 'copied'
+              ? 'Copied ✓'
+              : copied === 'failed'
+                ? 'Copy failed — select the details above'
+                : 'Copy error details'}
+          </button>
+        </div>
       )}
 
       <div className="tts-actions">
@@ -291,11 +352,13 @@ export default function KokoroNativePanel(): React.JSX.Element {
             onClick={() => void download()}
             disabled={spaceWarning !== null}
           >
-            {downloadLabel({
-              downloaded: false,
-              partialBytes: status?.partialBytes,
-              archiveBytes: status?.archiveBytes,
-            })}
+            {downloaded
+              ? 'Try loading again'
+              : downloadLabel({
+                  downloaded: false,
+                  partialBytes: status?.partialBytes,
+                  archiveBytes: status?.archiveBytes,
+                })}
           </button>
         )}
         {busy && (
