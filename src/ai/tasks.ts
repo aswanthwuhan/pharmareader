@@ -13,6 +13,9 @@ export interface GeneratedCard {
 /** Context windows are small on cheap models and pharma chapters are long. */
 export const MAX_INPUT_CHARS = 12_000;
 export const MAX_CARDS = 20;
+/** A flashcard longer than this is a model rambling, not a card. */
+export const MAX_CARD_CHARS = 1000;
+const MAX_HINT_CHARS = 200;
 
 const TUTOR =
   'You are a pharmacology exam tutor for MD Pharmacology residents in India. ' +
@@ -34,13 +37,20 @@ function requireText(text: string): string {
   return truncate(trimmed);
 }
 
+/** NaN/Infinity would end up in the prompt as "Make NaN flashcards". */
+function clampCount(value: number | undefined): number {
+  const count = Math.trunc(value ?? 5);
+  return Number.isFinite(count) ? Math.min(Math.max(count, 1), MAX_CARDS) : 5;
+}
+
 export async function generateCards(
   text: string,
   opts: { count?: number; topicHint?: string } = {},
 ): Promise<GeneratedCard[]> {
   const input = requireText(text);
-  const count = Math.min(Math.max(Math.trunc(opts.count ?? 5), 1), MAX_CARDS);
-  const hint = opts.topicHint?.trim() ? `Topic: ${opts.topicHint.trim()}\n` : '';
+  const count = clampCount(opts.count);
+  const hintText = opts.topicHint?.trim().slice(0, MAX_HINT_CHARS);
+  const hint = hintText ? `Topic: ${hintText}\n` : '';
 
   const raw = await chat(
     [
@@ -75,8 +85,8 @@ export function parseCards(raw: string): GeneratedCard[] {
     const { kind, front, back } = item as { kind?: unknown; front?: unknown; back?: unknown };
     if (kind !== 'qa' && kind !== 'cloze') continue;
     if (typeof front !== 'string' || typeof back !== 'string') continue;
-    const f = front.trim();
-    const b = back.trim();
+    const f = front.trim().slice(0, MAX_CARD_CHARS);
+    const b = back.trim().slice(0, MAX_CARD_CHARS);
     if (!f || !b) continue;
     cards.push({ kind, front: f, back: b });
   }

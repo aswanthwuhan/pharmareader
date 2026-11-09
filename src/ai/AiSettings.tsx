@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { setSetting, useSetting } from '../core/settings';
-import { AI_DEFAULTS, AI_PRESETS, chat } from './client';
+import { AI_DEFAULTS, AI_PRESETS, chat, type AiPresetId } from './client';
 import './ai.css';
 
 /** BYO-key AI settings section for the Settings page. */
@@ -22,7 +22,12 @@ export default function AiSettings() {
   useEffect(() => setApiKey(storedApiKey), [storedApiKey]);
   useEffect(() => setModel(storedModel), [storedModel]);
 
-  const preset = AI_PRESETS.find((p) => p.id !== 'custom' && p.baseUrl === baseUrl.trim())?.id ?? 'custom';
+  const derived: AiPresetId =
+    AI_PRESETS.find((p) => p.id !== 'custom' && p.baseUrl === baseUrl.trim())?.id ?? 'custom';
+  // The select must keep showing "Custom" after it is picked, even though the
+  // URL still matches a preset until the user edits it.
+  const [picked, setPicked] = useState<AiPresetId>(derived);
+  useEffect(() => setPicked(derived), [derived]);
 
   async function persist() {
     await Promise.all([
@@ -34,7 +39,9 @@ export default function AiSettings() {
 
   async function onPresetChange(id: string) {
     const next = AI_PRESETS.find((p) => p.id === id);
-    if (!next || next.id === 'custom') return;
+    if (!next) return;
+    setPicked(next.id);
+    if (next.id === 'custom') return; // keep the current URL, let the user type one
     setBaseUrl(next.baseUrl);
     setModel(next.model);
     await Promise.all([setSetting('ai.baseUrl', next.baseUrl), setSetting('ai.model', next.model)]);
@@ -45,7 +52,7 @@ export default function AiSettings() {
     setResult(null);
     try {
       await persist();
-      const reply = await chat([{ role: 'user', content: 'Reply with exactly: OK' }]);
+      const reply = await chat([{ role: 'user', content: 'Reply with exactly: OK' }], { timeoutMs: 15_000 });
       setResult({ ok: true, message: `OK — ${reply.slice(0, 60) || 'connected'}` });
     } catch (err) {
       setResult({ ok: false, message: err instanceof Error ? err.message : String(err) });
@@ -75,7 +82,7 @@ export default function AiSettings() {
 
       <div className="ai-row">
         <label htmlFor="ai-preset">Provider</label>
-        <select id="ai-preset" value={preset} onChange={(e) => void onPresetChange(e.target.value)}>
+        <select id="ai-preset" value={picked} onChange={(e) => void onPresetChange(e.target.value)}>
           {AI_PRESETS.map((p) => (
             <option key={p.id} value={p.id}>
               {p.label}
@@ -138,7 +145,7 @@ export default function AiSettings() {
       </div>
 
       {result && (
-        <p className={result.ok ? 'ai-ok' : 'ai-error'} role="status">
+        <p className={result.ok ? 'ai-ok' : 'ai-error'} role={result.ok ? 'status' : 'alert'}>
           {result.message}
         </p>
       )}

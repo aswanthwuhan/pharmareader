@@ -2,16 +2,22 @@ import { useState } from 'react';
 import { backupFileName, exportBackup, importBackup, type ImportMode, type ImportReport } from './backup';
 import './backup.css';
 
-const TABLE_LABEL: Record<string, string> = {
-  books: 'books',
-  highlights: 'highlights',
-  bookmarks: 'bookmarks',
-  cards: 'cards',
-  reviewLogs: 'reviews',
-  topics: 'topics',
-  lexicon: 'pronunciations',
-  settings: 'settings',
+const TABLE_LABEL: Record<string, readonly [string, string]> = {
+  books: ['book', 'books'],
+  highlights: ['highlight', 'highlights'],
+  bookmarks: ['bookmark', 'bookmarks'],
+  cards: ['card', 'cards'],
+  reviewLogs: ['review', 'reviews'],
+  topics: ['topic', 'topics'],
+  lexicon: ['pronunciation', 'pronunciations'],
+  settings: ['setting', 'settings'],
 };
+
+function label(table: string, n: number): string {
+  const pair = TABLE_LABEL[table];
+  if (!pair) return table;
+  return n === 1 ? pair[0] : pair[1];
+}
 
 /** Backup section for the Settings page: zip out, zip back in. */
 export default function BackupPanel() {
@@ -39,7 +45,10 @@ export default function BackupPanel() {
     if (!file) return;
     if (
       mode === 'replace' &&
-      !window.confirm('Replace all books, highlights and cards on this device with the backup? This cannot be undone.')
+      !window.confirm(
+        'Replace all books, highlights, bookmarks, cards, reviews, topics, pronunciations and settings on this device ' +
+          'with the backup? This cannot be undone.',
+      )
     ) {
       return;
     }
@@ -59,7 +68,7 @@ export default function BackupPanel() {
       <h2 id="backup-heading">Backup</h2>
       <p className="backup-notice">
         Everything stays on this device until you export. The audio cache is left out — it is rebuilt when you listen
-        again.
+        again. AI settings and your API key are never written into a backup.
       </p>
 
       <div className="backup-row">
@@ -104,7 +113,9 @@ export default function BackupPanel() {
             checked={mode === 'replace'}
             onChange={() => setMode('replace')}
           />
-          <label htmlFor="backup-replace">Replace — delete local books, highlights and cards first</label>
+          <label htmlFor="backup-replace">
+            Replace — delete local books, highlights, cards, reviews, topics, pronunciations and settings first
+          </label>
         </div>
       </fieldset>
 
@@ -120,7 +131,7 @@ export default function BackupPanel() {
       </div>
 
       {status && (
-        <p className={status.ok ? 'backup-ok' : 'backup-error'} role="status">
+        <p className={status.ok ? 'backup-ok' : 'backup-error'} role={status.ok ? 'status' : 'alert'}>
           {status.text}
         </p>
       )}
@@ -129,7 +140,7 @@ export default function BackupPanel() {
 }
 
 function describe(report: ImportReport): string {
-  const parts = Object.entries(report.counts).map(([table, n]) => `${n} ${TABLE_LABEL[table] ?? table}`);
+  const parts = Object.entries(report.counts).map(([table, n]) => `${n} ${label(table, n)}`);
   const head = parts.length ? `Imported ${parts.join(', ')}.` : 'The backup had no records.';
   const missing = report.missingFile.length
     ? ` ${report.missingFile.length} book file${report.missingFile.length === 1 ? ' was' : 's were'} not in the zip — re-import those books to read them.`

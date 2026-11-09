@@ -1,5 +1,5 @@
 import { strFromU8, strToU8, unzipSync, zipSync, type Unzipped } from 'fflate';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../core/db';
 import { getSetting, setSetting } from '../core/settings';
 import type { BookRecord, CardRecord, Highlight } from '../core/types';
@@ -64,8 +64,14 @@ async function craftZip(files: Record<string, Uint8Array>): Promise<Blob> {
   return new Blob([zipSync(files)]);
 }
 
+const manifest = () => strToU8(JSON.stringify({ app: BACKUP_APP, schema: BACKUP_SCHEMA }));
+
 beforeEach(async () => {
   await clearAll();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe('exportBackup', () => {
@@ -206,5 +212,172 @@ describe('importBackup', () => {
 
   it('rejects a file that is not a zip at all', async () => {
     await expect(importBackup(new Blob(['not a zip']), 'merge')).rejects.toThrow(/valid zip/i);
+  });
+});
+
+describe('privacy: AI settings never travel in a backup', () => {
+  it('leaves every ai.* setting out of the export', async () => {
+    await db.settings.bulkPut([
+      { key: 'ai.apiKey', value: 'sk-secret' },
+      { key: 'ai.baseUrl', value: 'https://api.attacker.example/v1' },
+      { key: 'ai.model', value: 'exfil' },
+      { key: 'ai.enabled', value: true },
+      { key: 'theme', value: 'dark' },
+    ]);
+
+    const settings = readJson<{ key: string }[]>(await openZip(await exportBackup({ includeBooks: false })), 'data/settings.json');
+
+    expect(settings.map((s) => s.key)).toEqual(['theme']);
+    expect(JSON.stringify(settings)).not.toContain('attacker');
+    expect(JSON.stringify(settings)).not.toContain('sk-secret');
+  });
+
+  it('strips crafted ai.* settings on import instead of repointing the key', async () => {
+    await setSetting('ai.baseUrl', 'https://api.mine.example/v1');
+    await setSetting('ai.apiKey', 'sk-mine');
+
+    const zip = await craftZip({
+      'manifest.json': manifest(),
+      'data/settings.json': strToU8(
+        JSON.stringify([
+          { key: 'ai.baseUrl', value: 'https://api.attacker.example/v1' },
+          { key: 'ai.apiKey', value: 'sk-attacker' },
+          { key: 'ai.model', value: 'exfil' },
+          { key: 'ai.enabled', value: true },
+          { key: 'theme', value: 'dark' },
+        ]),
+      ),
+    });
+    await importBackup(zip, 'replace');
+
+    expect(await getSetting('ai.baseUrl', '')).toBe('https://api.mine.example/v1');
+    expect(await getSetting('ai.apiKey', '')).toBe('sk-mine');
+    expect(await getSetting('ai.enabled', false)).toBe(false);
+    expect(await getSetting('ai.model', 'mine')).toBe('mine');
+    expect((await db.settings.toArray()).map((s) => s.key).sort()).toEqual(['ai.apiKey', 'ai.baseUrl', 'theme']);
+  });
+});
+
+describe('import is a trust boundary', () => {
+  it('rejects unknown tables instead of silently ignoring them', async () => {
+    const zip = await craftZip({ 'manifest.json': manifest(), 'data/audioCache.json': strToU8('[]') });
+    await expect(importBackup(zip, 'merge')).rejects.toThrow(/unknown table "audioCache"/);
+  });
+
+  it('rejects path traversal and unknown entries', async () => {
+    const traversal = await craftZip({ 'manifest.json': manifest(), '../evil.txt': strToU8('x') });
+    await expect(importBackup(traversal, 'merge')).rejects.toThrow(/not safe to import/i);
+
+    const stray = await craftZip({ 'manifest.json': manifest(), 'notes.txt': strToU8('x') });
+    await expect(importBackup(stray, 'merge')).rejects.toThrow(/not safe to import/i);
+  });
+
+  it('rejects a book file that belongs to no book in the backup', async () => {
+    const zip = await craftZip({
+      'manifest.json': manifest(),
+      'data/books.json': strToU8('[]'),
+      'books/b9.txt': strToU8('orphan'),
+    });
+    await expect(importBackup(zip, 'merge')).rejects.toThrow(/does not belong to any book/i);
+  });
+
+  it('rejects a book file whose extension does not match the record', async () => {
+    const record = { ...book('b1') } as Record<string, unknown>;
+    delete record.fileBlob;
+    const zip = await craftZip({
+      'manifest.json': manifest(),
+      'data/books.json': strToU8(JSON.stringify([record])),
+      'books/b1.pdf': strToU8('%PDF'),
+    });
+    await expect(importBackup(zip, 'merge')).rejects.toThrow(/wrong type/i);
+  });
+
+  it('accepts a book file that matches its record', async () => {
+    const record = { ...book('b1') } as Record<string, unknown>;
+    delete record.fileBlob;
+    const zip = await craftZip({
+      'manifest.json': manifest(),
+      'data/books.json': strToU8(JSON.stringify([record])),
+      'books/b1.txt': strToU8('pharmacology text'),
+    });
+
+    const report = await importBackup(zip, 'merge');
+    expect(report.missingFile).toEqual([]);
+  });
+
+  it('type-checks every field the app reads later', async () => {
+    const zip = await craftZip({
+      'manifest.json': manifest(),
+      'data/highlights.json': strToU8(
+        JSON.stringify([
+          { id: 'h1', bookId: 'b1', sentenceIds: ['s1'], text: 'x', color: 'yellow', topicIds: [], createdAt: 'yesterday' },
+        ]),
+      ),
+    });
+    await expect(importBackup(zip, 'merge')).rejects.toThrow(/invalid "createdAt"/);
+
+    const badColor = await craftZip({
+      'manifest.json': manifest(),
+      'data/highlights.json': strToU8(
+        JSON.stringify([
+          { id: 'h1', bookId: 'b1', sentenceIds: ['s1'], text: 'x', color: 'red', topicIds: [], createdAt: NOW },
+        ]),
+      ),
+    });
+    await expect(importBackup(badColor, 'merge')).rejects.toThrow(/invalid "color"/);
+  });
+
+  it('refuses an oversized zip without reading it', async () => {
+    const huge = {
+      size: 3 * 1024 ** 3,
+      arrayBuffer: () => {
+        throw new Error('the file must not be read');
+      },
+    } as unknown as Blob;
+    await expect(importBackup(huge, 'merge')).rejects.toThrow(/too large/i);
+  });
+});
+
+describe('replace is atomic', () => {
+  it('leaves the database untouched when a write fails mid-import', async () => {
+    await db.books.put(book('b1'));
+    await db.highlights.put(highlight('h1', 'b1'));
+    const blob = await exportBackup({ includeBooks: false });
+
+    await clearAll();
+    await db.books.put(book('local'));
+    await db.highlights.put(highlight('h2', 'local'));
+
+    // Books are written before highlights; this fails after the clears ran, so
+    // the transaction must roll the clears and the book writes back.
+    const boom = () => {
+      throw new Error('disk full');
+    };
+    const hook = db.highlights.hook('creating');
+    hook.subscribe(boom);
+    try {
+      await expect(importBackup(blob, 'replace')).rejects.toThrow(/disk full/);
+    } finally {
+      hook.unsubscribe(boom);
+    }
+
+    expect((await db.books.toArray()).map((b) => b.id)).toEqual(['local']);
+    expect((await db.highlights.toArray()).map((h) => h.id)).toEqual(['h2']);
+  });
+});
+
+describe('export streams book files', () => {
+  it('copies the bytes of each book, including empty ones', async () => {
+    const text = 'Aspirin irreversibly inhibits COX-1.';
+    const spy = vi.spyOn(db.books, 'toArray');
+    spy.mockResolvedValue([
+      { ...book('b1'), fileBlob: new Blob([strToU8(text)]) },
+      { ...book('b0'), fileBlob: new Blob([]) },
+    ] as never);
+
+    const files = await openZip(await exportBackup({ includeBooks: true }));
+
+    expect(strFromU8(files['books/b1.txt'])).toBe(text);
+    expect(files['books/b0.txt']).toHaveLength(0);
   });
 });

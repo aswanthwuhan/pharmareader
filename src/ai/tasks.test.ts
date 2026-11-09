@@ -128,6 +128,34 @@ describe('generateCards', () => {
     await expect(generateCards('   ')).rejects.toThrow(/Select some text/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('never writes NaN into the prompt', async () => {
+    const { bodies } = stubModel('{"cards":[{"kind":"qa","front":"Q","back":"A"}]}');
+    await generateCards('Text', { count: Number.NaN });
+    expect((bodies()[0] as { messages: { content: string }[] }).messages[1].content).toContain('Make 5 flashcards');
+  });
+
+  it('clamps the count to the allowed range', async () => {
+    const { bodies } = stubModel('{"cards":[{"kind":"qa","front":"Q","back":"A"}]}');
+    await generateCards('Text', { count: 0 });
+    await generateCards('Text', { count: 10_000 });
+    const asks = bodies().map((b) => (b as { messages: { content: string }[] }).messages[1].content);
+    expect(asks[0]).toContain('Make 1 flashcards');
+    expect(asks[1]).toContain(`Make ${MAX_CARDS} flashcards`);
+  });
+
+  it('caps the topic hint', async () => {
+    const { bodies } = stubModel('{"cards":[{"kind":"qa","front":"Q","back":"A"}]}');
+    await generateCards('Text', { topicHint: `${'x'.repeat(500)}TAIL-HINT` });
+    const content = (bodies()[0] as { messages: { content: string }[] }).messages[1].content;
+    expect(content).not.toContain('TAIL-HINT');
+  });
+
+  it('caps the length of each generated card', () => {
+    const cards = parseCards(JSON.stringify({ cards: [{ kind: 'qa', front: 'f'.repeat(5000), back: 'b'.repeat(5000) }] }));
+    expect(cards[0].front).toHaveLength(1000);
+    expect(cards[0].back).toHaveLength(1000);
+  });
 });
 
 describe('summarize', () => {
@@ -140,5 +168,12 @@ describe('summarize', () => {
     const { bodies } = stubModel('- something');
     await summarize('Text');
     expect((bodies()[0] as { response_format?: unknown }).response_format).toBeUndefined();
+  });
+
+  it('truncates very long input', async () => {
+    const { bodies } = stubModel('- something');
+    await summarize('a'.repeat(MAX_INPUT_CHARS) + 'TAIL-MARKER');
+    const content = (bodies()[0] as { messages: { content: string }[] }).messages[1].content;
+    expect(content).not.toContain('TAIL-MARKER');
   });
 });

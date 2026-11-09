@@ -57,12 +57,14 @@ export default function AiActions({ text, bookId, topicIds, onClose }: AiActions
 
   async function saveSelected() {
     if (!rows) return;
-    const chosen = rows.filter((r) => r.checked);
-    if (!chosen.length) return;
+    const chosenIdx = rows.map((r, i) => (r.checked ? i : -1)).filter((i) => i >= 0);
+    if (!chosenIdx.length) return;
     setBusy('save');
     setError('');
+    let done = 0;
     try {
-      for (const card of chosen) {
+      for (const i of chosenIdx) {
+        const card = rows[i];
         await createCard({
           kind: card.kind,
           front: card.front,
@@ -70,11 +72,20 @@ export default function AiActions({ text, bookId, topicIds, onClose }: AiActions
           bookId,
           topicIds: topicIds ?? [],
         });
+        done += 1;
       }
-      setSaved(chosen.length);
+      setSaved(done);
       setRows(null);
     } catch (err) {
-      setError(message(err));
+      // Cards are written one by one; tell the user what already landed and
+      // drop exactly those rows so a retry cannot duplicate them.
+      if (done > 0) {
+        const savedIdx = new Set(chosenIdx.slice(0, done));
+        setRows(rows.filter((_, i) => !savedIdx.has(i)));
+        setError(`Saved ${done} card${done === 1 ? '' : 's'}, then stopped: ${message(err)}`);
+      } else {
+        setError(message(err));
+      }
     } finally {
       setBusy(null);
     }
@@ -119,6 +130,12 @@ export default function AiActions({ text, bookId, topicIds, onClose }: AiActions
 
       {!enabled && (
         <p className="ai-notice">Turn on AI in Settings → AI to make cards or summaries from this text.</p>
+      )}
+      {enabled && !rows && !summary && (
+        <p className="ai-notice">
+          The selected text is sent to the AI provider configured in Settings → AI. Nothing is saved until you press
+          Save.
+        </p>
       )}
 
       {rows && (

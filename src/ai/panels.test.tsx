@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import BackupPanel from '../backup/BackupPanel';
 import AiActions from './AiActions';
 import AiSettings from './AiSettings';
 
@@ -13,6 +14,7 @@ describe('AI panels', () => {
     expect(html).toContain('Selected text is sent to the provider you choose.');
     expect(html).toContain('type="password"');
     expect(html).toContain('>Test<');
+    expect(html).toContain('>Custom<');
   });
 
   it('explains that AI is off and disables the actions', () => {
@@ -23,5 +25,17 @@ describe('AI panels', () => {
     expect(html).toContain('disabled');
     expect(html).toContain('Make cards');
     expect(html).toContain('Summarize');
+  });
+});
+
+describe('backup panel', () => {
+  it('says the API key never travels in a backup', () => {
+    const html = renderToStaticMarkup(<BackupPanel />);
+    expect(html).toContain('API key are never written into a backup');
+  });
+
+  it('spells out what replace deletes', () => {
+    const html = renderToStaticMarkup(<BackupPanel />);
+    expect(html).toContain('pronunciations and settings first');
   });
 });

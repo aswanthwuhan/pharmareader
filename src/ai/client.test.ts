@@ -112,6 +112,128 @@ describe('chat', () => {
     const err = await failure(chat([{ role: 'user', content: 'hi' }]));
     expect(err.kind).toBe('server');
   });
+
+  it('retries without response_format when the provider rejects it', async () => {
+    await enable();
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { response_format?: unknown };
+      return body.response_format ? response({ error: { message: 'response_format unsupported' } }, 400) : reply('ok');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(chat([{ role: 'user', content: 'hi' }], { json: true })).resolves.toBe('ok');
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const first = JSON.parse(String(fetchMock.mock.calls[0][1].body)) as { response_format?: unknown };
+    const second = JSON.parse(String(fetchMock.mock.calls[1][1].body)) as { response_format?: unknown };
+    expect(first.response_format).toEqual({ type: 'json_object' });
+    expect(second.response_format).toBeUndefined();
+  });
+
+  it('does not retry a 400 when JSON mode was not requested', async () => {
+    await enable();
+    const fetchMock = vi.fn(async () => response({ error: { message: 'bad request' } }, 400));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const err = await failure(chat([{ role: 'user', content: 'hi' }]));
+    expect(err.status).toBe(400);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('times out when the provider never answers', async () => {
+    await enable();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+          }),
+      ),
+    );
+
+    const err = await failure(chat([{ role: 'user', content: 'hi' }], { timeoutMs: 5 }));
+    expect(err.kind).toBe('timeout');
+    expect(err.message).toMatch(/timed out/i);
+  });
+
+  it('never calls the provider when the signal is already aborted', async () => {
+    await enable();
+    const fetchMock = vi.fn(async () => reply('ok'));
+    vi.stubGlobal('fetch', fetchMock);
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(chat([{ role: 'user', content: 'hi' }], { signal: controller.signal })).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('propagates a caller abort during the request as AbortError', async () => {
+    await enable();
+    const controller = new AbortController();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+            setTimeout(() => controller.abort(), 1);
+          }),
+      ),
+    );
+
+    await expect(chat([{ role: 'user', content: 'hi' }], { signal: controller.signal })).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+  });
+
+  it('never echoes the API key back in a provider error', async () => {
+    await enable();
+    await setSetting('ai.apiKey', 'sk-test-secret-1234');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response({ error: { message: 'bad request: sk-test-secret-1234' } }, 400)),
+    );
+
+    const err = await failure(chat([{ role: 'user', content: 'hi' }]));
+    expect(err.message).not.toContain('sk-test-secret-1234');
+    expect(err.message).toContain('[redacted]');
+  });
+
+  it('never repeats the key in an auth error', async () => {
+    await enable();
+    await setSetting('ai.apiKey', 'sk-test-secret-1234');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response({ error: { message: 'Incorrect API key: sk-test-secret-1234' } }, 401)),
+    );
+
+    const err = await failure(chat([{ role: 'user', content: 'hi' }]));
+    expect(err.kind).toBe('auth');
+    expect(err.message).not.toContain('sk-test-secret-1234');
+  });
+
+  it('refuses a plain-http base URL but allows loopback', async () => {
+    await enable('http://api.test/v1');
+    const fetchMock = vi.fn(async () => reply('ok'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const err = await failure(chat([{ role: 'user', content: 'hi' }]));
+    expect(err.kind).toBe('config');
+    expect(err.message).toMatch(/https/i);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await enable('http://localhost:8080/v1');
+    await expect(chat([{ role: 'user', content: 'hi' }])).resolves.toBe('ok');
+  });
+
+  it('refuses a base URL with a query string', async () => {
+    await enable('https://api.test/v1?key=leak');
+    const err = await failure(chat([{ role: 'user', content: 'hi' }]));
+    expect(err.kind).toBe('config');
+  });
 });
 
 describe('mapHttpError', () => {
@@ -121,5 +243,11 @@ describe('mapHttpError', () => {
 
   it('includes the provider message when there is one', () => {
     expect(mapHttpError(500, JSON.stringify({ error: { message: 'overloaded' } })).message).toContain('overloaded');
+  });
+
+  it('redacts the key from provider text', () => {
+    const err = mapHttpError(400, JSON.stringify({ error: { message: 'bad key sk-super-secret' } }), 'sk-super-secret');
+    expect(err.message).not.toContain('sk-super-secret');
+    expect(err.message).toContain('[redacted]');
   });
 });
