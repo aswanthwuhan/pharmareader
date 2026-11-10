@@ -12,7 +12,7 @@ import { db } from '../core/db';
 import { getSetting, setSetting, useSetting } from '../core/settings';
 import type { BookRecord, Highlight } from '../core/types';
 import { createPlayer, type ItemState, type Player } from '../tts/player';
-import { describeEngine, ENGINE_SETTING, type EngineInfo } from '../tts/registry';
+import { describeEngine, ENGINE_SETTING, warmEngine, type EngineInfo } from '../tts/registry';
 import { prerenderChapter } from '../tts/neural/prerender';
 import {
   addBookmark,
@@ -336,6 +336,7 @@ export default function ReaderView() {
         if (!alive) return;
         engineRef.current = info;
         setEngineInfo(info);
+        warmEngine(info.engine);
       })
       .catch(() => {
         // describeEngine already falls back to system; a throw here means no TTS.

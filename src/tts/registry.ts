@@ -46,11 +46,18 @@ async function fastEnough(engine: TtsEngine): Promise<boolean> {
   return typeof rtf === 'number' && Number.isFinite(rtf) && rtf > 0 && rtf < 1;
 }
 
-export async function resolveEngine(): Promise<TtsEngine> {
-  const engine = await pickEngine();
-  // Load the model now (reader resolves on mount), so its 3–6 s load doesn't land on the first sentence.
-  if (engine !== systemEngine) void engine.prepare().catch(() => undefined);
-  return engine;
+export function resolveEngine(): Promise<TtsEngine> {
+  return pickEngine();
+}
+
+/**
+ * Load the model in the background so its 3–6 s load doesn't land on the first sentence.
+ * Only the reader calls this, and only after first paint: loading a 377 MB model during app
+ * boot starved the UI thread into an ANR.
+ */
+export function warmEngine(engine: TtsEngine, delayMs = 1500): void {
+  if (engine === systemEngine) return;
+  setTimeout(() => void engine.prepare().catch(() => undefined), delayMs);
 }
 
 async function pickEngine(): Promise<TtsEngine> {
