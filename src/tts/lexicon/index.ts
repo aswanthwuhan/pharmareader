@@ -4,16 +4,23 @@
  *
  * Built-in entries live in `pharma-lexicon.json` and are seeded into
  * `db.lexicon` on first use. Every row carries a stable id: `b-<n>` for the core
- * rules and `rx-<n>` for the drug-name respellings, so a re-seed can update the
- * rows in place while keeping the user's on/off choices. Rules are applied in
- * *file* order (not id order) — the JSON is ordered from the most specific
- * pattern to the generic glyph rules at the end. User entries always run first,
- * in creation order, then the built-ins.
+ * rules, `rx-<n>` for the drug-name respellings, `med-<n>` for the medical
+ * morphology rules and `term-<n>` for the screened medical-term respellings, so
+ * a re-seed can update the rows in place while keeping the user's on/off
+ * choices. Rules are applied in *file* order (not id order) — the JSON is
+ * ordered from the most specific pattern to the generic glyph rules at the end.
+ * User entries always run first, in creation order, then the built-ins.
+ *
+ * The `term-` rows are a word list, not a handful of patterns, so they are
+ * compiled into one `Map` keyed by the lower-cased word and applied in a single
+ * pass over the chapter's word tokens (`compiledRules`); every other row runs
+ * as a regex. Both paths keep `expand()` idempotent.
  *
  * Convention for letter names: espeak-ng reads a bare capital "A" as the
  * article ("uh"), so letter sequences are written with dots between the
  * capitals ("A.C.E", "A.N.S", "A.T.P-ace") and a lone A as "eigh", which is the
- * only spelling espeak turns into /eɪ/. See `drug-respellings.md`.
+ * only spelling espeak turns into /eɪ/. See `drug-respellings.md`,
+ * `medical-respellings.md` and `term-respellings.md`.
  */
 import rawLexicon from './pharma-lexicon.json?raw';
 import { db } from '../../core/db';
@@ -54,10 +61,25 @@ function builtinOrder(id: string): number {
  * respellings can each be switched off as a group without touching the
  * notation rules.
  */
-export function entryGroup(id: string): 'core' | 'drug' | 'medical' {
+export function entryGroup(id: string): 'core' | 'drug' | 'medical' | 'term' {
   if (id.startsWith('rx-')) return 'drug';
   if (id.startsWith('med-')) return 'medical';
+  if (id.startsWith('term-')) return 'term';
   return 'core';
+}
+
+/**
+ * `\b[Oo]meprazole\b` → `omeprazole`; null for anything that is not a plain
+ * whole-word rule. The `term-` rows are all of that shape, which lets them run
+ * as one hash lookup per word instead of one regex pass per row.
+ */
+const WORD_ENTRY = /^\\b\[([A-Za-z])([A-Za-z])\]([A-Za-z]*)\\b$/;
+
+function wordEntryKey(entry: LexiconEntry): string | null {
+  if (!entry.isRegex) return null;
+  const m = WORD_ENTRY.exec(entry.pattern);
+  if (!m || m[1].toLowerCase() !== m[2].toLowerCase()) return null;
+  return (m[1] + m[3]).toLowerCase();
 }
 
 // ---------------------------------------------------------------------------
@@ -111,10 +133,34 @@ async function seed(): Promise<void> {
 export function invalidate(): void {
   enabledCache = null;
   versionCache = null;
+  compiledCache = null;
 }
 
 let enabledCache: LexiconEntry[] | null = null;
 let versionCache: string | null = null;
+let compiledCache: CompiledRules | null = null;
+
+interface CompiledRules {
+  /** Whole-word respellings, keyed by lowercase word (the `term-` group). */
+  wordMap: ReadonlyMap<string, string>;
+  /** Everything else, still applied as an ordered list of regex/substring rules. */
+  others: readonly LexiconEntry[];
+}
+
+const WORD = /[A-Za-z][A-Za-z'\u2019]*/g;
+
+function compiledRules(entries: readonly LexiconEntry[]): CompiledRules {
+  if (compiledCache) return compiledCache;
+  const wordMap = new Map<string, string>();
+  const others: LexiconEntry[] = [];
+  for (const entry of entries) {
+    const key = entry.id.startsWith('term-') ? wordEntryKey(entry) : null;
+    if (key === null) others.push(entry);
+    else wordMap.set(key, entry.replacement);
+  }
+  compiledCache = { wordMap, others };
+  return compiledCache;
+}
 
 // A half-typed regex in the editor must never break playback.
 const regexCache = new Map<string, RegExp | null>();
@@ -159,8 +205,12 @@ async function enabledEntries(): Promise<LexiconEntry[]> {
 
 /** Rewrite `text` into something a speech engine pronounces correctly. */
 export async function expand(text: string): Promise<string> {
+  const { wordMap, others } = compiledRules(await enabledEntries());
   let out = text;
-  for (const entry of await enabledEntries()) out = applyEntry(out, entry);
+  for (const entry of others) out = applyEntry(out, entry);
+  // The `term-` respellings are whole-word substitutions; one tokenised pass
+  // keeps a long term list from costing one regex pass per word.
+  if (wordMap.size > 0) out = out.replace(WORD, (w) => wordMap.get(w.toLowerCase()) ?? w);
   // Symbol rules emit padded words ("↑" → " increases "); tidy the gaps they leave.
   return out
     .replace(/[ \t]{2,}/g, ' ')

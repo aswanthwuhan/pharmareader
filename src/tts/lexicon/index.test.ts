@@ -27,7 +27,7 @@ describe('seedLexicon', () => {
 
     const rows = await db.lexicon.where('source').equals('builtin').toArray();
     expect(rows).toHaveLength(BUILTIN_LEXICON.length);
-    expect(rows.every((r) => /^(b|rx|med)-\d+$/.test(r.id))).toBe(true);
+    expect(rows.every((r) => /^(b|rx|med|term)-\d+$/.test(r.id))).toBe(true);
     expect(rows.length).toBeGreaterThanOrEqual(150);
   });
 
@@ -249,7 +249,7 @@ describe('extended pharmacology corpus', () => {
     ['MAO-A inhibitors treat atypical depression.', 'M.A.O.A inhibitors treat atypical depression.'],
     ['Selegiline is an MAO-B inhibitor.', 'Selegiline is an M.A.O.B inhibitor.'],
     ['AChE inhibitors are used in myasthenia gravis.', 'A.C.H.E inhibitors are used in myasthenia gravis.'],
-    ['Donepezil is an AChEI.', 'Donepezil is an A.C.H.E inhibitor.'],
+    ['Donepezil is an AChEI.', 'dohneppezil is an A.C.H.E inhibitor.'],
     ['ROS accumulate during reperfusion.', 'R O S accumulate during reperfusion.'],
     ['eNOS and iNOS differ in their calcium requirement.', 'E N O S and I N O S differ in their calcium requirement.'],
     ['NO synthase produces nitric oxide.', 'nitric oxide synthase produces nitric oxide.'],
@@ -305,7 +305,7 @@ describe('extended pharmacology corpus', () => {
     ['The rate is 3 L/h.', 'The rate is 3 liters per hour.'],
     ['The sample contained 20 pg/mL.', 'The sample contained 20 picograms per milliliter.'],
     ['The dose is 10 mg/kg/min.', 'The dose is 10 milligrams per kilogram per minute.'],
-    ['H⁺/K⁺-ATPase is blocked by omeprazole.', 'hydrogen potassium A.T.P-ace is blocked by omeprazole.'],
+    ['H⁺/K⁺-ATPase is blocked by omeprazole.', 'hydrogen potassium A.T.P-ace is blocked by ohmeprazole.'],
     ['CaCl₂ was infused slowly.', 'calcium chloride was infused slowly.'],
     ['MgSO₄ is used for eclampsia.', 'magnesium sulfate is used for eclampsia.'],
     ['Fe²⁺ is absorbed in the duodenum.', 'ferrous ion is absorbed in the duodenum.'],
@@ -520,8 +520,10 @@ describe('extended pharmacology corpus', () => {
 
       await expand('warm up the regex cache'); // compile every pattern once
 
+      // Best of five: the suite runs in parallel with the rest of the project,
+      // and a single contended run is not evidence that the code got slower.
       let best = Number.POSITIVE_INFINITY;
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 5; i++) {
         const started = performance.now();
         const out = await expand(chapter);
         best = Math.min(best, performance.now() - started);
@@ -588,11 +590,18 @@ describe('drug respelling group', () => {
     expect(entryGroup('b-1')).toBe('core');
     expect(entryGroup('rx-1')).toBe('drug');
     expect(entryGroup('med-1')).toBe('medical');
+    expect(entryGroup('term-1')).toBe('term');
     expect(
       BUILTIN_LEXICON.every(
         (e) =>
           entryGroup(e.id) ===
-          (e.id.startsWith('rx-') ? 'drug' : e.id.startsWith('med-') ? 'medical' : 'core'),
+          (e.id.startsWith('rx-')
+            ? 'drug'
+            : e.id.startsWith('med-')
+              ? 'medical'
+              : e.id.startsWith('term-')
+                ? 'term'
+                : 'core'),
       ),
     ).toBe(true);
   });
@@ -831,4 +840,236 @@ describe('medical respelling group (-toxicity, -rrhea, -megaly, single words)', 
       expect(await expand(input)).toBe(input);
     });
   }
+});
+describe('chapter references (Ch 39 -> Chapter 39)', () => {
+  const spoken: [string, string][] = [
+    ['Ch 39', 'Chapter 39'],
+    ['Ch. 39', 'Chapter 39'],
+    ['ch 39', 'Chapter 39'],
+    ['See Ch 12 for details.', 'See Chapter 12 for details.'],
+    ['Ch 1', 'Chapter 1'],
+    ['Ch 300', 'Chapter 300'],
+    ['Chs 3-5', 'Chapters 3 to 5'],
+    ['Chs 3–5', 'Chapters 3 to 5'],
+    ['Chs. 3—5', 'Chapters 3 to 5'],
+    ['Chs 3 to 5', 'Chapters 3 to 5'],
+    ['Ch 39-41', 'Chapters 39 to 41'],
+    ['Ch. 39–41', 'Chapters 39 to 41'],
+    ['Ch 39 to 41', 'Chapters 39 to 41'],
+    ['chs 10-12 were revised', 'Chapters 10 to 12 were revised'],
+    ['Ch 39 and Ch 40', 'Chapter 39 and Chapter 40'],
+  ];
+  for (const [input, want] of spoken) {
+    it(`speaks ${JSON.stringify(input)}`, async () => {
+      expect(await expand(input)).toBe(want);
+    });
+  }
+
+  const untouched = [
+    'ChE inhibitors',
+    'ACh release',
+    'chloride channels',
+    'Ch-',
+    'Ch 301',
+    'Ch 999',
+    'CH 12', // Charrière gauge / heading initials, not a chapter
+    'cholinergic crisis',
+    'cholinesterase',
+    'the chest wall',
+    'Chs',
+    'a chorea',
+    'Ch 0',
+    'Research Chapter 4 described it.',
+  ];
+  for (const input of untouched) {
+    it(`leaves ${JSON.stringify(input)} alone`, async () => {
+      expect(await expand(input)).toBe(input);
+    });
+  }
+
+  it('never expands a bare Ch without a number', async () => {
+    for (const s of ['Ch', 'ch', 'Ch.', 'ch.']) {
+      expect(await expand(s)).toBe(s);
+    }
+  });
+
+  it('leaves AChE to the letter-spelling rule, not to Ch', async () => {
+    expect(await expand('AChE activity')).toBe('A.C.H.E activity');
+  });
+
+  it('is idempotent across both passes', async () => {
+    const once = await expand('Ch 39 and Chs 3-5');
+    expect(once).toBe('Chapter 39 and Chapters 3 to 5');
+    expect(await expand(once)).toBe(once);
+  });
+});
+
+describe('term respellings (screened against Kokoro + Whisper)', () => {
+  const spoken: [string, string][] = [
+    ['omeprazole', 'ohmeprazole'],
+    ['Omeprazole 20 mg', 'ohmeprazole 20 milligrams'],
+    ['esomeprazole was started', 'esohmeprazole was started'],
+    ['pantoprazole infusion', 'pantohprazole infusion'],
+    ['lansoprazole was added', 'lansohprazole was added'],
+    ['acetylcholinesterase inhibitors', 'acetylcholinnesteraze inhibitors'],
+    ['atorvastatin 40 mg', 'attorvastatin 40 milligrams'],
+    ['palonosetron was given', 'palohnohsetrone was given'],
+    ['granisetron is cheaper', 'granisitron is cheaper'],
+    // The medical group still owns the -ine/-amine families; term- rows must
+    // never shadow them (one rule per word).
+    ['thiamine is a cofactor', 'thiameen is a cofactor'],
+    ['pyridoxine deficiency', 'pyridoxeen deficiency'],
+    // Round 2: the drug names the 900-clip baseline round trip failed on and a
+    // hand-written single-token respelling measurably fixed.
+    ['atenolol 50 mg', 'attennolol 50 milligrams'],
+    ['donepezil at night', 'dohneppezil at night'],
+    ['letrozole for breast cancer', 'letrohzole for breast cancer'],
+    ['colestipol was stopped', 'kohlestipol was stopped'],
+    ['droperidol is sedating', 'drohperidol is sedating'],
+    ['topotecan weekly', 'tohpohteekan weekly'],
+    ['probenecid blocks secretion', 'prohbenesid blocks secretion'],
+    ['docetaxel infusion', 'dohsetaksel infusion'],
+    ['risperidone was increased', 'risperridohn was increased'],
+    ['mesoridazine is obsolete', 'mesohridazeen is obsolete'],
+    ['emetics are listed', 'emmetiks are listed'],
+    ['cholangiocarcinoma screening', 'kohlanjeeohkarsinoma screening'],
+    ['levobupivacaine for the block', 'levohbuhpivakaine for the block'],
+    ['pramipexole in restless legs', 'pramihpeksohl in restless legs'],
+    ['tiletamine with zolazepam', 'tilletameen with zolazepam'],
+  ];
+  for (const [input, want] of spoken) {
+    it(`speaks ${JSON.stringify(input)}`, async () => {
+      expect(await expand(input)).toBe(want);
+    });
+  }
+
+  // Common English words must never be rewritten by the medical word map.
+  const untouched = [
+    'machine',
+    'engine',
+    'imagine',
+    'routine',
+    'examine',
+    'determine',
+    'famine',
+    'genuine',
+    'medicine',
+    'decline',
+    'combine',
+    'discipline',
+    'chlorine',
+    'magazine',
+    'tangerine',
+    'maritime',
+    'neoprene',
+    'vaseline',
+    'histamine',
+    'dopamine',
+    'serotonin',
+    'caffeine',
+    'nicotine',
+    'cocaine',
+    'morphine',
+    'insulin',
+    'penicillin',
+    'aspirin',
+    'heparin',
+    'cyanocobalamin',
+    'tetracycline',
+    'erythromycin',
+    'vancomycin',
+    'gentamicin',
+    'metronidazole',
+    'ketoconazole',
+    'fluconazole',
+    'rabeprazole', // screened, but the candidate regressed: kept as written
+    'spironolactone', // screened, baseline already fine: kept as written
+    'norepinephrine', // screened, no single-token fix found
+    'furosemide', // screened, no single-token fix found
+    'levetiracetam',
+    'artesunate',
+    'artemether',
+    'pyrazinamide',
+    'oseltamivir',
+    'linezolid',
+    'celecoxib',
+    'hydrochlorothiazide',
+    'amoxicillin',
+    'amoxicillin-clavulanate',
+    'atorvastatins',
+    'sotalol', // tried: the respelling phonemises identically, so it was dropped
+    'ritanserin', // tried: the transcript did not change, so it was dropped
+    'dutasteride', // tried: IPA improved but the round trip did not, so it was dropped
+    'ionophores', // tried: the round trip regressed, so it was dropped
+    'tinnitus', // screened, espeak is already right; the recogniser mishears it
+    'taurine', // screened, already right
+    'arsenates', // screened, already right
+    'cholangiogram', // shares a prefix with a respelled term, not a term itself
+    'emetic', // the rule covers the plural that the corpus uses, not this form
+    'metoprolol', // -olol family that espeak already handles
+    'bisoprolol',
+    'ondansetron', // -setron family, but espeak already handles it
+    'tropisetron',
+  ];
+  for (const input of untouched) {
+    it(`leaves ${JSON.stringify(input)} alone`, async () => {
+      expect(await expand(input)).toBe(input);
+    });
+  }
+
+  it('leaves its own output alone', async () => {
+    for (const [, want] of spoken) {
+      expect(await expand(want)).toBe(want);
+    }
+  });
+
+  it('is a switchable group', async () => {    await seedLexicon();
+    expect(await expand('omeprazole')).toBe('ohmeprazole');
+    const terms = BUILTIN_LEXICON.filter((e) => entryGroup(e.id) === 'term');
+    expect(terms.length).toBeGreaterThanOrEqual(8);
+    for (const e of terms) await setEntryEnabled(e.id, false);
+    expect(await expand('omeprazole')).toBe('omeprazole');
+  });
+
+  it('keeps ids stable and every row a single whole-word rule', () => {
+    const terms = BUILTIN_LEXICON.filter((e) => e.id.startsWith('term-'));
+    expect(terms.map((e) => e.id)).toEqual([
+      'term-1',
+      'term-2',
+      'term-3',
+      'term-4',
+      'term-5',
+      'term-6',
+      'term-7',
+      'term-8',
+      'term-9',
+      'term-10',
+      'term-11',
+      'term-12',
+      'term-13',
+      'term-14',
+      'term-15',
+      'term-16',
+      'term-17',
+      'term-18',
+      'term-19',
+      'term-20',
+      'term-21',
+      'term-22',
+      'term-23',
+    ]);
+    for (const e of terms) {
+      expect(e.isRegex).toBe(true);
+      expect(e.pattern).toMatch(/^\\b\[[A-Za-z][A-Za-z]\][A-Za-z]+\\b$/);
+      // A respelling is one token: no spaces, no hyphens (see term-respellings.md).
+      expect(e.replacement).toMatch(/^[a-z]+$/);
+    }
+  });
+
+  it('runs the word map in one pass, matching whole tokens only', async () => {
+    // The map is applied per word token, so a longer word never contains a hit.
+    expect(await expand('omeprazolelike')).toBe('omeprazolelike');
+    expect(await expand('OMEPRAZOLE')).toBe('ohmeprazole');
+    expect(await expand('(omeprazole)')).toBe('(ohmeprazole)');
+  });
 });
