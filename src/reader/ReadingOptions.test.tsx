@@ -2,10 +2,20 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { db } from '../core/db';
-import { DEFAULT_PAUSE_MS, DEFAULT_SKIP, PAUSE_KEY, SKIP_KEY, WORD_HIGHLIGHT_KEY } from './reading';
+import {
+  BRACKET_KEY,
+  DEFAULT_PAUSE_MS,
+  DEFAULT_SKIP,
+  LEGACY_BRACKET_KEY,
+  PAUSE_KEY,
+  SKIP_KEY,
+  WORD_HIGHLIGHT_KEY,
+} from './reading';
 import ReadingOptions from './ReadingOptions';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const ANNOUNCE_LABEL = 'Say “in brackets” (recommended)';
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -62,12 +72,51 @@ describe('ReadingOptions', () => {
     expect(container.querySelector('#reading-h2')?.textContent).toBe('Reading aloud');
     expect(box('Tables').checked).toBe(DEFAULT_SKIP.tables);
     expect(box('Citations').checked).toBe(DEFAULT_SKIP.citations);
-    expect(box('Parenthetical asides').checked).toBe(DEFAULT_SKIP.brackets);
+    expect(box(ANNOUNCE_LABEL).checked).toBe(true);
     expect(box('Highlight the word being spoken').checked).toBe(true);
 
     const pause = container.querySelector<HTMLInputElement>('#rd-pause')!;
     expect(pause.value).toBe(String(DEFAULT_PAUSE_MS));
     expect(container.textContent).toContain('0.3 s of silence between paragraphs');
+  });
+
+  it('offers exactly three ways to read brackets', async () => {
+    await render();
+
+    const radios = [...container.querySelectorAll<HTMLInputElement>('input[name="rd-brackets"]')];
+    expect(radios.map((radio) => radio.getAttribute('aria-label'))).toEqual([
+      ANNOUNCE_LABEL,
+      'Read normally',
+      'Skip',
+    ]);
+    expect(container.querySelector('#rd-brackets-hint')?.textContent).toContain('(ANS)');
+  });
+
+  it('stores the bracket mode when another option is picked', async () => {
+    await render();
+
+    await act(async () => {
+      box('Skip').click();
+    });
+    await waitFor(async () => (await stored(BRACKET_KEY)) === 'skip', 'skip mode stored');
+    await waitFor(() => box('Skip').checked === true, 'skip radio checked');
+    await waitFor(() => box(ANNOUNCE_LABEL).checked === false, 'announce radio unchecked');
+  });
+
+  it('migrates the old on/off parenthetical switch', async () => {
+    await db.settings.put({ key: LEGACY_BRACKET_KEY, value: true });
+    await render();
+
+    await waitFor(() => box('Skip').checked === true, 'legacy switch shown as skip');
+    expect(box(ANNOUNCE_LABEL).checked).toBe(false);
+  });
+
+  it('prefers the new setting over the old one', async () => {
+    await db.settings.put({ key: LEGACY_BRACKET_KEY, value: true });
+    await db.settings.put({ key: BRACKET_KEY, value: 'read' });
+    await render();
+
+    await waitFor(() => box('Read normally').checked === true, 'stored mode wins');
   });
 
   it('turns a skipped kind back on in the settings store', async () => {

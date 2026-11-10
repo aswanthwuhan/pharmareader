@@ -11,17 +11,23 @@
  */
 import { useSetting, setSetting } from '../core/settings';
 import {
+  BRACKET_KEY,
   DEFAULT_PAUSE_MS,
   DEFAULT_SKIP,
   PAUSE_KEY,
   SKIP_KEY,
   WORD_HIGHLIGHT_KEY,
+  useBracketMode,
   type SkipOptions,
 } from './reading';
+import type { BracketMode } from './spoken';
 import './reader.css';
 
+/** Keys that are a plain on/off switch. */
+type SwitchKey = Exclude<keyof SkipOptions, 'brackets'>;
+
 /** The order the switches appear in: prose structure first, then notation. */
-const SKIP_ROWS: { key: keyof SkipOptions; label: string; hint?: string }[] = [
+const SKIP_ROWS: { key: SwitchKey; label: string; hint?: string }[] = [
   { key: 'tables', label: 'Tables', hint: 'Dose tables stay on the page, unread.' },
   { key: 'figures', label: 'Figures & charts', hint: 'Their captions are a separate switch.' },
   { key: 'captions', label: 'Captions' },
@@ -30,7 +36,25 @@ const SKIP_ROWS: { key: keyof SkipOptions; label: string; hint?: string }[] = [
   { key: 'footnotes', label: 'Footnotes' },
   { key: 'references', label: 'References', hint: 'The bibliography at the end of a chapter.' },
   { key: 'citations', label: 'Citations', hint: '“[12]” and “(Smith et al., 2019)” are not spoken.' },
-  { key: 'brackets', label: 'Parenthetical asides', hint: 'Side remarks in brackets, e.g. “(see Fig. 2)”.' },
+];
+
+/** Three ways to speak "(ANS)", "(see Fig. 2)" — words in brackets carry meaning. */
+const BRACKET_ROWS: { value: BracketMode; label: string; hint: string }[] = [
+  {
+    value: 'announce',
+    label: 'Say “in brackets” (recommended)',
+    hint: '“Autonomic nervous system (ANS)” → “autonomic nervous system, ANS in brackets”.',
+  },
+  {
+    value: 'read',
+    label: 'Read normally',
+    hint: 'Brackets are read as written, with no extra words.',
+  },
+  {
+    value: 'skip',
+    label: 'Skip',
+    hint: 'Words in brackets are left out of the voice entirely.',
+  },
 ];
 
 function pauseLabel(ms: number): string {
@@ -48,11 +72,11 @@ export default function ReadingOptions() {
   const footnotes = useSetting<boolean>(SKIP_KEY.footnotes, DEFAULT_SKIP.footnotes);
   const references = useSetting<boolean>(SKIP_KEY.references, DEFAULT_SKIP.references);
   const citations = useSetting<boolean>(SKIP_KEY.citations, DEFAULT_SKIP.citations);
-  const brackets = useSetting<boolean>(SKIP_KEY.brackets, DEFAULT_SKIP.brackets);
+  const brackets = useBracketMode();
   const pauseMs = useSetting<number>(PAUSE_KEY, DEFAULT_PAUSE_MS);
   const wordHighlight = useSetting<boolean>(WORD_HIGHLIGHT_KEY, true);
 
-  const values: Record<keyof SkipOptions, boolean> = {
+  const values: Record<SwitchKey, boolean> = {
     tables,
     figures,
     captions,
@@ -61,7 +85,6 @@ export default function ReadingOptions() {
     footnotes,
     references,
     citations,
-    brackets,
   };
 
   return (
@@ -93,6 +116,31 @@ export default function ReadingOptions() {
                 checked={values[row.key]}
                 aria-label={row.label}
                 onChange={(event) => void setSetting(SKIP_KEY[row.key], event.target.checked)}
+              />
+            </label>
+          ))}
+        </fieldset>
+
+        <fieldset className="rd-opt-group rd-opt-brackets">
+          <legend className="rd-opt-legend">Text in brackets</legend>
+          <p className="rd-opt-hint" id="rd-brackets-hint">
+            Text in brackets is part of the sentence, so the voice can say so instead of leaving a gap:
+            “(ANS)” becomes “ANS in brackets”.
+          </p>
+          {BRACKET_ROWS.map((row) => (
+            <label className="rd-opt-row" key={row.value}>
+              <span className="rd-opt-text">
+                <span className="rd-opt-name">{row.label}</span>
+                <span className="rd-opt-note">{row.hint}</span>
+              </span>
+              <input
+                className="rd-opt-check rd-opt-radio"
+                type="radio"
+                name="rd-brackets"
+                value={row.value}
+                checked={brackets === row.value}
+                aria-label={row.label}
+                onChange={() => void setSetting(BRACKET_KEY, row.value)}
               />
             </label>
           ))}

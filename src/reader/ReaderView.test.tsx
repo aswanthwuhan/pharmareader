@@ -910,3 +910,149 @@ describe('reader: generation status, skips and word highlight', () => {
     expect(container.querySelector('.rd-word')).toBeNull();
   });
 });
+
+describe('reader: playing a selection', () => {
+  async function pick(ids: string[]): Promise<void> {
+    await longPress(ids[0]!);
+    await waitFor(() => container.querySelector('[role="dialog"]') !== null, 'selection actions');
+    for (const id of ids.slice(1)) {
+      await act(async () => {
+        buttonByLabel('Extend selection by one sentence')?.click();
+      });
+      await waitFor(() => container.querySelector(`[data-sid="${id}"].selected`) !== null, 'sentence added');
+    }
+    await waitFor(() => buttonByLabel('Play selection') !== null, 'play selection offered');
+  }
+
+  it('plays only the picked sentences', async () => {
+    await db.books.put(makeListBook(['One.', 'Two.', 'Three.']));
+    await renderReader();
+    await waitForEngine();
+    await pick(['0-0-1']);
+
+    await act(async () => {
+      buttonByLabel('Play selection')?.click();
+    });
+    await waitFor(() => playerMock.calls.length === 1, 'player created');
+    expect(playerMock.calls[0]?.items.map((item) => item.id)).toEqual(['0-0-1']);
+    expect(playerMock.calls[0]?.startIndex).toBe(0);
+    expect(playerMock.calls[0]?.played).toBe(1);
+    expect(container.textContent).toContain('Selection: sentence 1 of 1');
+  });
+
+  it('plays a run of sentences in reading order', async () => {
+    await db.books.put(makeListBook(['One.', 'Two.', 'Three.']));
+    await renderReader();
+    await waitForEngine();
+    await pick(['0-0-0', '0-0-1']);
+
+    await act(async () => {
+      buttonByLabel('Play selection')?.click();
+    });
+    await waitFor(() => playerMock.calls.length === 1, 'player created');
+    expect(playerMock.calls[0]?.items.map((item) => item.id)).toEqual(['0-0-0', '0-0-1']);
+
+    await act(async () => {
+      playerMock.calls[0]?.onSentence?.('0-0-1', 1);
+    });
+    expect(container.textContent).toContain('Selection: sentence 2 of 2');
+  });
+
+  it('stops at the end and offers continue and replay', async () => {
+    await db.books.put(makeListBook(['One.', 'Two.', 'Three.']));
+    await renderReader();
+    await waitForEngine();
+    await pick(['0-0-0']);
+
+    await act(async () => {
+      buttonByLabel('Play selection')?.click();
+    });
+    await waitFor(() => playerMock.calls.length === 1, 'player created');
+    await act(async () => {
+      playerMock.calls[0]?.onDone?.();
+    });
+
+    expect(container.textContent).toContain('Selection finished');
+    expect(buttonByText('Continue from here')).not.toBeNull();
+    expect(buttonByText('Replay')).not.toBeNull();
+    expect(playerMock.calls[0]?.stops).toBe(0);
+  });
+
+  it('replays the same selection', async () => {
+    await db.books.put(makeListBook(['One.', 'Two.', 'Three.']));
+    await renderReader();
+    await waitForEngine();
+    await pick(['0-0-1']);
+
+    await act(async () => {
+      buttonByLabel('Play selection')?.click();
+    });
+    await waitFor(() => playerMock.calls.length === 1, 'player created');
+    await act(async () => {
+      playerMock.calls[0]?.onDone?.();
+    });
+    await act(async () => {
+      buttonByText('Replay')?.click();
+    });
+
+    expect(playerMock.calls.length).toBe(2);
+    expect(playerMock.calls[1]?.items.map((item) => item.id)).toEqual(['0-0-1']);
+  });
+
+  it('continues from the sentence after the selection', async () => {
+    await db.books.put(makeListBook(['One.', 'Two.', 'Three.']));
+    await renderReader();
+    await waitForEngine();
+    await pick(['0-0-0']);
+
+    await act(async () => {
+      buttonByLabel('Play selection')?.click();
+    });
+    await waitFor(() => playerMock.calls.length === 1, 'player created');
+    await act(async () => {
+      playerMock.calls[0]?.onDone?.();
+    });
+    await act(async () => {
+      buttonByText('Continue from here')?.click();
+    });
+
+    await waitFor(() => playerMock.calls.length === 2, 'chapter playback resumed');
+    expect(playerMock.calls[1]?.items.map((item) => item.id)).toEqual(['0-0-0', '0-0-1', '0-0-2']);
+    expect(playerMock.calls[1]?.startIndex).toBe(1);
+    expect(container.textContent).not.toContain('Selection finished');
+  });
+
+  it('plays a skipped sentence the reader picked by hand', async () => {
+    const book = makeBook();
+    book.parsed.chapters[0]!.blocks.push({
+      id: 'b-0-1',
+      kind: 'table',
+      sentences: [{ id: '0-1-0', text: 'Dose: 5 mg twice daily.' }],
+    });
+    await db.books.put(book);
+    await renderReader();
+    await waitForEngine();
+    await waitFor(() => sentence('0-1-0') !== null, 'table sentence rendered');
+    await pick(['0-1-0']);
+
+    await act(async () => {
+      buttonByLabel('Play selection')?.click();
+    });
+    await waitFor(() => playerMock.calls.length === 1, 'player created');
+    expect(playerMock.calls[0]?.items.map((item) => item.id)).toEqual(['0-1-0']);
+  });
+
+  it('stops a running selection instead of playing the whole chapter', async () => {
+    await db.books.put(makeListBook(['One.', 'Two.', 'Three.']));
+    await renderReader();
+    await waitForEngine();
+    await pick(['0-0-2']);
+
+    await act(async () => {
+      buttonByLabel('Play selection')?.click();
+    });
+    await waitFor(() => playerMock.calls.length === 1, 'player created');
+    expect(container.textContent).not.toContain('Sentence 1 of 3');
+    expect(container.textContent).toContain('Selection: sentence 1 of 1');
+  });
+});

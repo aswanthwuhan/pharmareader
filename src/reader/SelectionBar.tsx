@@ -11,6 +11,7 @@ export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink';
 interface Props {
   text: string;
   count: number;
+  onPlay(): void;
   onHighlight(color: HighlightColor): void;
   onNote(note: string): void;
   onBookmark(): void;
@@ -30,6 +31,7 @@ const COLORS: { color: HighlightColor; label: string }[] = [
 export default function SelectionBar({
   text,
   count,
+  onPlay,
   onHighlight,
   onNote,
   onBookmark,
@@ -121,6 +123,14 @@ export default function SelectionBar({
           </div>
 
           <div className="rd-select-actions">
+            <button
+              type="button"
+              className="btn btn-primary rd-action"
+              aria-label="Play selection"
+              onClick={onPlay}
+            >
+              <Glyph>{icons.play}</Glyph><span>Play</span>
+            </button>
             <button
               type="button"
               className="btn btn-ghost rd-action"

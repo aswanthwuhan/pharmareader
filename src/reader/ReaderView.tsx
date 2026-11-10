@@ -36,6 +36,7 @@ import {
   DEFAULT_PAUSE_MS,
   PAUSE_KEY,
   planChapter,
+  planSelection,
   skippedLabel,
   useSkipOptions,
   WORD_HIGHLIGHT_KEY,
@@ -105,6 +106,17 @@ interface Picked {
   text: string;
 }
 
+/** A hand-picked passage being read: it stops at its end instead of continuing. */
+interface SelectionPlay {
+  /** Sentence ids in the order they were picked (already deduplicated). */
+  ids: string[];
+  chapterIndex: number;
+  total: number;
+  /** 1-based sentence inside the selection. */
+  at: number;
+  done: boolean;
+}
+
 export default function ReaderView() {
   const { bookId } = useParams<{ bookId: string }>();
 
@@ -128,6 +140,8 @@ export default function ReaderView() {
   const [drawer, setDrawer] = useState<'none' | 'toc' | 'notes' | 'topics'>('none');
   const [typeOpen, setTypeOpen] = useState(false);
   const [selection, setSelection] = useState<Picked | null>(null);
+  /** Non-null from "Play selection" until the passage ends or playback restarts. */
+  const [selectionPlay, setSelectionPlay] = useState<SelectionPlay | null>(null);
   const [aiText, setAiText] = useState<string | null>(null);
   const [playState, setPlayState] = useState<PlayState>('idle');
   const [engineInfo, setEngineInfo] = useState<EngineInfo | null>(null);
@@ -400,6 +414,7 @@ export default function ReaderView() {
     setItemStates(new Map());
     setReadyAhead(0);
     setWord(null);
+    setSelectionPlay(null);
   }
 
   /** What pre-rendering should cache: the spoken form the player will ask for. */
@@ -517,6 +532,126 @@ export default function ReaderView() {
     const info = await engineForPlay();
     if (mine !== generation.current) return;
     beginPlayback(info, ci, at);
+  }
+
+  /**
+   * Speak only the picked sentences, in the order they were picked, and stop at
+   * the end instead of continuing through the chapter. A selection is an
+   * explicit request, so it wins over the skip switches: a sentence from a
+   * skipped table is read here too.
+   */
+  function beginSelectionPlayback(info: EngineInfo, ids: string[], ci: number): void {
+    if (!book || !index) return;
+    const target = book.parsed.chapters[ci];
+    if (!target) return;
+    const items = planSelection(target, ids, skipRef.current, pauseRef.current);
+    if (items.length === 0) return;
+
+    releasePlayer();
+    const mine = ++generation.current;
+    const positions = new Map(items.map((item, position) => [item.id, position]));
+
+    setError(null);
+    setFailed(null);
+    setItemStates(new Map());
+    setReadyAhead(0);
+    setWord(null);
+
+    const player = createPlayer({
+      engine: info.engine,
+      items,
+      startIndex: 0,
+      voiceId: voiceRef.current || undefined,
+      rate: rateRef.current,
+      onSentence: (id) => {
+        if (mine !== generation.current) return;
+        const pos = index.byId.get(id);
+        if (pos) setCursor(pos);
+        setWord(null);
+        const at = positions.get(id);
+        if (at === undefined) return;
+        setSelectionPlay((current) => (current ? { ...current, at: at + 1 } : current));
+      },
+      onItemState: (id, state) => {
+        if (mine !== generation.current) return;
+        setItemStates((current) => {
+          const next = new Map(current);
+          next.set(id, state);
+          return next;
+        });
+      },
+      onBuffer: (count) => {
+        if (mine !== generation.current) return;
+        setReadyAhead(count);
+      },
+      onWord: (id, charIndex) => {
+        if (mine !== generation.current || !wordRef.current) return;
+        setWord({ id, charIndex });
+      },
+      onDone: () => {
+        if (mine !== generation.current) return;
+        // The end of the passage, not the end of the chapter: stay put and offer
+        // the two ways on.
+        setPlayState('idle');
+        setWord(null);
+        setSelectionPlay((current) => (current ? { ...current, at: current.total, done: true } : current));
+      },
+      onError: (err, id) => {
+        if (mine !== generation.current) return;
+        setPlayState('idle');
+        setError(err.message);
+        if (id) setFailed({ id, message: err.message });
+      },
+    });
+    playerRef.current = player;
+    setPlayState('playing');
+    setSelectionPlay({ ids: [...ids], chapterIndex: ci, total: items.length, at: 1, done: false });
+    const firstPos = index.byId.get(items[0]!.id);
+    if (firstPos) setCursor(firstPos);
+    player.play();
+  }
+
+  /** Play picked sentences now if the engine is resolved, else once it is. */
+  function startSelection(ids: string[], ci: number): void {
+    const info = engineRef.current;
+    if (info) {
+      beginSelectionPlayback(info, ids, ci);
+      return;
+    }
+    const mine = generation.current;
+    void engineForPlay().then((loaded) => {
+      if (mine !== generation.current) return;
+      beginSelectionPlayback(loaded, ids, ci);
+    });
+  }
+
+  function playSelection(): void {
+    if (!selection || !index) return;
+    const ids = selection.ids.filter((id) => index.byId.has(id));
+    const first = ids[0] !== undefined ? index.byId.get(ids[0]) : undefined;
+    if (!first || ids.length === 0) return;
+    clearSelection();
+    startSelection(ids, first.chapterIndex);
+  }
+
+  /** After a selection finishes: carry on in the chapter from the next sentence. */
+  function continueAfterSelection(): void {
+    const picked = selectionPlay;
+    if (!picked) return;
+    const lastId = picked.ids[picked.ids.length - 1];
+    const last = lastId && index ? index.byId.get(lastId) : undefined;
+    const next = last ? (neighbour(last, 1) ?? last) : cursorRef.current;
+    setSelectionPlay(null);
+    if (!next) return;
+    const info = engineRef.current;
+    if (info) beginPlayback(info, next.chapterIndex, next.index);
+    else void startFrom(next.chapterIndex, next.index);
+  }
+
+  function replaySelection(): void {
+    const picked = selectionPlay;
+    if (!picked) return;
+    startSelection(picked.ids, picked.chapterIndex);
   }
 
   function pauseOnly(): void {
@@ -668,6 +803,7 @@ export default function ReaderView() {
   function goToChapter(ci: number): void {
     if (!index || ci < 0 || ci >= index.chapters.length) return;
     if (playStateRef.current !== 'idle') releasePlayer();
+    setSelectionPlay(null);
     flushBookPos();
     setCursor({ chapterIndex: ci, index: 0 });
   }
@@ -746,6 +882,27 @@ export default function ReaderView() {
     window.getSelection()?.removeAllRanges();
   }
 
+  // The action sheet covers the lower half of the page, so a selection that
+  // grows downwards must bring its newest sentence back into view.
+  useEffect(() => {
+    const last = selection?.ids[selection.ids.length - 1];
+    const page = pageRef.current;
+    if (!last || !page) return;
+    const el = page.querySelector<HTMLElement>(`[data-sid="${CSS.escape(last)}"]`);
+    if (!el) return;
+    const sheetTop = page.querySelector<HTMLElement>('.rd-select')?.getBoundingClientRect().top;
+    const limit = (sheetTop ?? window.innerHeight - 320) - 16;
+    const rect = el.getBoundingClientRect();
+    const delta = rect.bottom > limit ? rect.bottom - limit : rect.top < 96 ? rect.top - 96 : 0;
+    if (delta !== 0) {
+      try {
+        window.scrollBy({ top: delta, behavior: 'smooth' });
+      } catch {
+        window.scrollTo(0, window.scrollY + delta);
+      }
+    }
+  }, [selection]);
+
   /** Grow a long-press selection one sentence further. */
   function extendSelection(): void {
     if (!selection || !index) return;
@@ -818,6 +975,7 @@ export default function ReaderView() {
     const pos = index?.byId.get(sentenceId);
     if (!pos) return;
     if (playStateRef.current !== 'idle') releasePlayer();
+    setSelectionPlay(null);
     flushBookPos();
     setCursor(pos);
     setMode('text');
@@ -1084,6 +1242,7 @@ export default function ReaderView() {
           wordHighlight={wordHighlight}
           onTap={(sentence: FlatSentence) => {
             setSelection(null);
+            setSelectionPlay(null);
             const playable = !plan || plan.orderById.has(sentence.id);
             if (playStateRef.current === 'playing' && playable) {
               const info = engineRef.current;
@@ -1135,6 +1294,17 @@ export default function ReaderView() {
         readyAhead={readyAhead}
         pages={showPage ? null : pageNav}
         fromHere={mode === 'text' && !cursorOnScreen && playState !== 'playing'}
+        selection={
+          selectionPlay
+            ? {
+                at: selectionPlay.at,
+                total: selectionPlay.total,
+                done: selectionPlay.done,
+                onContinue: continueAfterSelection,
+                onReplay: replaySelection,
+              }
+            : null
+        }
         onToggle={togglePlay}
         onStop={stopPlayback}
         onPrev={() => step(-1)}
@@ -1149,6 +1319,7 @@ export default function ReaderView() {
         <SelectionBar
           text={selection.text}
           count={selection.ids.length}
+          onPlay={playSelection}
           onHighlight={(color) => void highlightSelection(color)}
           onNote={(note) => void highlightSelection('yellow', note)}
           onBookmark={() => void bookmarkHere()}

@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { Block, Chapter, Sentence } from '../core/types';
-import { DEFAULT_SKIP, isSkipped, planChapter, skippedLabel, type BlockKind } from './reading';
+import {
+  DEFAULT_SKIP,
+  isBracketMode,
+  isSkipped,
+  planChapter,
+  planSelection,
+  resolveBracketMode,
+  skippedLabel,
+  type BlockKind,
+} from './reading';
 
 function sentence(id: string, text: string): Sentence {
   return { id, text };
@@ -86,5 +95,103 @@ describe('planChapter', () => {
     expect(skippedLabel('figure')).toBe('Figure');
     expect(skippedLabel('header')).toBe('Running head');
     expect(skippedLabel('footnote')).toBe('Footnote');
+  });
+
+  it('announces brackets with the default mode', () => {
+    const plan = planChapter(chapter([block('b1', 'p', ['The system (ANS) acts.'])]), DEFAULT_SKIP, 0);
+    expect(plan.items[0]?.text).toBe('The system (ANS) acts.');
+    expect(plan.items[0]?.spoken).toBe('The system, ANS in brackets, acts.');
+    expect(plan.items[0]?.charMap).not.toBeNull();
+  });
+
+  it('reads the brackets of a formula as written', () => {
+    const plan = planChapter(
+      chapter([block('b1', 'formula', ['Dose (mg) = D / V'])]),
+      { ...DEFAULT_SKIP, formulas: false },
+      0,
+    );
+    expect(plan.items[0]?.text).toBe('Dose (mg) = D / V');
+    expect(plan.items[0]?.spoken).toBeUndefined();
+  });
+
+  it('drops brackets entirely in skip mode', () => {
+    const plan = planChapter(
+      chapter([block('b1', 'p', ['Give 2 mg (twice daily) now.'])]),
+      { ...DEFAULT_SKIP, brackets: 'skip' },
+      0,
+    );
+    expect(plan.items[0]?.spoken).toBe('Give 2 mg now.');
+  });
+});
+
+describe('planSelection', () => {
+  const text = chapter([
+    block('b1', 'p', ['One.', 'Two.']),
+    block('b2', 'table', ['Table 1. Outcomes.']),
+    block('b3', 'p', ['Three (I think).']),
+  ]);
+
+  it('builds a queue in the order the sentences were selected', () => {
+    const items = planSelection(text, ['b1-1', 'b1-0'], SKIP_NONE, 0);
+    expect(items.map((item) => item.id)).toEqual(['b1-1', 'b1-0']);
+  });
+
+  it('keeps only one copy of a sentence selected twice', () => {
+    const items = planSelection(text, ['b1-0', 'b1-0', 'b1-1'], SKIP_NONE, 0);
+    expect(items.map((item) => item.id)).toEqual(['b1-0', 'b1-1']);
+  });
+
+  it('plays a sentence of a skipped kind when it was selected by hand', () => {
+    const items = planSelection(text, ['b2-0'], DEFAULT_SKIP, 0);
+    expect(items.map((item) => item.id)).toEqual(['b2-0']);
+    expect(items[0]?.text).toBe('Table 1. Outcomes.');
+  });
+
+  it('plays a passage made only of skipped kinds', () => {
+    const skippedOnly = chapter([
+      block('s1', 'table', ['Table 1. Outcomes.']),
+      block('s2', 'figure', ['Figure 1. Curve.']),
+      block('s3', 'footnote', ['A footnote.']),
+    ]);
+    const items = planSelection(skippedOnly, ['s1-0', 's2-0', 's3-0'], DEFAULT_SKIP, 0);
+    expect(items.map((item) => item.id)).toEqual(['s1-0', 's2-0', 's3-0']);
+    expect(items.map((item) => item.text)).toEqual(['Table 1. Outcomes.', 'Figure 1. Curve.', 'A footnote.']);
+  });
+
+  it('ignores ids that are not in the chapter', () => {
+    expect(planSelection(text, ['nope', 'b1-0'], SKIP_NONE, 0).map((item) => item.id)).toEqual(['b1-0']);
+    expect(planSelection(text, [], SKIP_NONE, 0)).toEqual([]);
+  });
+
+  it('still strips citations and announces brackets', () => {
+    const items = planSelection(text, ['b3-0'], DEFAULT_SKIP, 0);
+    expect(items[0]?.spoken).toBe('Three, in brackets, I think, close bracket.');
+  });
+
+  it('keeps the block pause off selected sentences', () => {
+    const items = planSelection(text, ['b1-0', 'b1-1'], SKIP_NONE, 300);
+    expect(items.map((item) => item.pauseAfterMs)).toEqual([undefined, undefined]);
+  });
+});
+
+describe('bracket setting', () => {
+  it('accepts the three modes only', () => {
+    expect(isBracketMode('announce')).toBe(true);
+    expect(isBracketMode('read')).toBe(true);
+    expect(isBracketMode('skip')).toBe(true);
+    expect(isBracketMode('loud')).toBe(false);
+    expect(isBracketMode(true)).toBe(false);
+    expect(isBracketMode(undefined)).toBe(false);
+  });
+
+  it('migrates the old on/off switch to a mode', () => {
+    expect(resolveBracketMode(undefined, true)).toBe('skip');
+    expect(resolveBracketMode(undefined, false)).toBe('announce');
+    expect(resolveBracketMode(undefined, undefined)).toBe('announce');
+  });
+
+  it('lets the stored mode win over the old switch', () => {
+    expect(resolveBracketMode('read', true)).toBe('read');
+    expect(resolveBracketMode('announce', true)).toBe('announce');
   });
 });

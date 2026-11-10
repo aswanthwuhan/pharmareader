@@ -22,6 +22,20 @@ export interface PageNav {
   onNext(): void;
 }
 
+/**
+ * A hand-picked passage is being read. It replaces the chapter position line,
+ * because "sentence 2 of 4" is the only useful number while it plays.
+ */
+export interface SelectionStatus {
+  /** 1-based position inside the selection. */
+  at: number;
+  total: number;
+  /** The last selected sentence has been spoken. */
+  done: boolean;
+  onContinue(): void;
+  onReplay(): void;
+}
+
 interface Props {
   state: PlayState;
   /** "Kokoro" / "Pocket TTS" / "Phone voice" — never an engine class name. */
@@ -43,6 +57,8 @@ interface Props {
   pages: PageNav | null;
   /** The cursor is off-screen: play should start at the top of the viewport. */
   fromHere: boolean;
+  /** Set while a selected passage is playing, or just after it finished. */
+  selection: SelectionStatus | null;
   onToggle(): void;
   onStop(): void;
   onPrev(): void;
@@ -77,6 +93,7 @@ export default function PlayerBar({
   readyAhead,
   pages,
   fromHere,
+  selection,
   onToggle,
   onStop,
   onPrev,
@@ -99,7 +116,14 @@ export default function PlayerBar({
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
 
-  const percent = sentenceTotal > 0 ? Math.round((sentenceNumber / sentenceTotal) * 100) : 0;
+  const percent =
+    selection !== null
+      ? selection.total > 0
+        ? Math.round((selection.at / selection.total) * 100)
+        : 0
+      : sentenceTotal > 0
+        ? Math.round((sentenceNumber / sentenceTotal) * 100)
+        : 0;
 
   function togglePanel(panel: 'speed' | 'more'): void {
     setOpen((current) => (current === panel ? 'none' : panel));
@@ -111,7 +135,7 @@ export default function PlayerBar({
         <div
           className="rd-player-track"
           role="progressbar"
-          aria-label="Chapter progress"
+          aria-label={selection !== null ? 'Selection progress' : 'Chapter progress'}
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={percent}
@@ -122,8 +146,16 @@ export default function PlayerBar({
         <div className="rd-player-caption">
           <div className="rd-player-meta">
             <p className="rd-player-count" aria-live="polite">
-              {sentenceTotal > 0 ? `Sentence ${sentenceNumber} of ${sentenceTotal}` : 'No sentences here'}
-              {cached && !busy ? <span className="rd-player-saved"> · audio saved</span> : null}
+              {selection !== null
+                ? selection.done
+                  ? 'Selection finished'
+                  : `Selection: sentence ${selection.at} of ${selection.total}`
+                : sentenceTotal > 0
+                  ? `Sentence ${sentenceNumber} of ${sentenceTotal}`
+                  : 'No sentences here'}
+              {selection === null && cached && !busy ? (
+                <span className="rd-player-saved"> · audio saved</span>
+              ) : null}
             </p>
             {generating !== null ? (
               <p className="rd-gen" role="status">
@@ -160,11 +192,24 @@ export default function PlayerBar({
           </button>
         </div>
 
-        {fromHere && !playing ? (
+        {fromHere && !playing && selection === null ? (
           <button type="button" className="rd-from-here" onClick={onPlayFromHere}>
             <Glyph size={16}>{icons.play}</Glyph>
             <span>Play from here</span>
           </button>
+        ) : null}
+
+        {selection?.done ? (
+          <div className="rd-sel-done">
+            <button type="button" className="btn btn-ghost rd-action" onClick={selection.onContinue}>
+              <Glyph>{icons.play}</Glyph>
+              <span>Continue from here</span>
+            </button>
+            <button type="button" className="btn btn-ghost rd-action" onClick={selection.onReplay}>
+              <Glyph>{icons.replay}</Glyph>
+              <span>Replay</span>
+            </button>
+          </div>
         ) : null}
 
         <div className="rd-player-controls">

@@ -9,6 +9,7 @@ import SelectionBar from './SelectionBar';
 type Handler<A extends unknown[] = []> = ReturnType<typeof vi.fn<(...args: A) => void>>;
 
 interface BarProps {
+  onPlay: Handler;
   onHighlight: Handler<[HighlightColor]>;
   onNote: Handler<[string]>;
   onBookmark: Handler;
@@ -20,6 +21,7 @@ interface BarProps {
 
 function renderBar(overrides: Partial<BarProps> = {}): { container: HTMLDivElement; root: Root; props: BarProps } {
   const props: BarProps = {
+    onPlay: vi.fn(),
     onHighlight: vi.fn(),
     onNote: vi.fn(),
     onBookmark: vi.fn(),
@@ -47,6 +49,18 @@ describe('SelectionBar', () => {
 
     const labels = [...container.querySelectorAll<HTMLButtonElement>('button')].map((b) => b.getAttribute('aria-label'));
     expect(labels).toEqual(expect.arrayContaining(['Yellow highlight', 'Green highlight', 'Blue highlight', 'Pink highlight', 'Close actions']));
+    expect(labels).toContain('Play selection');
+    act(() => root.unmount());
+  });
+
+  it('plays the selected sentences', () => {
+    const { container, root, props } = renderBar();
+    const play = container.querySelector<HTMLButtonElement>('[aria-label="Play selection"]');
+    expect(play?.textContent).toContain('Play');
+    act(() => {
+      play?.click();
+    });
+    expect(props.onPlay).toHaveBeenCalledTimes(1);
     act(() => root.unmount());
   });
 

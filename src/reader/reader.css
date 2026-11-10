@@ -1266,3 +1266,36 @@
 .rd-opt-last {
   margin-top: var(--space-3);
 }
+
+/* The bracket mode is a second question, not a ninth switch: a rule and space
+   separate it from the skip list above. */
+.rd-opt-brackets {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.rd-opt-brackets .rd-opt-hint {
+  margin-top: var(--space-1);
+}
+
+/* The same 20 px control box as the skip checkboxes; the browser draws it round. */
+.rd-opt-radio {
+  border-radius: 50%;
+}
+
+/* -- selection playback ---------------------------------------------------- */
+
+/* Two small ways back into the text once a selection has been read out. */
+.rd-sel-done {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  padding: 0 var(--space-3) var(--space-2);
+}
+
+.rd-sel-done .rd-action {
+  color: var(--accent);
+}
+

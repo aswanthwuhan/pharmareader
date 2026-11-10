@@ -8,13 +8,17 @@
  * while the player only ever sees the sentences it should say.
  */
 import { useMemo } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import type { Block, Chapter } from '../core/types';
-import { useSetting } from '../core/settings';
+import { getSetting, useSetting } from '../core/settings';
 import type { PlayerItem } from '../tts/player';
-import { speakPlan } from './spoken';
+import { speakPlan, type BracketMode } from './spoken';
 
 /** The kinds a parsed block can carry ('p' | 'h' | 'li' | 'table' | …). */
 export type BlockKind = Block['kind'];
+
+/** Keys whose value is an on/off switch (brackets is a three-way mode). */
+type SwitchKey = Exclude<keyof SkipOptions, 'brackets'>;
 
 export interface SkipOptions {
   tables: boolean;
@@ -25,7 +29,8 @@ export interface SkipOptions {
   footnotes: boolean;
   references: boolean;
   citations: boolean;
-  brackets: boolean;
+  /** How bracketed asides are spoken; see `BracketMode`. */
+  brackets: BracketMode;
 }
 
 export const DEFAULT_SKIP: SkipOptions = {
@@ -37,11 +42,11 @@ export const DEFAULT_SKIP: SkipOptions = {
   footnotes: true,
   references: true,
   citations: true,
-  brackets: false,
+  brackets: 'announce',
 };
 
 /** Kinds that are read only when their switch is on. */
-const OPTIONAL: Partial<Record<BlockKind, keyof SkipOptions>> = {
+const OPTIONAL: Partial<Record<BlockKind, SwitchKey>> = {
   table: 'tables',
   figure: 'figures',
   caption: 'captions',
@@ -70,6 +75,22 @@ export interface ChapterPlan {
   endsBlock: Set<string>;
 }
 
+/** Only whole, readable sentences are planned; a formula is never announced. */
+function itemFor(text: string, id: string, skip: SkipOptions, kind: BlockKind): PlayerItem {
+  const plan = speakPlan(text, {
+    citations: skip.citations,
+    // Equations are read exactly as printed: "in brackets" would be noise in the
+    // middle of a structure.
+    brackets: kind === 'formula' ? 'read' : skip.brackets,
+  });
+  const item: PlayerItem = { id, text };
+  if (plan.charMap !== null) {
+    item.spoken = plan.text;
+    item.charMap = plan.charMap;
+  }
+  return item;
+}
+
 /**
  * Build the queue for one chapter.
  *
@@ -96,12 +117,7 @@ export function planChapter(chapter: Chapter, skip: SkipOptions, pauseMs: number
 
   for (const block of readBlocks) {
     block.sentences.forEach((sentence, sentenceIndex) => {
-      const plan = speakPlan(sentence.text, { citations: skip.citations, brackets: skip.brackets });
-      const item: PlayerItem = { id: sentence.id, text: sentence.text };
-      if (plan.charMap !== null) {
-        item.spoken = plan.text;
-        item.charMap = plan.charMap;
-      }
+      const item = itemFor(sentence.text, sentence.id, skip, block.kind);
       if (sentenceIndex === block.sentences.length - 1) {
         endsBlock.add(sentence.id);
         if (pauseMs > 0) item.pauseAfterMs = pauseMs;
@@ -112,6 +128,44 @@ export function planChapter(chapter: Chapter, skip: SkipOptions, pauseMs: number
   }
 
   return { items, orderById, skippedBlocks, blockKinds, endsBlock };
+}
+
+/**
+ * The queue for a hand-picked selection, in the order the reader chose.
+ *
+ * A selection wins over the skip switches: asking to play a table row aloud is
+ * an explicit request, so even a skipped sentence is spoken. Sentences keep the
+ * spoken form (citations, brackets) they would have had in the chapter queue.
+ */
+export function planSelection(
+  chapter: Chapter,
+  ids: readonly string[],
+  skip: SkipOptions,
+  pauseMs: number
+): PlayerItem[] {
+  const planned = new Map(planChapter(chapter, skip, pauseMs).items.map((item) => [item.id, item]));
+  const texts = new Map<string, { text: string; kind: BlockKind }>();
+  for (const block of chapter.blocks) {
+    for (const sentence of block.sentences) texts.set(sentence.id, { text: sentence.text, kind: block.kind });
+  }
+
+  const items: PlayerItem[] = [];
+  const seen = new Set<string>();
+  for (const id of ids) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const already = planned.get(id);
+    if (already) {
+      // A selection stops where it ends, so it takes no paragraph pause with it.
+      const { pauseAfterMs: _pause, ...rest } = already;
+      items.push(rest);
+      continue;
+    }
+    const found = texts.get(id);
+    if (!found) continue; // ids from another chapter are ignored, not fatal
+    items.push(itemFor(found.text, id, skip, found.kind));
+  }
+  return items;
 }
 
 /** Human label for the dimmed "skipped while reading" mark. */
@@ -150,9 +204,38 @@ export const SKIP_KEY = {
   brackets: 'read.skip.brackets',
 } as const satisfies Record<keyof SkipOptions, string>;
 
+/** Three-way bracket setting. */
+export const BRACKET_KEY = 'read.brackets';
+/** Old on/off switch; `true` meant "skip asides". Read once, never written. */
+export const LEGACY_BRACKET_KEY = SKIP_KEY.brackets;
+
 export const PAUSE_KEY = 'read.pause.paragraphMs';
 export const WORD_HIGHLIGHT_KEY = 'read.wordHighlight';
 export const DEFAULT_PAUSE_MS = 300;
+
+export function isBracketMode(value: unknown): value is BracketMode {
+  return value === 'announce' || value === 'read' || value === 'skip';
+}
+
+/** `read.brackets` wins; a legacy `read.skip.brackets: true` still means "skip". */
+export function resolveBracketMode(current: unknown, legacy: unknown): BracketMode {
+  if (isBracketMode(current)) return current;
+  return legacy === true ? 'skip' : DEFAULT_SKIP.brackets;
+}
+
+/** Live bracket mode, migrated from the old boolean on first read. */
+export function useBracketMode(): BracketMode {
+  return useLiveQuery(
+    async () => {
+      const current = await getSetting<unknown>(BRACKET_KEY, undefined);
+      if (isBracketMode(current)) return current;
+      const legacy = await getSetting<unknown>(LEGACY_BRACKET_KEY, undefined);
+      return resolveBracketMode(current, legacy);
+    },
+    [],
+    DEFAULT_SKIP.brackets
+  );
+}
 
 /** Live skip switches. One hook so the options section and the reader agree. */
 export function useSkipOptions(): SkipOptions {
@@ -164,7 +247,7 @@ export function useSkipOptions(): SkipOptions {
   const footnotes = useSetting<boolean>(SKIP_KEY.footnotes, DEFAULT_SKIP.footnotes);
   const references = useSetting<boolean>(SKIP_KEY.references, DEFAULT_SKIP.references);
   const citations = useSetting<boolean>(SKIP_KEY.citations, DEFAULT_SKIP.citations);
-  const brackets = useSetting<boolean>(SKIP_KEY.brackets, DEFAULT_SKIP.brackets);
+  const brackets = useBracketMode();
   return useMemo(
     () => ({ tables, figures, captions, formulas, headersFooters, footnotes, references, citations, brackets }),
     [tables, figures, captions, formulas, headersFooters, footnotes, references, citations, brackets]

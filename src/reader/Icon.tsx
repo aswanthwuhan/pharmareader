@@ -76,6 +76,13 @@ export const icons = {
     </>
   ),
   stop: <rect x="7" y="7" width="10" height="10" rx="1.5" />,
+  /** Play it again: a full turn back into the same passage. */
+  replay: (
+    <>
+      <path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" />
+      <path d="M19.5 4.7v4.3h-4.3" />
+    </>
+  ),
   plus: (
     <>
       <path d="M12 5.5v13" />
