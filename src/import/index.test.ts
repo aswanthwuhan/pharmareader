@@ -1,6 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../core/db';
-import { deleteBook, detectFormat, importFile, importText, importUrl, titleFromFileName } from './index';
+import {
+  MISSING_FILE_MESSAGE,
+  deleteBook,
+  detectFormat,
+  fileMissing,
+  importFile,
+  importText,
+  importUrl,
+  ownedCopy,
+  reanalyseBook,
+  titleFromFileName,
+} from './index';
+import { parseText } from './txt';
 
 afterEach(async () => {
   vi.unstubAllGlobals();
@@ -95,6 +107,56 @@ describe('importFile', () => {
 
     expect(first).not.toBe(second);
     expect(await db.books.count()).toBe(2);
+  });
+});
+
+describe('the imported file is owned by the app, not by the picker', () => {
+  it('stores the bytes in a Blob of its own, not the picked File', async () => {
+    const file = new File(['Renal clearance matters. It drives dosing.'], 'renal-notes.txt', { type: 'text/plain' });
+    const add = vi.spyOn(db.books, 'add');
+
+    await importFile(file);
+
+    const record = add.mock.calls[0]?.[0];
+    expect(record?.fileBlob).not.toBe(file);
+    expect(record?.fileBlob.constructor.name).toBe('Blob');
+    expect(record?.fileBlob.size).toBe(file.size);
+    expect(record?.fileBlob.type).toBe('text/plain');
+    add.mockRestore();
+  });
+
+  it('keeps every byte even when the picked file stops reading (the reinstall bug)', async () => {
+    const file = new File(['%PDF-1.4 a page of a paper'], 'paper.pdf', { type: 'application/pdf' });
+
+    const owned = await ownedCopy(file);
+    // After an app update the picker's File reads back empty ("size zero bytes");
+    // the copy has to be whole on its own.
+    vi.spyOn(file, 'arrayBuffer').mockRejectedValue(new Error('the handle is gone'));
+
+    const bytes = new Uint8Array(await owned.arrayBuffer());
+    expect(bytes.byteLength).toBe(file.size);
+    expect(new TextDecoder().decode(bytes)).toContain('a page of a paper');
+  });
+
+  it('recognises a book whose stored file did not survive', () => {
+    expect(fileMissing({ fileBlob: new Blob([]) })).toBe(true);
+    expect(fileMissing({ fileBlob: new Blob(['x']) })).toBe(false);
+  });
+
+  it('tells the reader to re-import instead of asking pdf.js to parse nothing', async () => {
+    const doc = parseText('Thiazides act on the distal convoluted tubule.', 'Gone paper');
+    await db.books.add({
+      id: 'gone',
+      title: doc.title,
+      format: 'pdf',
+      addedAt: 1,
+      fileBlob: new Blob([]),
+      parsed: doc,
+      topicIds: [],
+    });
+
+    await expect(reanalyseBook('gone')).rejects.toThrow(MISSING_FILE_MESSAGE);
+    expect(MISSING_FILE_MESSAGE).toContain('re-import it to use Page view and Re-analyse');
   });
 });
 

@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it, vi } from 'vitest';
-import { getDocument, Util } from 'pdfjs-dist';
+import { describe, expect, it } from 'vitest';
+import { getDocument, Util } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { Chapter, ParsedDoc } from '../core/types';
 import { layoutParagraphs } from './layout/assign';
 import type { LayoutBox } from './layout/engine';
@@ -11,9 +11,8 @@ import { parseEpub } from './epub';
 import { parsePdf, type PdfParseResult } from './pdf';
 import { type PdfParagraph, type PdfTextItem } from './pdfLayout';
 
-// The default pdfjs build needs a browser crypto/DOM stack; the legacy build is
-// the one pdf.js documents for Node. Production keeps using the normal build.
-vi.mock('pdfjs-dist', async () => await import('pdfjs-dist/legacy/build/pdf.mjs'));
+// Same build the app ships: the default one calls ES2025 helpers that older
+// Android WebViews do not have (see src/import/pdfPolyfill.ts).
 
 /**
  * Real-file checks. Fixtures are genuine files (Gutenberg EPUB, Word-produced

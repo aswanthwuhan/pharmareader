@@ -1,6 +1,9 @@
-import { GlobalWorkerOptions, Util, getDocument } from 'pdfjs-dist';
+// The polyfills go in before pdf.js evaluates, and the legacy build is the one
+// pdf.js ships for engines older than the newest Chromium (see pdfPolyfill.ts).
+import './pdfPolyfill';
+import { GlobalWorkerOptions, Util, getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import workerUrl from './pdfWorker?worker&url';
 import type { ParsedDoc } from '../core/types';
 import { getSetting } from '../core/settings';
 import { normaliseText } from './blocks';

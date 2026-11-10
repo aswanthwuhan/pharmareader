@@ -8,10 +8,15 @@
  * This module is loaded lazily (only for PDF books in page mode) because
  * pdfjs-dist is by far the heaviest dependency in the app.
  */
-import { useEffect, useRef, useState } from 'react';
-import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+// pdf.js 6's default build calls ES2025 helpers the phone's WebView does not
+// have (every import crashed with "a.toHex is not a function" on WebView 134);
+// the polyfills and the official legacy build are the fix — see pdfPolyfill.ts.
+import '../import/pdfPolyfill';
+import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import workerUrl from '../import/pdfWorker?worker&url';
+import { MISSING_FILE_MESSAGE, fileMissing } from '../import';
 import type { PdfRect } from '../core/types';
 import { Glyph, icons } from './Icon';
 
@@ -69,8 +74,17 @@ export default function PdfView({ docKey, file, page, rects, onPageChange }: Pro
     let loadingTask: ReturnType<typeof getDocument> | null = null;
     setDoc(null);
     setPageCount(0);
-    setLoading(true);
     setError(null);
+    // A book imported before an app update kept the picker's File handle, which
+    // reads back as zero bytes (see `ownedCopy`). pdf.js can only answer that
+    // with "The PDF file is empty, size zero bytes", which does not tell the
+    // reader what to do — so say what happened instead of trying at all.
+    if (fileMissing({ fileBlob: fileRef.current })) {
+      setLoading(false);
+      setError(MISSING_FILE_MESSAGE);
+      return;
+    }
+    setLoading(true);
     void (async () => {
       const data = new Uint8Array(await fileRef.current.arrayBuffer());
       if (!alive) return;
@@ -120,15 +134,40 @@ export default function PdfView({ docKey, file, page, rects, onPageChange }: Pro
   }, []);
 
   // Fit to the available width; a rotation or a side panel changes it too.
-  useEffect(() => {
+  //
+  // This ran as a plain effect that measured once, and on Android the first
+  // measurement could land before the reader's layout had settled, leaving the
+  // page painted at a fraction of the screen until Text/Page was toggled. A
+  // layout effect measures the frame that is about to be shown, the next frame
+  // measures again in case the WebView was still resizing, and the observer
+  // watches the wrap *and* its parent so a parent-driven resize is not missed.
+  useLayoutEffect(() => {
     const element = wrap.current;
     if (!element) return;
-    const measure = () => setWidth(element.clientWidth);
+
+    const measure = () => {
+      const next = element.clientWidth;
+      if (next > 0) setWidth((previous) => (previous === next ? previous : next));
+    };
+
     measure();
-    if (typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
+    const frame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(measure) : 0;
+
+    let observer: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(measure);
+      observer.observe(element);
+      if (element.parentElement) observer.observe(element.parentElement);
+    }
+    window.addEventListener('resize', measure);
+    window.addEventListener('orientationchange', measure);
+
+    return () => {
+      if (frame && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('orientationchange', measure);
+    };
   }, []);
 
   // Paint the page whenever the document, page, zoom or width changes.
@@ -155,7 +194,10 @@ export default function PdfView({ docKey, file, page, rects, onPageChange }: Pro
         }
 
         const base = pdfPage.getViewport({ scale: 1 });
-        const fit = width / base.width;
+        // Measure again at paint time: the `width` in state is what triggered
+        // this run, but a box that grew since then must not be painted small.
+        const availableWidth = wrap.current?.clientWidth || width;
+        const fit = availableWidth / base.width;
         const viewport = pdfPage.getViewport({ scale: fit * zoom });
         const ratio = Math.min(window.devicePixelRatio || 1, 2);
 
@@ -222,6 +264,21 @@ export default function PdfView({ docKey, file, page, rects, onPageChange }: Pro
       if (zoomFrame.current && typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(zoomFrame.current);
     };
   }, []);
+
+  // A book whose bytes are gone has nothing to paint: show the explanation on
+  // its own instead of an empty page box and a dead page counter.
+  if (error === MISSING_FILE_MESSAGE) {
+    return (
+      <div className="rd-pdf">
+        <div className="banner banner-error rd-error" role="alert">
+          <Glyph>{icons.alert}</Glyph>
+          <div>
+            <p>{error}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="rd-pdf">

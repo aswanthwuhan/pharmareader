@@ -24,8 +24,14 @@ const FORMAT_BY_EXT: Record<string, DocFormat> = {
   xhtml: 'html',
 };
 
-export function detectFormat(file: File): DocFormat | null {
-  const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+/** What a picked `File` and the stored copy both provide. */
+export interface NamedBlob {
+  name?: string;
+  type: string;
+}
+
+export function detectFormat(file: NamedBlob): DocFormat | null {
+  const extension = (file.name ?? '').split('.').pop()?.toLowerCase() ?? '';
   const byExtension = FORMAT_BY_EXT[extension];
   if (byExtension) return byExtension;
 
@@ -45,15 +51,16 @@ export function titleFromFileName(name: string): string {
 }
 
 async function parseFile(
-  file: File,
+  file: Blob,
+  name: string,
   onProgress?: (note: string) => void,
 ): Promise<{ doc: ParsedDoc; warning?: string }> {
-  const format = detectFormat(file);
+  const format = detectFormat({ name, type: file.type });
   if (!format) {
-    throw new Error(`Unsupported file type: ${file.name}. Import a PDF, EPUB, DOCX, TXT, Markdown or HTML file.`);
+    throw new Error(`Unsupported file type: ${name}. Import a PDF, EPUB, DOCX, TXT, Markdown or HTML file.`);
   }
 
-  const fallback = titleFromFileName(file.name);
+  const fallback = titleFromFileName(name);
 
   switch (format) {
     case 'txt':
@@ -133,13 +140,44 @@ export async function deleteBook(bookId: string): Promise<void> {
   });
 }
 
+/**
+ * The bytes of `file`, owned by the page rather than by whatever produced it.
+ *
+ * A `File` handed over by the Android document picker is only a handle into the
+ * picker's provider: after an app update or a reboot the same `File` reads back
+ * as zero bytes ("The PDF file is empty"), even though IndexedDB happily stored
+ * the record. Copying the bytes into a fresh `Blob` gives the book a file that
+ * survives everything the store survives.
+ */
+export async function ownedCopy(file: Blob & { name?: string }): Promise<Blob> {
+  return new Blob([await file.arrayBuffer()], { type: file.type || 'application/octet-stream' });
+}
+
+/**
+ * Shown wherever a book needs its original file but the stored one is empty —
+ * the text view and every parsed sentence still work, page view does not.
+ */
+export const MISSING_FILE_MESSAGE =
+  'The original file is no longer available — re-import it to use Page view and Re-analyse';
+
+/** A book whose stored file did not survive an app update, a reboot or a picker. */
+export function fileMissing(book: Pick<BookRecord, 'fileBlob'>): boolean {
+  const blob = book.fileBlob as Blob | undefined;
+  // A real Blob always reports a numeric size; anything else (a clone that lost
+  // its payload, a file the picker no longer serves) counts as gone.
+  return !blob || typeof blob.size !== 'number' || blob.size === 0;
+}
+
 /** Full result including the scanned-PDF warning the library shows inline. */
 export async function importFileDetailed(
   file: File,
   onProgress?: (note: string) => void,
 ): Promise<ImportResult> {
-  const { doc, warning } = await parseFile(file, onProgress);
-  const bookId = await saveRecord(doc, file);
+  // Read the picked file exactly once, and keep the bytes that were parsed: the
+  // picker's File handle is not a durable store (see ownedCopy).
+  const owned = await ownedCopy(file);
+  const { doc, warning } = await parseFile(owned, file.name, onProgress);
+  const bookId = await saveRecord(doc, owned);
   return { bookId, warning };
 }
 
@@ -264,6 +302,7 @@ export async function reanalyseBook(bookId: string, onProgress?: (note: string) 
   if (book.format !== 'pdf') {
     throw new Error('Only PDFs have a layout to detect; other formats are read from their own structure.');
   }
+  if (fileMissing(book)) throw new Error(MISSING_FILE_MESSAGE);
 
   onProgress?.('Opening the saved file');
   const { parsePdf } = await import('./pdf');

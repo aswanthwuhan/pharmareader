@@ -72,12 +72,13 @@ vi.mock('../tts/registry', () => ({
 }));
 
 // pdfjs is only reached through the lazily loaded page view, but mock it so a
-// stray import can never touch a real worker or canvas in jsdom.
-vi.mock('pdfjs-dist', () => ({
+// stray import can never touch a real worker or canvas in jsdom. The page view
+// loads the legacy build plus a worker wrapper module (see src/import/pdfWorker.ts).
+vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
   GlobalWorkerOptions: {},
   getDocument: () => ({ promise: Promise.resolve({ numPages: 1 }), destroy: () => undefined }),
 }));
-vi.mock('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({ default: 'worker.js' }));
+vi.mock('../import/pdfWorker?worker&url', () => ({ default: 'worker.js' }));
 vi.mock('../ai/AiActions', () => ({ default: () => null }));
 vi.mock('../syllabus/TopicPicker', () => ({ default: () => null }));
 

@@ -20,8 +20,10 @@ const pdf = vi.hoisted(() => {
   return { page, cancel, cleanup, destroy, getDocument };
 });
 
-vi.mock('pdfjs-dist', () => ({ GlobalWorkerOptions: {}, getDocument: pdf.getDocument }));
-vi.mock('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({ default: 'worker.js' }));
+// The page view imports the official legacy pdf.js build (the default one calls
+// ES2025 helpers the phone's WebView lacks) plus a worker wrapper module.
+vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({ GlobalWorkerOptions: {}, getDocument: pdf.getDocument }));
+vi.mock('../import/pdfWorker?worker&url', () => ({ default: 'worker.js' }));
 
 const { default: PdfView } = await import('./PdfView');
 
@@ -42,13 +44,13 @@ async function waitFor(check: () => boolean, label: string): Promise<void> {
   throw new Error(`timed out waiting for ${label}`);
 }
 
-async function renderView(rects: PdfRect[] = RECTS): Promise<void> {
+async function renderView(rects: PdfRect[] = RECTS, file: Blob = new Blob(['%PDF-1.4'])): Promise<void> {
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
   await act(async () => {
     root?.render(
-      <PdfView docKey="book-1" file={new Blob(['%PDF-1.4'])} page={1} rects={rects} onPageChange={() => undefined} />
+      <PdfView docKey="book-1" file={file} page={1} rects={rects} onPageChange={() => undefined} />
     );
   });
 }
@@ -64,6 +66,7 @@ beforeEach(() => {
   pdf.cancel.mockClear();
   pdf.cleanup.mockClear();
   pdf.destroy.mockClear();
+  pdf.getDocument.mockClear();
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(
     () => ({}) as unknown as CanvasRenderingContext2D
   );
@@ -137,5 +140,36 @@ describe('PdfView', () => {
     ]);
     await waitFor(() => canvas().width > 0, 'first paint');
     expect(container.querySelectorAll('.rd-pdf-rect').length).toBe(1);
+  });
+
+  it('paints at the real width after a zero-width first measure (the tiny-page report)', async () => {
+    // The report was: the first paint lands before the reader's layout settles,
+    // so the page is drawn at a fraction of its width until Text/Page is toggled.
+    let measured = 0;
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => measured });
+
+    await renderView();
+    // No width yet: painting a guess here is what produced the tiny page.
+    expect(pdf.page.render).not.toHaveBeenCalled();
+
+    measured = 300;
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'));
+    });
+
+    await waitFor(() => canvas().width === 600, 'paint once the width is known');
+    expect(parseFloat(container.querySelector<HTMLElement>('.rd-pdf-rect')?.style.width ?? '')).toBeCloseTo(50);
+  });
+
+  it('says the stored file is gone instead of failing inside pdf.js', async () => {
+    await renderView(RECTS, new Blob([]));
+
+    await waitFor(() => container.querySelector('.banner-error') !== null, 'missing-file banner');
+
+    const banner = container.querySelector('.banner-error')?.textContent ?? '';
+    expect(banner).toContain('The original file is no longer available');
+    expect(banner).toContain('re-import it to use Page view and Re-analyse');
+    // pdf.js would only say "The PDF file is empty, size zero bytes".
+    expect(pdf.getDocument).not.toHaveBeenCalled();
   });
 });
