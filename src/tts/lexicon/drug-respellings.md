@@ -59,22 +59,25 @@ between the two words is the same as a normal space.
 
 ## Checked and left alone
 
-Already correct, so no rule was added: morphine, codeine, diazepam, lorazepam,
+Already correct, so no rule was added: morphine, diazepam, lorazepam,
 digoxin, amiodarone, clopidogrel, warfarin, heparin, enoxaparin, insulin,
 metformin, glibenclamide, atorvastatin/rosuvastatin/simvastatin, all
 `-gliptin`, `-gliflozin`, `-glitazone`, `-sartan`, `-pril`, `-olol`,
-`-prazole`, `-azole`, `-mycin`, `-cycline`, `-cillin`, `-oxacin`,
+`-prazole`, `-azole`, `-mycin`, `-cillin`, `-oxacin`,
 `-triptan`, `-lukast`, `-dronate`, `-tidine`, `-azepam`, `-azepine` in
 "oxcarbazepine", `-mab`/`-nib`/`-zumab`/`-tinib` (infliximab, rituximab,
 bevacizumab, imatinib, erlotinib), vincristine, vinblastine, cyclosporine,
-azathioprine, mercaptopurine, quetiapine's neighbours, and quinine itself
-(correctly /ˈkwaɪnaɪn/).
+azathioprine, mercaptopurine, and quinine itself (correctly /ˈkwaɪnaɪn/).
+
+**Round 3 update:** the books screen re-checked the `-cycline` family and the
+remaining `-ine` drug names. espeak reads their final vowel /aɪn/ ("nife-di-PINE")
+where the standard is /iːn/ ("nife-di-peen"), so `doxycycline`, `tetracycline`,
+`minocycline`, `tigecycline`, `demeclocycline`, `omadacycline`, `anthracycline`,
+`codeine`, `quetiapine` and ~90 more now ship as `term-` rows — see
+[term-respellings.md](term-respellings.md) § Round 3.
 
 Considered but skipped:
 
-- **quetiapine** — espeak-ng reads "queti-" as "kweshi-" (/kwˈɛʃɪ-/); every
-  respelling tried either kept that or produced a worse word ("kwe tie a peen"
-  fixed the vowels but needed four words). Understandable as-is.
 - **ceftazidime** — best candidate "ceftazideem" gives "sef-TAY-zi-DEEM"
   with the stress in the wrong place, and splitting it ("ceftazid eem")
   introduces a pause. Left unchanged.

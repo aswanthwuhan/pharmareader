@@ -184,6 +184,216 @@ anyway, with worse evidence.
 The families that *are* safe (`hypo-`/`hyper-` + `-emia`, `-osis`, `-itis`, …) are already
 in the `med-` group; this group deliberately starts after them.
 
+## Round 3: the books on disk (KD Tripathi 8e + exam banks)
+
+Rounds 1–2 screened a MeSH/WHO-EML inventory. Round 3 screens the text the reader
+actually reads: the OCR'd pharmacology books and exam banks in `C:\Pharmacology Book\ocr`
+(395 files, 496 313 words, 32 661 distinct tokens). The pipeline is scratch
+(`.tmp/lexicon-books/`, not shipped) and reproducible:
+
+```
+extract   tokenise every .md, count, drop markdown/images  -> vocab.json
+screen    phonemise all 13 373 pure-alphabetic candidates (count >= 2, 4–30 chars)
+          with the exact front end: eSpeak NG 1.52.0, -v en-us, verified to give
+          byte-identical IPA to phonemizer@1.2.1 (the WASM build Kokoro calls)
+flag      the known failure families: final -ine read /aɪn/, Greek ch read /tʃ/
+          where /k/ is wanted, th read /ð/ where /θ/ is wanted, the silent onsets
+          (ps-, pn-, pt-, rh-, gn-, kn-, wr-, mn-), 3+ consonant clusters, the
+          drug/medical suffix families, first/final-syllable stress
+respell   generate candidates (…-een, …-eene, …-een with a doubled consonant),
+          phonemise them, keep the candidate closest to the target (the original
+          IPA with the final /aɪn/ -> /iːn/), rejecting any that moves the primary
+          stress onto the final syllable
+```
+
+**13 373 candidates screened → 7 559 flagged → 124 rows shipped.** The flags are
+deliberately noisy — common English words trip the cluster and stress heuristics —
+so every row was read by hand and re-checked with the workbench before it shipped.
+The Kokoro + Whisper A/B could not be run for this round: the cached Kokoro repo has
+no tokenizer and the Hugging Face hub is unreachable from this machine, so these rows
+are verified at the phoneme level with the exact front end rather than by transcript.
+
+### The -ine family
+
+The single biggest defect in the books: espeak reads a final **-ine** as /aɪn/
+("nife-di-PINE") where the standard is /iːn/ ("nife-di-peen"). The existing `rx-`
+rows fixed 30 drug names with this defect; the books contain about 100 more. The fix
+is mechanical — write the final vowel (`-ine` → `-een`, with an extra `e` or a doubled
+consonant where espeak also drops a stem vowel) — but it cannot be a suffix rule, for
+the same reason as `-prazole`: `-ine` is also the ending of common English words
+(`line`, `combine`, `decline`, `outline`, `caffeine`, `machine`), and a blanket rule
+would respell those. So the rows are per word, and the word list is the map.
+
+### Greek ch and th
+
+espeak reads Greek `ch` as /tʃ/ in words that want /k/ (`cholangitis`, `subarachnoid`,
+`trichomonas`, the `cinchona` alkaloids, `chelate`), and voices `th` in `artemether`
+and `arteether` where the standard is /θ/. Each is respelled to the letter the engine
+actually says.
+
+### Other
+
+`ascites` (*ass-SITES* → *uh-SY-teez*) and `nausea` (*NAW-ssee-uh* → *NAW-zee-uh*).
+
+### Rows shipped in round 3
+
+| word | respelled as | espeak IPA before → after |
+|---|---|---|
+| doxycycline | `doxycycleen` | `dˈɑːksɪsˌaɪklaɪn` → `dˈɑːksɪsˌaɪkliːn` |
+| codeine | `codeeen` | `kˈoʊdaɪn` → `kˈoʊdiːn` |
+| tetracycline | `tetracycleen` | `tˈɛtɹɐsˌaɪklaɪn` → `tˈɛtɹɐsˌaɪkliːn` |
+| pilocarpine | `pilocarpeen` | `pˈaɪləkˌɑːɹpaɪn` → `pˈaɪləkˌɑːɹpiːn` |
+| reserpine | `reserpeen` | `ɹᵻsˈɜːpaɪn` → `ɹᵻsˈɜːpiːn` |
+| benzathine | `benzatheen` | `bˈɛnzɐθˌaɪn` → `bˈɛnzɐθˌiːn` |
+| physostigmine | `physostigmeen` | `fˈaɪsəstˌɪɡmaɪn` → `fˈaɪsəstˌɪɡmiːn` |
+| benzodiazepine | `benzodiazepeen` | `bˈɛnzoʊdˌɪeɪzpˌaɪn` → `bˈɛnzoʊdˌɪeɪzpˌiːn` |
+| tigecycline | `tigecycleen` | `tˈaɪɡɪsˌaɪklaɪn` → `tˈaɪɡɪsˌaɪkliːn` |
+| capecitabine | `capecitabeen` | `kˈeɪpsɪtˌæbaɪn` → `kˈeɪpsɪtˌæbiːn` |
+| quetiapine | `quetiapeen` | `kwˈɛʃɪˌæpaɪn` → `kwˈɛʃɪˌæpiːn` |
+| oxcarbazepine | `oxcarbazepeen` | `ˈɑːkskɑːɹbˌeɪzpaɪn` → `ˈɑːkskɑːɹbˌeɪzpiːn` |
+| emtricitabine | `emtricitabeen` | `ɛmtɹˈɪsɪtˌæbaɪn` → `ɛmtɹˈɪsɪtˌæbiːn` |
+| fludarabine | `fludarabbeen` | `flˈuːdɐɹˌæbaɪn` → `flˈuːdɐɹˌæbiːn` |
+| yohimbine | `yohimbeen` | `jˈoʊhɪmbˌaɪn` → `jˈoʊhɪmbˌiːn` |
+| cladribine | `cladribeen` | `klˈædɹɪbˌaɪn` → `klˈædɹɪbˌiːn` |
+| gemcitabine | `gemcitabeen` | `dʒˈɛmsɪtˌæbaɪn` → `dʒˈɛmsɪtˌæbiːn` |
+| mirtazapine | `mirtazapeen` | `mˈɜːɾɐzˌæpaɪn` → `mˈɜːɾɐzˌæpiːn` |
+| nicardipine | `nicardipeen` | `nˈɪkɑːɹdˌɪpaɪn` → `nˈɪkɑːɹdˌɪpiːn` |
+| sertraline | `sertraleen` | `sˈɜːtɹəlˌaɪn` → `sˈɜːtɹɐlˌiːn` |
+| clevidipine | `clevidipeen` | `klˈɛvɪdˌɪpaɪn` → `klˈɛvɪdˌɪpiːn` |
+| glulisine | `gluliseen` | `ɡlˈuːlɪsˌaɪn` → `ɡlˈuːlɪsˌiːn` |
+| sulfadoxine | `sulfadoxeen` | `sˈʌlfɐdˌɑːksaɪn` → `sˈʌlfɐdˌɑːksiːn` |
+| cytarabine | `cytarabbeen` | `sˈaɪɾɐɹˌæbaɪn` → `sˈaɪɾɐɹˌæbiːn` |
+| minocycline | `minocycleen` | `mˈɪnəsˌaɪklaɪn` → `mˈɪnəsˌaɪkliːn` |
+| pirenzepine | `pirenzepeen` | `pˈaɪɚnzɪpˌaɪn` → `pˈaɪɚnzɪpˌiːn` |
+| retigabine | `retigabeen` | `ɹˈɛɾɪɡˌæbaɪn` → `ɹˈɛɾɪɡˌæbiːn` |
+| thyroxine | `thyroxeen` | `θˈaɪɹəksˌaɪn` → `θˈaɪɹəksˌiːn` |
+| tiagabine | `tiagabeen` | `tˈiːəɡˌæbaɪn` → `tˈiːəɡˌæbiːn` |
+| venlafaxine | `venlafaxeen` | `vˈɛnlɐfˌæksaɪn` → `vˈɛnlɐfˌæksiːn` |
+| zalcitabine | `zalcitabeen` | `zˈælsɪtˌæbaɪn` → `zˈælsɪtˌæbiːn` |
+| decitabine | `decitabeen` | `dᵻsˈɪɾɐbˌaɪn` → `dᵻsˈɪɾɐbˌiːn` |
+| demeclocycline | `demeclocycleen` | `dˈɛmɪklˌɑːsaɪklˌaɪn` → `dˈɛmɪklˌɑːsaɪklˌiːn` |
+| eflornithine | `eflornitheen` | `ˈɛflɔːɹnˌɪθaɪn` → `ˈɛflɔːɹnˌɪθiːn` |
+| ezogabine | `ezogabeen` | `ˈɛzəɡˌæbaɪn` → `ˈɛzəɡˌæbiːn` |
+| istradefylline | `istradefylleen` | `ˈɪstɹeɪdfˌɪlaɪn` → `ˈɪstɹeɪdfˌɪliːn` |
+| noscapine | `noscapeen` | `nˈɑːskɐpˌaɪn` → `nˈɑːskɐpˌiːn` |
+| orellanine | `orellaneen` | `ˈɔːɹɪlˌænaɪn` → `ˈɔːɹɪlˌæniːn` |
+| tafenoquine | `tafenoqueen` | `tˈeɪfnəkwˌaɪn` → `tˈeɪfnəkwˌiːn` |
+| acetylcysteine | `acetylcysteene` | `ˈæsɪtˌɪlsɪstˌaɪn` → `ˈæsɪtˌɪlsɪstˌiːn` |
+| benidipine | `benidipeen` | `bᵻnˈɪdɪpˌaɪn` → `bᵻnˈɪdɪpˌiːn` |
+| benztropine | `benztroppeen` | `bˈɛnztɹəpˌaɪn` → `bˈɛnztɹəpˌiːn` |
+| cevimeline | `cevimeleen` | `sˈɛvaɪmlˌaɪn` → `sˈɛvaɪmlˌiːn` |
+| cilnidipine | `cilnidipeen` | `sˈɪlnɪdˌɪpaɪn` → `sˈɪlnɪdˌɪpiːn` |
+| didanosine | `didanosseen` | `dˈɪdɐnˌɑːsaɪn` → `dˈɪdɐnˌɑːsiːn` |
+| flucytosine | `flucytoseene` | `flˈʌsɪtˌɑːsaɪn` → `flˈʌsɪtˌoʊsiːn` |
+| fluorocytosine | `fluorocytoseene` | `flˈʊɹɹəsˌɪɾəsˌaɪn` → `flˈʊɹɹəsˌɪɾoʊsˌiːn` |
+| loxapine | `loxapeen` | `lˈɑːksɐpˌaɪn` → `lˈɑːksɐpˌiːn` |
+| miltefosine | `miltefosseen` | `mˈɪltɪfˌɑːsaɪn` → `mˈɪltɪfˌɑːsiːn` |
+| nimodipine | `nimodipeen` | `nˈɪmədˌɪpaɪn` → `nˈɪmədˌɪpiːn` |
+| pargyline | `pargylene` | `pˈɑːɹdʒɪlˌaɪn` → `pˈɑːɹdʒɪlˌiːn` |
+| rivastigmine | `rivastigmeen` | `ɹˈɪvɐstˌɪɡmaɪn` → `ɹˈɪvɐstˌɪɡmiːn` |
+| tacrine | `tacreen` | `tˈækɹaɪn` → `tˈækɹiːn` |
+| telenzepine | `telenzepeen` | `tˈɛlᵻnzˌɛpaɪn` → `tˈɛlᵻnzˌɛpiːn` |
+| terbinafine | `terbinafeen` | `tˈɜːbɪnˌæfaɪn` → `tˈɜːbɪnˌæfiːn` |
+| tesofensine | `tesofenseen` | `tˈɛsoʊfˌɛnsaɪn` → `tˈɛsoʊfˌɛnsiːn` |
+| tranylcypromine | `tranylcyprommeen` | `tɹˈænɪlsˌɪpɹəmˌaɪn` → `tɹˈænɪlsˌɪpɹəmˌiːn` |
+| varenicline | `varenicleen` | `vˈæɹənˌɪklaɪn` → `vˈæɹənˌɪkliːn` |
+| vinorelbine | `vinorelbeen` | `vˈɪnɔːɹlbˌaɪn` → `vˈɪnɔːɹlbˌiːn` |
+| ajmaline | `ajmaleen` | `ˈædʒməlˌaɪn` → `ˈædʒmɐlˌiːn` |
+| amodiaquine | `amodiaqueen` | `ˈæmoʊdˌɪɐkwˌaɪn` → `ˈæmoʊdˌɪɐkwˌiːn` |
+| anthracycline | `anthracycleen` | `ˈænθɹɐsˌaɪklaɪn` → `ˈænθɹɐsˌaɪkliːn` |
+| asenapine | `asenapeen` | `ˈæsənˌæpaɪn` → `ˈæsənˌæpiːn` |
+| bicuculline | `bicuculleen` | `baɪkˈʌkjʊlˌaɪn` → `baɪkˈʌkjʊlˌiːn` |
+| bromhexine | `bromhexeen` | `bɹˈɑːmhɪksˌaɪn` → `bɹˈɑːmhɪksˌiːn` |
+| butenafine | `butenafeen` | `bjˈuːtənˌæfaɪn` → `bjˈuːtənˌæfiːn` |
+| clofarabine | `clofarabbeen` | `klˈɑːfɐɹˌæbaɪn` → `klˈɑːfɐɹˌæbiːn` |
+| dicyclomine | `dicyclommeen` | `dˈɪsaɪklˌɑːmaɪn` → `dˈɪsaɪklˌɑːmiːn` |
+| eslicarbazepine | `eslicarbazepeen` | `ˈɛslɪkˌɑːɹbeɪzpˌaɪn` → `ˈɛslɪkˌɑːɹbeɪzpˌiːn` |
+| felodipine | `felodipeen` | `fˈɛlədˌɪpaɪn` → `fˈɛlədˌɪpiːn` |
+| homatropine | `homatroppeen` | `hˈɑːmɐtɹˌɑːpaɪn` → `hˈɑːmɐtɹˌɑːpiːn` |
+| laudanosine | `laudanosseen` | `lˈɔːdɐnˌɑːsaɪn` → `lˈɔːdɐnˌɑːsiːn` |
+| liothyronine | `liothyronneen` | `lɪˈɑːθɪɹˌɑːnaɪn` → `lɪˈɑːθɪɹˌɑːniːn` |
+| meglumine | `meglumeen` | `mˈɛɡluːmˌaɪn` → `mˈɛɡluːmˌiːn` |
+| metirosine | `metiroseene` | `mˈɛɾɪɹˌɑːsaɪn` → `mˈɛɾɪɹˌoʊsiːn` |
+| molsidomine | `molsidommeen` | `mˈɑːlsɪdˌɑːmaɪn` → `mˈɑːlsɪdˌɑːmiːn` |
+| omadacycline | `omadacycleen` | `ˈɑːmɐdˌæsaɪklˌaɪn` → `ˈɑːmɐdˌæsaɪklˌiːn` |
+| piperaquine | `piperaqueen` | `pˈaɪpɹɐkwˌaɪn` → `pˈaɪpɹɐkwˌiːn` |
+| theobromine | `theobromeene` | `θiːəbɹˈoʊmaɪn` → `θiːəbɹˈoʊmiːn` |
+| cinchona | `sinkona` | `sɪntʃˈoʊnə` → `sɪŋkˈoʊnə` |
+| cinchonism | `sinkonism` | `sˈɪntʃənˌɪzəm` → `sˈɪŋkənˌɪzəm` |
+| cinchonidine | `sinkonidine` | `sˈɪntʃənˌɪdiːn` → `sˈɪŋkənˌɪdiːn` |
+| cinchonine | `sinkonneen` | `sˈɪntʃənˌaɪn` → `sˈɪŋkənˌiːn` |
+| artemether | `artemethir` | `ˈɑːɹɾɪmˌɛðɚ` → `ˈɑːɹɾɪmˌɛθɪɹ` |
+| arteether | `arteethir` | `ˈɑːɹɾiːðɚ` → `ˈɑːɹɾiːθˌɪɹ` |
+| benzodiazepines | `benzodiazepeenes` | `bˈɛnzoʊdˌɪeɪzpˌaɪnz` → `bˈɛnzoʊdˌɪeɪzpˌiːnz` |
+| tetracyclines | `tetracycleenes` | `tˈɛtɹɐsˌaɪklaɪnz` → `tˈɛtɹɐsˌaɪkliːnz` |
+| anthracyclines | `anthracycleenes` | `ˈænθɹɐsˌaɪklaɪnz` → `ˈænθɹɐsˌaɪkliːnz` |
+| tyrosine | `tyroseene` | `tˈaɪɹəsˌaɪn` → `tˈaɪɹoʊsˌiːn` |
+| adenosine | `adenoseene` | `ˈædənˌɑːsaɪn` → `ˈædənˌoʊsiːn` |
+| phenylalanine | `phenylalaneen` | `fˌiːnaɪlˈælɐnˌaɪn` → `fˌiːnaɪlˈælɐnˌiːn` |
+| creatinine | `createneen` | `kɹiːˈeɪtɪnˌaɪn` → `kɹiːˈeɪtənˌiːn` |
+| lysine | `lyseen` | `lˈaɪsaɪn` → `lˈaɪsiːn` |
+| alanine | `alaneen` | `ɐlˈænaɪn` → `ɐlˈæniːn` |
+| xanthine | `xantheen` | `zˈænθaɪn` → `zˈænθiːn` |
+| guanine | `guaneen` | `ɡwˈɑːnaɪn` → `ɡwˈɑːniːn` |
+| cysteine | `cysteene` | `sˈɪstaɪn` → `sˈɪstiːn` |
+| cytosine | `cytoseene` | `sˈaɪɾəsˌaɪn` → `sˈaɪɾoʊsˌiːn` |
+| arginine | `argineen` | `ˈɑːɹdʒɪnˌaɪn` → `ˈɑːɹdʒɪnˌiːn` |
+| methionine | `methionneen` | `mˈɛθɪˌɑːnaɪn` → `mˈɛθɪˌɑːniːn` |
+| hypoxanthine | `hypoxantheen` | `hˌaɪpoʊzˈænθaɪn` → `hˌaɪpoʊzˈænθiːn` |
+| thioguanine | `thioguaneen` | `θˌaɪoʊɡjˈuːɐnˌaɪn` → `θˌaɪoʊɡjˈuːɐnˌiːn` |
+| azaguanine | `azaguaneen` | `ˈæzɐɡjˌuːɐnˌaɪn` → `ˈæzɐɡjˌuːɐnˌiːn` |
+| threonine | `threonneen` | `θɹɪˈɑːnaɪn` → `θɹɪˈɑːniːn` |
+| guanosine | `guanosseen` | `ɡwˈɑːnəsˌaɪn` → `ɡwˈɑːnəsˌiːn` |
+| ornithine | `ornitheen` | `ˈɔːɹnɪθˌaɪn` → `ˈɔːɹnɪθˌiːn` |
+| sphingosine | `sphingosseen` | `sfˈɪŋɡəsˌaɪn` → `sfˈɪŋɡəsˌiːn` |
+| chancroid | `shancroid` | `tʃˈæŋkɹɔɪd` → `ʃˈæŋkɹɔɪd` |
+| chitosan | `kaitan` | `tʃˈɪɾɑːsən` → `kˈaɪtən` |
+| subarachnoid | `subaraknoid` | `sˈʌbɐɹˌætʃnɔɪd` → `sˈʌbɐɹˌæknɔɪd` |
+| trichomonas | `trikomonas` | `tɹˌɪtʃəmˈoʊnəz` → `tɹˌaɪkəmˈoʊnəz` |
+| trichomoniasis | `trikomoniasis` | `tɹˌɪtʃəmˌoʊnɪˈɑːsiz` → `tɹˌaɪkəmˌoʊnɪˈɑːsiz` |
+| trichuris | `trikuris` | `tɹˈɪtʃjʊɹɹˌɪs` → `tɹˈaɪkjʊɹɹˌɪs` |
+| sporotrichosis | `sporotrikosis` | `spˌɔːɹətɹɪtʃˈoʊsɪs` → `spˌɔːɹətɹɪkˈoʊsɪs` |
+| hypotrichosis | `hypotrikosis` | `hˌaɪpoʊtɹɪtʃˈoʊsɪs` → `hˌaɪpoʊtɹaɪkˈoʊsɪs` |
+| hypertrichosis | `hypertrikosis` | `hˌaɪpɚtɹɪtʃˈoʊsɪs` → `hˌaɪpɚtɹaɪkˈoʊsɪs` |
+| onychomycosis | `onikomycosis` | `ˌɑːnɪtʃˌɑːmɪkˈoʊsɪs` → `ˌɑːnɪkˌɑːmɪkˈoʊsɪs` |
+| mesenchymal | `mesenkimal` | `mˈɛsəntʃˌɪməl` → `mˈɛsəŋkˌɪməl` |
+| chelate | `keelate` | `tʃˈɛleɪt` → `kˈiːleɪt` |
+| chelators | `keelators` | `tʃɛlˈeɪɾɚz` → `kiːlˈeɪɾɚz` |
+| chelating | `keelating` | `tʃˈɛleɪɾɪŋ` → `kˈiːleɪɾɪŋ` |
+| ascites | `asytees` | `ɐssˈaɪts` → `ɐsˈaɪɾiːz` |
+| nausea | `nauzia` | `nˈɔːsɪə` → `nˈɔːziə` |
+| chelates | `keelates` | `tʃˈɛleɪts` → `kˈiːleɪts` |
+| cholangitis | `kolangitis` | `tʃˌɑːlɐndʒˈaɪɾɪs` → `kˌɑːlɐndʒˈaɪɾɪs` |
+
+### Two agent sweeps
+
+Three parallel agent sweeps — the top 800 book words, the `med:`-flagged families, and
+the `drug:`-flagged families — found a further 18 words. Every candidate was re-checked
+with the workbench before it shipped; the sweeps' own proposals that did not hold up
+(`mellitus`, `elisa`, `rifampicin`, `angioedema`, `hemangioma`, `isoniazid`, and the
+`-afenib` family the earlier round had already measured as unfixable) were dropped.
+
+| word | respelled as | espeak IPA before → after |
+|---|---|---|
+| epinephrine | `epinephrin` | `ˈɛpɪnˌɛfɹiːn` → `ˈɛpɪnˌɛfɹɪn` |
+| antigen | `antegen` | `ˈæntɪdʒˌɛn` → `ˈæntɪdʒən` |
+| levodopa | `leevodopa` | `lˌɛvədˈoʊpə` → `lˌiːvədˈoʊpə` |
+| edema | `ideema` | `ˈɛdᵻmə` → `ɪdˈiːmə` |
+| oedema | `oedeema` | `ˈiːdᵻmə` → `iːdˈiːmə` |
+| miosis | `myosis` | `mɪˈoʊsɪs` → `maɪˈoʊsɪs` |
+| hyperemia | `hypereemia` | `hˌaɪpɚɹˈɛmiə` → `hˌaɪpɚɹˈiːmiə` |
+| glioma | `gleeoma` | `ɡlɪˈoʊmə` → `ɡliːˈoʊmə` |
+| hematuria | `heematuria` | `hˌɛmətʃˈʊɹɹiə` → `hˌiːmətʃˈʊɹɹiə` |
+| thrombocytopenia | `thrombosyteopenia` | `θɹˌɑːmbəsˌɪɾoʊpˈiːniə` → `θɹˌɑːmbəsˌaɪɾoʊpˈiːniə` |
+| ketonuria | `keetonuria` | `kˌɛtənjˈʊɹɹiə` → `kˌiːtənjˈʊɹɹiə` |
+| acetylcholine | `asetilcholene` | `ˈæsɪtˌɪlkəlˌiːn` → `ˈæsɪtˌɪlkoʊlˌiːn` |
+| uveitis | `uveaitis` | `jˈuːveɪɾiz` → `jˌuːviːˈaɪɾɪs` |
+| valproate | `valproaate` | `vˈælpɹoʊt` → `vˈælpɹoʊˌeɪt` |
+| angioplasty | `anjiohplasty` | `ˈæŋɡɪˌɑːplɐsti` → `ˈændʒɪˌoʊplɐsti` |
+| pralidoxime | `pralidokseme` | `pɹˈælɪdˌɑːksaɪm` → `pɹˈælɪdˌɑːksiːm` |
+| obidoxime | `obidokseme` | `ˈɑːbɪdˌɑːksaɪm` → `ˈɑːbɪdˌɑːksiːm` |
+| bleomycin | `bleeohmycin` | `blɪəmˈaɪsɪn` → `blˌiːoʊmˈaɪsɪn` |
+
 ## Regressed and dropped
 
 | word | candidate | transcript before → after | score | why dropped |
@@ -212,7 +422,6 @@ as written because every candidate either regressed or produced a different wron
 | artesunate | `ˈɑːɹɾɪsˌʌneɪt` | AR-ti-sun-ate | stress is on the first syllable; `artesoonate` reads *ar-TESS-oo-nate* (also wrong) |
 | oseltamivir | `ˈoʊsltɐmˌɪvɪɹ` | OH-selt-a-mi-veer | dropped `e`; restoring it (`oseltamevir`) changed the vowel quality of `-vir` |
 | pyrazinamide | `pˈɪɹeɪzˌɪnɐmˌaɪd` | peer-a-ZIN-a-mide | `py-` read as `peer-`; `pyrazzinamide` fixed the stress but broke the first vowel |
-| artemether | `ˈɑːɹɾɪmˌɛðɚ` | ar-TEM-e-ther (voiced `th`) | `th` is read /ð/ here; `artemeter` fixes the consonant but the recogniser then hears *artimeter* |
 | hydrochlorothiazide | `hˌaɪdɹəklˌoːɹoʊθɪˈeɪzaɪd` | …-thi-**AY**-zaɪd | the `-thiazide` syllable split is wrong; the `med-` `-thiazide` family cannot reach it without a hyphen |
 | linezolid | `lˈaɪnzəlˌɪd` | LYNE-zo-lid | minor: the vowel of `-zo-` is short; every fix cost the first syllable |
 | sorafenib | `sˈoʊɹeɪfnˌɪb` | so-**RAY**-fnib | `-ra-` is read /eɪ/ in this context; every respelling that restored the syllable kept the diphthong (`sohrafennib` → `sˈoʊɹeɪfənˌɪb`) |
@@ -222,7 +431,7 @@ as written because every candidate either regressed or produced a different wron
 
 ## How the rows are stored
 
-Twenty-three rows, ids `term-1`…`term-23`, appended after `med-32`, toggleable as their own
+One hundred forty-eight rows, ids `term-1`…`term-148`, appended after `med-32`, toggleable as their own
 group (`entryGroup()` → `'term'`). Each is a whole-word regex row, so the editor can show it
 and switch it off like any other:
 
@@ -235,8 +444,9 @@ them as a thousand regex passes. Rows whose pattern is a single word in the stan
 `\b[Xx]word\b` shape are compiled into **one map** (`index.ts`, `compiledRules()`), and the
 text is walked once per word token: a token match is a `Map` lookup, so the cost is one
 pass over the chapter regardless of how many terms are in the group (the 50 KB performance
-test in `index.test.ts` runs in 24 ms, best of five, with the 532 rules enabled — the
-budget is 50 ms). A rule that does not fit that shape still runs as an ordinary regex row.
+test in `index.test.ts` runs well inside its 50 ms budget — about 20 ms best-of-five on a
+loaded machine — with the 675 rules enabled). A rule that does not fit that shape still
+runs as an ordinary regex row.
 
 Two consequences of matching per token are worth knowing:
 
