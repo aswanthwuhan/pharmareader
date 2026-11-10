@@ -165,6 +165,22 @@ describe('PocketEngine', () => {
     expect((await second.arrayBuffer()).byteLength).toBe(44 + 5 * 2);
   });
 
+  it('speaks a long sentence clause by clause, still one sentence to the reader', async () => {
+    await pocketEngine.prepare();
+    const text =
+      'The heart pumps blood through the body without resting, and the lungs add oxygen to that blood before it returns to the heart again, so the cycle can start over.';
+    const events: string[] = [];
+    await pocketEngine.speak([{ id: 'long', text }], { rate: 1 }, {
+      onStart: (id) => events.push(`start:${id}`),
+      onEnd: (id) => events.push(`end:${id}`),
+    });
+
+    // Several clips played (so audio starts before the whole sentence is rendered)...
+    expect(startedSources).toBeGreaterThan(1);
+    // ...but the reader still sees exactly one start and one end for the sentence.
+    expect(events).toEqual(['start:long', 'end:long']);
+  });
+
   it('fails loudly when the model returns no audio', async () => {
     lib.empty = true;
     await expect(pocketEngine.synthesize!('silence', { rate: 1 })).rejects.toThrow('produced no audio');

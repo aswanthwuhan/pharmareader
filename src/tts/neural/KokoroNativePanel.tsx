@@ -337,6 +337,7 @@ export default function KokoroNativePanel(): React.JSX.Element {
       {state === 'ready' && (
         <p className="tts-status" role="status">
           Ready on {formatThreads(status?.threads ?? threads)}
+          {status?.provider ? ` (${status.provider})` : ''}
           {status?.sampleRate ? ` · ${Math.round(status.sampleRate / 1000)} kHz` : ''}
           {status?.loaded ? ' · loaded' : ''}
         </p>

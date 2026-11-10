@@ -28,3 +28,4 @@ also shows in `adb logcat -s Capacitor/Console`.
 ## Native notes
 - `largeHeap="true"` + `hardwareAccelerated="true"` in the manifest (Kokoro/ONNX peaks near 800 MB).
 - INTERNET only; mixed content and cleartext HTTP are off, so an `http://` Kokoro server needs a network-security-config entry.
+- Speech speed (threads, execution providers, why GPU and multi-threaded WASM are unavailable) is measured and written up in [PERFORMANCE.md](PERFORMANCE.md); `Kokoro.load` accepts `provider: "cpu" | "xnnpack" | "nnapi"` and reports the one in use.

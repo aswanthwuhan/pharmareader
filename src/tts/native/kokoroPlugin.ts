@@ -29,6 +29,8 @@ export interface KokoroStatus {
   attribution?: string;
   sampleRate?: number;
   threads?: number;
+  /** ONNX Runtime execution provider actually in use ('cpu', 'xnnpack', 'nnapi'). */
+  provider?: string;
   defaultSid?: number;
   voiceCount?: number;
 }
@@ -50,6 +52,7 @@ export interface KokoroVoice {
 export interface KokoroLoadResult {
   loaded: boolean;
   threads: number;
+  provider?: string;
   sampleRate: number;
   voiceCount: number;
 }

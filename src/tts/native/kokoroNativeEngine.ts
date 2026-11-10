@@ -8,6 +8,7 @@
  */
 import { getSetting } from '../../core/settings';
 import type { SpeakEvents, TtsEngine, TtsVoice } from '../../core/types';
+import { planChunks } from '../neural/clauseChunk';
 import type { KokoroStage } from './kokoroFailure';
 import { isKokoroNativeAvailable, Kokoro } from './kokoroPlugin';
 
@@ -218,11 +219,11 @@ class KokoroNativeEngine implements TtsEngine {
     return base64ToWavBlob(result.wavBase64);
   }
 
-  /** Speak the sentences in order, synthesising the next one during playback. */
+  /** Speak the sentences in order, synthesising the next chunk during playback. */
   async speak(items: { id: string; text: string }[], opts: SpeakOptions, ev: SpeakEvents): Promise<void> {
     // Blank items would synthesise nothing and end the run early; drop them up front.
-    const sentences = items.filter((item) => item.text.trim().length > 0);
-    if (sentences.length === 0) return;
+    const plan = planChunks(items);
+    if (plan.length === 0) return;
     this.generation += 1;
     const generation = this.generation;
     this.paused = false;
@@ -243,23 +244,22 @@ class KokoroNativeEngine implements TtsEngine {
         return base64ToWavBlob(result.wavBase64);
       };
 
-      // Kick off sentence 0, then always keep one synthesis ahead of playback.
-      let pending: Promise<Blob | null> = synthesize(sentences[0].text);
-      for (let index = 0; index < sentences.length; index += 1) {
+      // Kick off chunk 0, then always keep one synthesis ahead of playback.
+      let pending: Promise<Blob | null> = synthesize(plan[0].text);
+      for (let index = 0; index < plan.length; index += 1) {
         const blob = await pending;
         if (!alive()) return;
         if (!blob) return; // cancelled: stop() already reset the generation
 
-        const next =
-          index + 1 < sentences.length ? synthesize(sentences[index + 1].text) : null;
+        const next = index + 1 < plan.length ? synthesize(plan[index + 1].text) : null;
         // The prefetch is only awaited after playback. If it rejects in the meantime the
         // browser reports an unhandled rejection (and a page-level error handler fires), so
         // mark it handled now; awaiting it below still rethrows.
         if (next) void next.catch(() => undefined);
-        ev.onStart?.(sentences[index].id);
+        if (plan[index].first) ev.onStart?.(plan[index].itemId);
         await this.play(blob);
         if (!alive()) return;
-        ev.onEnd?.(sentences[index].id);
+        if (plan[index].last) ev.onEnd?.(plan[index].itemId);
         if (!next) return;
         pending = next;
       }

@@ -112,7 +112,7 @@ class KokoroEngine implements TtsEngine {
 
   private async init(onProgress?: (fraction: number) => void): Promise<void> {
     this.onProgress = onProgress;
-    const device = detectDevice();
+    const device = await usableDevice();
     // WebGPU wants fp32 weights; WASM on phones is fastest with q8.
     const fallback: KokoroDtype = device === 'webgpu' ? 'fp32' : 'q8';
     const dtype = await getSetting<KokoroDtype>(KOKORO_DTYPE_SETTING, fallback);
@@ -325,8 +325,45 @@ class KokoroEngine implements TtsEngine {
   }
 }
 
-function detectDevice(): KokoroDevice {
-  return typeof navigator !== 'undefined' && 'gpu' in navigator ? 'webgpu' : 'wasm';
+/** `Mozilla/5.0 (Linux; Android 16; sdk_gphone64_x86_64 Build/… ) AppleWebKit/537.36 … ; wv)`. */
+const ANDROID_WEBVIEW_UA = /; wv\)/;
+
+interface GpuNavigator {
+  userAgent?: string;
+  gpu?: { requestAdapter?: () => Promise<unknown> } | unknown;
+}
+
+/**
+ * WebGPU only where the platform can actually hand out an adapter.
+ *
+ * Android System WebView (API 33+) exposes `navigator.gpu`, so a feature test passes on a
+ * device that still has no working GPU backend: `requestAdapter()` resolves to `null`.
+ * Claiming WebGPU there costs a full failed `from_pretrained()` — including the fp32
+ * weights download — before the WASM retry in `kokoro.worker.ts` can start.
+ * Measured on the emulator: `'gpu' in navigator` true, `requestAdapter()` null.
+ */
+export function detectDevice(nav: GpuNavigator | undefined = globalThis.navigator): KokoroDevice {
+  if (!nav || typeof nav.userAgent !== 'string') return 'wasm';
+  if (!('gpu' in nav)) return 'wasm';
+  return ANDROID_WEBVIEW_UA.test(nav.userAgent) ? 'wasm' : 'webgpu';
+}
+
+/**
+ * Device to actually load: `detectDevice()` only asks whether the API exists, so when it
+ * says WebGPU the adapter is requested once before committing. One async call here saves a
+ * wasted fp32 download and a failed session on devices that advertise but cannot deliver.
+ */
+export async function usableDevice(
+  nav: GpuNavigator | undefined = globalThis.navigator
+): Promise<KokoroDevice> {
+  if (detectDevice(nav) !== 'webgpu') return 'wasm';
+  const gpu = nav?.gpu as { requestAdapter?: () => Promise<unknown> } | undefined;
+  if (typeof gpu?.requestAdapter !== 'function') return 'wasm';
+  try {
+    return (await gpu.requestAdapter()) === null ? 'wasm' : 'webgpu';
+  } catch {
+    return 'wasm';
+  }
 }
 
 function asError(err: unknown): Error {

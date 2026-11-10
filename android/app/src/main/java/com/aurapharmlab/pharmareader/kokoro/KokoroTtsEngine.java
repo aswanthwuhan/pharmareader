@@ -45,6 +45,9 @@ public final class KokoroTtsEngine {
     private static final int MAX_CACHED_WAVS = 8;
     private static final int DEFAULT_SAMPLE_RATE = 24000;
 
+    /** Providers the prebuilt sherpa-onnx AAR actually contains; see {@link #clampProvider}. */
+    public static final String DEFAULT_PROVIDER = "cpu";
+
     /** Cooperative cancellation for a generation already running inside sherpa-onnx. */
     public interface StopSignal {
         boolean isStopped();
@@ -70,6 +73,7 @@ public final class KokoroTtsEngine {
     private volatile int sampleRate = DEFAULT_SAMPLE_RATE;
     private volatile int voiceCount;
     private volatile String modelDirPath;
+    private volatile String provider = DEFAULT_PROVIDER;
     private int sequence;
 
     private KokoroTtsEngine() {}
@@ -103,9 +107,24 @@ public final class KokoroTtsEngine {
      */
     public synchronized void load(File modelDir, int threads, boolean debug)
             throws IOException {
+        load(modelDir, threads, debug, DEFAULT_PROVIDER);
+    }
+
+    /**
+     * Same as {@link #load(File, int, boolean)} but with an explicit ONNX Runtime execution
+     * provider. Only {@code cpu}, {@code nnapi} and {@code xnnpack} are offered: those are
+     * the only providers the prebuilt sherpa-onnx AAR compiles in (its GPU/QNN providers
+     * need a custom build with {@code -DSHERPA_ONNX_ENABLE_GPU=ON}), and sherpa-onnx falls
+     * back to cpu on its own when a provider cannot be enabled. Measured on the emulator,
+     * nnapi and xnnpack are both slower than cpu for this graph, so cpu stays the default.
+     */
+    public synchronized void load(File modelDir, int threads, boolean debug, String provider)
+            throws IOException {
         String path = modelDir.getAbsolutePath();
         int wanted = clampThreads(threads);
-        if (tts != null && wanted == this.threads && path.equals(modelDirPath)) {
+        String wantedProvider = clampProvider(provider);
+        if (tts != null && wanted == this.threads && wantedProvider.equals(this.provider)
+                && path.equals(modelDirPath)) {
             return;
         }
         release();
@@ -123,7 +142,7 @@ public final class KokoroTtsEngine {
         model.setKokoro(kokoro);
         model.setNumThreads(wanted);
         model.setDebug(debug);
-        model.setProvider("cpu");
+        model.setProvider(wantedProvider);
 
         OfflineTtsConfig config = new OfflineTtsConfig();
         config.setModel(model);
@@ -131,13 +150,14 @@ public final class KokoroTtsEngine {
         config.setSilenceScale(0.2f);
 
         Log.i(TAG, String.format(Locale.US,
-                "Loading Kokoro from %s with %d threads", path, wanted));
+                "Loading Kokoro from %s with %d threads, provider %s", path, wanted, wantedProvider));
         // A null AssetManager makes the Kotlin constructor read the model from files.
         OfflineTts created = new OfflineTts((AssetManager) null, config);
         this.threads = wanted;
         this.sampleRate = created.sampleRate() > 0 ? created.sampleRate() : DEFAULT_SAMPLE_RATE;
         this.voiceCount = created.numSpeakers();
         this.modelDirPath = path;
+        this.provider = wantedProvider;
         this.tts = created;
         Log.i(TAG, String.format(Locale.US,
                 "Kokoro ready: %d Hz, %d speakers", sampleRate, voiceCount));
@@ -250,6 +270,31 @@ public final class KokoroTtsEngine {
 
     static int clampThreads(int threads) {
         return Math.max(1, Math.min(8, threads));
+    }
+
+    /**
+     * Only the execution providers compiled into the prebuilt sherpa-onnx AAR are allowed
+     * through: the bundled libonnxruntime.so registers cpu, XNNPACK and NNAPI (its GPU,
+     * QNN and CoreML providers are not in that build). Anything else would just make
+     * sherpa-onnx print "available providers" and fall back to cpu, so it is rejected here
+     * instead of silently costing a full model reload.
+     */
+    static String clampProvider(String provider) {
+        if (provider == null) {
+            return DEFAULT_PROVIDER;
+        }
+        switch (provider.trim().toLowerCase(Locale.US)) {
+            case "nnapi":
+                return "nnapi";
+            case "xnnpack":
+                return "xnnpack";
+            default:
+                return DEFAULT_PROVIDER;
+        }
+    }
+
+    public String provider() {
+        return provider;
     }
 
     /** Keep the cache small: a chapter of sentences would otherwise pile up in cacheDir. */

@@ -47,6 +47,13 @@ async function fastEnough(engine: TtsEngine): Promise<boolean> {
 }
 
 export async function resolveEngine(): Promise<TtsEngine> {
+  const engine = await pickEngine();
+  // Load the model now (reader resolves on mount), so its 3–6 s load doesn't land on the first sentence.
+  if (engine !== systemEngine) void engine.prepare().catch(() => undefined);
+  return engine;
+}
+
+async function pickEngine(): Promise<TtsEngine> {
   const choice = await getSetting<string>(ENGINE_SETTING, 'auto');
 
   if (choice !== 'auto') {

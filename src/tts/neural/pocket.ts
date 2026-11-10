@@ -10,11 +10,13 @@
 import { PocketTTS, type GenerationMetrics, type ProgressInfo } from 'pocket-tts-js';
 import { getSetting } from '../../core/settings';
 import type { SpeakEvents, TtsEngine, TtsVoice } from '../../core/types';
+import { planChunks } from './clauseChunk';
 import { POCKET_SIZE_MB, isModelDownloaded, setModelReady } from './models';
 import { NEURAL_STAGES, neuralError } from './neuralError';
 import { ORT_BASE_URL } from './ort';
 import { FloatPlayer } from './playback';
 import { createProgressAggregator } from './progress';
+import { wasmThreadCount } from './threadBudget';
 import { changeSpeed, concatFloat32, encodeWav } from './wav';
 
 /** The only language bundle the app supports for now (Indian English readers). */
@@ -96,6 +98,10 @@ class PocketEngine implements TtsEngine {
       voiceCloning: false, // built-in voices only, skips the ~21 MB encoder
       cache: hasCacheStorage(), // Cache Storage: later loads are offline
       ortBaseUrl: ORT_BASE_URL, // onnxruntime-web from public/ort, never jsDelivr
+      // WASM thread cap. pocket-tts-js reads `self.crossOriginIsolated` itself and stays
+      // single-threaded without it, so this only bounds the thread pool once a browser
+      // isolates the page (Android's WebView does not — docs/PERFORMANCE.md).
+      maxThreads: wasmThreadCount(),
     });
     const report = createProgressAggregator(onProgress, POCKET_SIZE_MB * 1e6);
     let sawProgress = false;
@@ -165,10 +171,15 @@ class PocketEngine implements TtsEngine {
     await this.player.resume(); // speak() is called from a user gesture
     if (this.stopped || generation !== this.generation) return;
 
-    let next = this.render(tts, items[0].text, voice);
+    // Long sentences are voiced clause by clause, so playback can start after the
+    // first clause instead of after the whole sentence (~20 s at RTF 3).
+    const plan = planChunks(items);
+    if (plan.length === 0) return;
+
+    let next = this.render(tts, plan[0].text, voice);
     next.catch(() => {}); // a stop mid-render must not surface as unhandled
 
-    for (let i = 0; i < items.length; i++) {
+    for (let i = 0; i < plan.length; i++) {
       let pcm: Pcm;
       try {
         pcm = await next;
@@ -178,19 +189,19 @@ class PocketEngine implements TtsEngine {
       }
       if (this.stopped || generation !== this.generation) return;
 
-      if (i + 1 < items.length) {
-        next = this.render(tts, items[i + 1].text, voice);
+      if (i + 1 < plan.length) {
+        next = this.render(tts, plan[i + 1].text, voice);
         next.catch(() => {});
       }
 
-      ev.onStart?.(items[i].id);
+      if (plan[i].first) ev.onStart?.(plan[i].itemId);
       try {
         await this.player.play(pcm.data, pcm.sampleRate, rate);
       } catch (err) {
         if (!this.stopped && generation === this.generation) ev.onError?.(neuralError('pocket', NEURAL_STAGES.play, err));
         return;
       }
-      ev.onEnd?.(items[i].id);
+      if (plan[i].last) ev.onEnd?.(plan[i].itemId);
       if (this.stopped || generation !== this.generation) return;
     }
   }

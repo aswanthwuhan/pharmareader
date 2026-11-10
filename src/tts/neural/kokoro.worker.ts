@@ -8,6 +8,7 @@ import type { KokoroDevice, KokoroDtype, KokoroRequest, KokoroResponse } from '.
 import { createProgressAggregator } from './progress';
 import { ORT_BASE_URL } from './ort';
 import { kokoroSizeMb } from './sizes';
+import { wasmThreadCount } from './threadBudget';
 
 const MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 
@@ -31,6 +32,17 @@ const ORT_WASM_BASE = new URL(ORT_BASE_URL, self.location.href).href;
  * launch is fully offline.
  */
 env.wasmPaths = ORT_WASM_BASE;
+
+/**
+ * Threads. onnxruntime-web picks its own default (`min(4, ceil(cores / 2))`), but it only
+ * does that when the page is cross-origin isolated; otherwise it pins itself to one thread.
+ * Setting the number here makes the intent explicit and keeps the two engines on the same
+ * budget, so a measurement is comparable between Kokoro and Pocket.
+ */
+const ortEnv = env as typeof env & {
+  backends: { onnx: { wasm: { numThreads: number } } };
+};
+ortEnv.backends.onnx.wasm.numThreads = wasmThreadCount();
 
 /**
  * transformers.js caches the weights in Cache Storage (`transformers-cache`).

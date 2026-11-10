@@ -96,6 +96,7 @@ public class KokoroPlugin extends Plugin {
                     result.put("attribution", KokoroModel.ATTRIBUTION);
                     result.put("sampleRate", engine.sampleRate());
                     result.put("threads", engine.threads());
+                    result.put("provider", engine.provider());
                     result.put("defaultSid", KokoroModel.DEFAULT_SID);
                     result.put("voiceCount", KokoroModel.count());
                     call.resolve(result);
@@ -215,6 +216,7 @@ public class KokoroPlugin extends Plugin {
         Integer requested = call.getInt("threads", null);
         boolean debug = Boolean.TRUE.equals(call.getBoolean("debug", Boolean.FALSE));
         int threads = requested == null || requested <= 0 ? defaultThreads() : requested;
+        String provider = call.getString("provider", KokoroTtsEngine.DEFAULT_PROVIDER);
         try {
             synthExecutor.execute(() -> {
                 try {
@@ -223,10 +225,11 @@ public class KokoroPlugin extends Plugin {
                         return;
                     }
                     KokoroTtsEngine engine = KokoroTtsEngine.getInstance();
-                    engine.load(store.modelDir(), threads, debug);
+                    engine.load(store.modelDir(), threads, debug, provider);
                     JSObject result = new JSObject();
                     result.put("loaded", true);
                     result.put("threads", engine.threads());
+                    result.put("provider", engine.provider());
                     result.put("sampleRate", engine.sampleRate());
                     result.put("voiceCount", engine.voiceCount());
                     call.resolve(result);

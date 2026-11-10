@@ -18,5 +18,8 @@ public class MainActivity extends BridgeActivity {
         // which is where the Capacitor Bridge instantiates its plugin set.
         registerPlugin(KokoroPlugin.class);
         super.onCreate(savedInstanceState);
+        // NOTE: cross-origin isolation (COOP/COEP on the local asset server) was tried here and
+        // does not work in the Android WebView: the headers reach the page, but
+        // self.crossOriginIsolated stays false and COEP is not enforced. See docs/PERFORMANCE.md.
     }
 }

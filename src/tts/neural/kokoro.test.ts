@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { kokoroEngine, resetKokoroEngine } from './kokoro';
+import { detectDevice, kokoroEngine, resetKokoroEngine, usableDevice } from './kokoro';
 import { setModelReady } from './models';
 import type { KokoroRequest, KokoroResponse } from './kokoroProtocol';
 
@@ -151,5 +151,63 @@ describe('KokoroEngine', () => {
 
     await expect(kokoroEngine.isReady()).resolves.toBe(true);
     expect(FakeWorker.instances[0].terminated).toBe(true);
+  });
+});
+
+describe('detectDevice', () => {
+  const DESKTOP = { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140.0.0.0', gpu: {} };
+  // Android System WebView: `navigator.gpu` exists, `requestAdapter()` still resolves to null.
+  const ANDROID_WEBVIEW = {
+    userAgent:
+      'Mozilla/5.0 (Linux; Android 16; sdk_gphone64_x86_64 Build/BE4B.251210.005; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/156.0.0.0 Mobile Safari/537.36',
+    gpu: {},
+  };
+
+  it('takes WebGPU on a desktop browser that exposes it', () => {
+    expect(detectDevice(DESKTOP)).toBe('webgpu');
+  });
+
+  it('stays on WASM in Android System WebView, where the adapter cannot be created', () => {
+    expect(detectDevice(ANDROID_WEBVIEW)).toBe('wasm');
+  });
+
+  it('stays on WASM when navigator has no gpu at all', () => {
+    expect(detectDevice({ userAgent: DESKTOP.userAgent })).toBe('wasm');
+  });
+
+  it('stays on WASM without a navigator (tests, old WebViews)', () => {
+    expect(detectDevice(undefined)).toBe('wasm');
+  });
+});
+
+describe('usableDevice', () => {
+  const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140.0.0.0';
+
+  it('keeps WebGPU where an adapter is actually handed out', async () => {
+    const nav = { userAgent: DESKTOP_UA, gpu: { requestAdapter: async () => ({ device: 1 }) } };
+    await expect(usableDevice(nav)).resolves.toBe('webgpu');
+  });
+
+  it('falls back to WASM when requestAdapter resolves to null', async () => {
+    // Advertised but unusable: the Android WebView case measured on the emulator.
+    const nav = { userAgent: DESKTOP_UA, gpu: { requestAdapter: async () => null } };
+    await expect(usableDevice(nav)).resolves.toBe('wasm');
+  });
+
+  it('falls back to WASM when requestAdapter throws', async () => {
+    const nav = {
+      userAgent: DESKTOP_UA,
+      gpu: {
+        requestAdapter: async () => {
+          throw new Error('no adapter');
+        },
+      },
+    };
+    await expect(usableDevice(nav)).resolves.toBe('wasm');
+  });
+
+  it('does not ask for an adapter when gpu is missing', async () => {
+    await expect(usableDevice({ userAgent: DESKTOP_UA })).resolves.toBe('wasm');
+    await expect(usableDevice(undefined)).resolves.toBe('wasm');
   });
 });
