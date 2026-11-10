@@ -67,6 +67,25 @@ type Asr = (audio: Float32Array, options?: Record<string, unknown>) => Promise<A
 let asr: Asr | null = null;
 let loading: Promise<Asr> | null = null;
 
+/**
+ * Throw the loaded pipeline away. A session that has failed once (an ONNX
+ * error, or the wasm heap running out late in a long reading session) does not
+ * come back healthy on its own, and the next clip must not reuse it: dropping
+ * it here makes the next `load()` build a fresh session, and disposing releases
+ * the old one's memory first.
+ */
+async function discard(): Promise<void> {
+  const model = asr as (Asr & { dispose?: () => Promise<void> }) | null;
+  asr = null;
+  loading = null;
+  if (!model?.dispose) return;
+  try {
+    await model.dispose();
+  } catch {
+    // Nothing left to release.
+  }
+}
+
 /** Load the model once; concurrent requests share the one download. */
 function load(): Promise<Asr> {
   if (asr) return Promise.resolve(asr);
@@ -105,7 +124,15 @@ async function align(id: number, audio: Float32Array, sampleRate: number): Promi
   }
   const model = await load();
   const started = performance.now();
-  const output = await model(audio, { return_timestamps: 'word' });
+  let output: AsrOutput;
+  try {
+    output = await model(audio, { return_timestamps: 'word' });
+  } catch (err) {
+    // The failed session is what makes every later clip fail too; discard it so
+    // the next request starts from a fresh one. This one still reports the error.
+    await discard();
+    throw err;
+  }
 
   const chunks: ChunkTiming[] = [];
   for (const chunk of output.chunks ?? []) {

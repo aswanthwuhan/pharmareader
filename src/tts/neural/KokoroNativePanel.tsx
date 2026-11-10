@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { setSetting, useSetting } from '../../core/settings';
 import type { TtsVoice } from '../../core/types';
+import { resetDownload, startDownload, useDownload, type DownloadReporter } from '../downloads';
 import {
   DEFAULT_KOKORO_SID,
   KOKORO_THREADS_SETTING,
@@ -21,10 +22,14 @@ import {
 } from '../native/kokoroNativeEngine';
 import {
   downloadLabel,
+  downloadStageOf,
+  followRunningDownload,
   formatBytes,
+  isBusyError,
   meteredWarning,
   resumeFraction,
   storageWarning,
+  tagDownloadStage,
 } from '../native/kokoroDownload';
 import { measureRtf, rtfSettingKey } from './benchmark';
 import {
@@ -35,8 +40,13 @@ import {
 } from '../native/kokoroFailure';
 import { isKokoroNativeAvailable, Kokoro, type KokoroStatus } from '../native/kokoroPlugin';
 import '../tts.css';
+// This panel's own arrangement: the shared .kokoro-* rules in tts.css describe a
+// card, and inside an accordion body a model is a row.
+import './kokoro-native.css';
 
 const ATTRIBUTION = 'Kokoro-82M by hexgrad (Apache-2.0) via sherpa-onnx (Apache-2.0)';
+/** The one native model download, shared by every mount of this panel. */
+export const KOKORO_DOWNLOAD_ID = 'kokoro';
 const SPEED_TEST_SENTENCE =
   'The half-life of digoxin is about thirty-six hours, prolonged in renal failure.';
 const THREAD_OPTIONS = [2, 4, 6] as const;
@@ -74,12 +84,11 @@ function verdict(rtf: number): string {
 }
 
 export default function KokoroNativePanel(): React.JSX.Element {
-  const [state, setState] = useState<PanelState>('loading');
+  const download = useDownload(KOKORO_DOWNLOAD_ID);
+  const [shell, setShell] = useState<PanelState>('loading');
   const [status, setStatus] = useState<KokoroStatus | null>(null);
   const [voices, setVoices] = useState<TtsVoice[]>([]);
-  const [fraction, setFraction] = useState(0);
   const [failure, setFailure] = useState<KokoroFailure | null>(null);
-  const [stage, setStage] = useState<KokoroStage | null>(null);
   const [copied, setCopied] = useState<CopyState>('idle');
   const [measuring, setMeasuring] = useState(false);
   const [measure, setMeasure] = useState<KokoroMeasureResult | null>(null);
@@ -89,17 +98,17 @@ export default function KokoroNativePanel(): React.JSX.Element {
 
   const refresh = useCallback(async () => {
     if (!isKokoroNativeAvailable()) {
-      setState('unsupported');
+      setShell('unsupported');
       return;
     }
     try {
       const next = await Kokoro.status();
       setStatus(next);
-      setState(next.downloaded ? 'ready' : 'absent');
+      setShell(next.downloaded ? 'ready' : 'absent');
       setFailure(null);
       setVoices(await kokoroNativeEngine.listVoices());
     } catch (err) {
-      setState('error');
+      setShell('error');
       // The query itself failed, so there is no status object to describe the model with.
       setFailure(describeKokoroFailure('status', err, null));
     }
@@ -109,43 +118,82 @@ export default function KokoroNativePanel(): React.JSX.Element {
     void refresh();
   }, [refresh]);
 
+  // A download outlives the panel. When it ends — here or while the user was on
+  // another screen — pick up the final model state (size, threads, "Ready").
+  useEffect(() => {
+    if (download.status === 'done' || download.status === 'error') void refresh();
+  }, [download.status, refresh]);
+
   useEffect(() => {
     if (copied === 'idle') return;
     const timer = window.setTimeout(() => setCopied('idle'), 2500);
     return () => window.clearTimeout(timer);
   }, [copied]);
 
-  const download = async (): Promise<void> => {
-    setState('downloading');
-    setFraction(resumeFraction(status?.partialBytes, status?.archiveBytes));
+  /**
+   * Download the archive, then load the model — outside the component, so leaving
+   * Settings cannot stop it. The native plugin downloads on its own io thread and
+   * keeps going after the WebView stops listening.
+   */
+  const runDownload = useCallback(async (report: DownloadReporter): Promise<void> => {
+    const forward = (stage: KokoroStage): void => {
+      if (stage === 'download' || stage === 'unpack' || stage === 'load') report({ stage });
+    };
+    // The catch needs the stage that actually failed, not the last rendered one.
+    let failedAt: KokoroStage = 'status';
+    const attempt = async (): Promise<void> => {
+      await kokoroNativeEngine.prepare(
+        (value) => report({ fraction: clamp01(value) }),
+        (next) => {
+          failedAt = next;
+          forward(next);
+        }
+      );
+    };
+
+    try {
+      await attempt();
+      // 'auto' engine choice only picks a model with a stored RTF, so measure right away.
+      void measureRtf(kokoroNativeEngine).catch(() => undefined);
+      return;
+    } catch (err) {
+      // BUSY is not a failure: the plugin refused a second download because the
+      // first one (a previous mount, or the native side itself) is still running.
+      // Wait for that one instead of reporting "download error".
+      if (!isBusyError(err)) throw tagDownloadStage(err, failedAt);
+    }
+
+    report({ stage: 'download' });
+    try {
+      await followRunningDownload({
+        status: () => Kokoro.status(),
+        listen: async (onFraction) => {
+          const handle = await Kokoro.addListener('downloadProgress', (progress) =>
+            onFraction(progress.fraction)
+          );
+          return () => {
+            void handle.remove().catch(() => undefined);
+          };
+        },
+        onProgress: (value) => report({ fraction: value }),
+        onUnpacking: () => {
+          failedAt = 'unpack';
+          forward('unpack');
+        },
+      });
+      // The archive is complete; load it the way the first call would have.
+      failedAt = 'load';
+      await attempt();
+    } catch (err) {
+      throw tagDownloadStage(err, failedAt);
+    }
+  }, []);
+
+  const downloadNow = (): void => {
     setFailure(null);
     setMeasure(null);
     setCopied('idle');
-    // The engine reports the stage it is in; it is kept in a local as well because the state
-    // update is asynchronous and the catch block needs the stage that actually failed.
-    let failedAt: KokoroStage = 'status';
-    try {
-      await kokoroNativeEngine.prepare(
-        (value) => setFraction(clamp01(value)),
-        (next) => {
-          failedAt = next;
-          setStage(next);
-        }
-      );
-      setStage(null);
-      await refresh();
-      // 'auto' engine choice only picks a model with a stored RTF, so measure right away.
-      void measureRtf(kokoroNativeEngine).catch(() => undefined);
-    } catch (err) {
-      setStage(null);
-      setState('error');
-      setFailure(describeKokoroFailure(failedAt, err, status));
-    }
-  };
-
-  const copyDetails = async (): Promise<void> => {
-    if (!failure) return;
-    setCopied((await copyText(failure.details)) ? 'copied' : 'failed');
+    void startDownload(KOKORO_DOWNLOAD_ID, runDownload);
   };
 
   const remove = async (): Promise<void> => {
@@ -154,9 +202,10 @@ export default function KokoroNativePanel(): React.JSX.Element {
     setCopied('idle');
     try {
       await kokoroNativeEngine.deleteModel();
+      resetDownload(KOKORO_DOWNLOAD_ID);
       await refresh();
     } catch (err) {
-      setState('error');
+      setShell('error');
       setFailure(describeKokoroFailure('delete', err, status));
     }
   };
@@ -185,9 +234,7 @@ export default function KokoroNativePanel(): React.JSX.Element {
     setFailure(null);
     setMeasure(null);
     try {
-      const result = await kokoroNativeEngine.measure(SPEED_TEST_SENTENCE, { rate: 1 }, (value) =>
-        setFraction(clamp01(value))
-      );
+      const result = await kokoroNativeEngine.measure(SPEED_TEST_SENTENCE, { rate: 1 });
       setMeasure(result);
       // Same key measureRtf writes; the engine registry reads it for 'auto'.
       await setSetting(rtfSettingKey('kokoro'), result.rtf);
@@ -213,11 +260,35 @@ export default function KokoroNativePanel(): React.JSX.Element {
 
   const downloaded = status?.downloaded === true;
   const sizeLabel = status && status.sizeBytes > 0 ? formatBytes(status.sizeBytes) : 'not downloaded';
+  const downloading = download.status === 'downloading' || download.status === 'unpacking';
+  // A download that failed before the panel was mounted still has to be reported:
+  // the store carries the rejection and the stage it happened in.
+  const downloadFailure =
+    download.status === 'error'
+      ? describeKokoroFailure(
+          downloadStageOf(download.cause) ?? download.stage,
+          download.cause ?? download.error ?? 'The download failed.',
+          status
+        )
+      : null;
+  const state: PanelState =
+    shell === 'unsupported'
+      ? 'unsupported'
+      : downloading
+        ? 'downloading'
+        : downloadFailure
+          ? 'error'
+          : download.status === 'done'
+            ? 'ready'
+            : shell;
+  const shownFailure = downloadFailure ?? failure;
+  const fraction = download.fraction;
+  const stage = downloading ? download.stage : null;
   const ready = state === 'ready';
   const resumable = resumeFraction(status?.partialBytes, status?.archiveBytes);
   const spaceWarning = storageWarning(status?.freeBytes, status?.requiredBytes);
   const dataWarning = meteredWarning(status?.metered, downloaded);
-  const busy = state === 'downloading';
+  const busy = downloading;
 
   const percent = Math.round(clamp01(fraction) * 100);
   const chipLabel =
@@ -229,7 +300,7 @@ export default function KokoroNativePanel(): React.JSX.Element {
           ? `Downloading ${percent}%`
           : state === 'error'
             ? 'Error'
-            : downloaded
+            : state === 'ready'
               ? 'Ready'
               : 'Not downloaded';
   const chipTone =
@@ -240,17 +311,24 @@ export default function KokoroNativePanel(): React.JSX.Element {
         : state === 'downloading' || state === 'loading'
           ? 'is-busy'
           : '';
+  // `load` comes last in the store's sequence and keeps fraction 1, so it has to
+  // be tested before the "100% means unpacking" rule or it never shows.
   const progressLabel =
-    stage === 'unpack' || fraction >= 1
-      ? 'Unpacking the model archive… (this is the slow part)'
-      : stage === 'load'
-        ? 'Loading the model into memory…'
+    stage === 'load'
+      ? 'Loading the model into memory…'
+      : stage === 'unpack' || fraction >= 1
+        ? 'Unpacking the model archive… (this is the slow part)'
         : `Downloading model… ${percent}%${resumable > 0 && resumable < 1 ? ' (resumed)' : ''}`;
+
+  const copyDetails = async (): Promise<void> => {
+    if (!shownFailure) return;
+    setCopied((await copyText(shownFailure.details)) ? 'copied' : 'failed');
+  };
 
   return (
     <section className="kokoro-panel" aria-labelledby="kokoro-native-heading" aria-busy={busy}>
       <header className="kokoro-head">
-        <div>
+        <div className="kokoro-head-main">
           <h3 className="kokoro-title" id="kokoro-native-heading">
             Kokoro (on-device)
           </h3>
@@ -262,40 +340,15 @@ export default function KokoroNativePanel(): React.JSX.Element {
         </span>
       </header>
 
-      <p className="field-hint">
-        Runs Kokoro-82M entirely on this phone through sherpa-onnx — no PC and no server. The model is a 334 MB download
-        that is stored in the app&apos;s private storage and survives restarts.
-      </p>
-
-      <div className="tts-field-grid">
-        <div className="field">
-          <span className="field-label" id="kokoro-native-size-label">
-            Model
-          </span>
-          <output id="kokoro-native-size" className="tts-value" aria-labelledby="kokoro-native-size-label">
-            {status?.modelId ? `${status.modelId} · ${sizeLabel}` : sizeLabel}
-          </output>
+      {/* Why there is nothing to download comes before the controls it disables. */}
+      {state === 'unsupported' && (
+        <div className="banner banner-info">
+          <p>
+            The native Kokoro engine is only available in the Android app. In the browser, use the in-browser Kokoro or
+            Pocket TTS model, or the system voice.
+          </p>
         </div>
-        <div className="field">
-          <label className="field-label" htmlFor="kokoro-native-threads">
-            Threads
-          </label>
-          <select
-            id="kokoro-native-threads"
-            className="input"
-            value={threads}
-            onChange={(event) => void changeThreads(Number(event.target.value))}
-            disabled={state === 'unsupported' || busy}
-          >
-            {THREAD_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {formatThreads(option)}
-                {option === DEFAULT_THREADS ? ' (recommended)' : ''}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
+      )}
 
       <div className="field">
         <label className="field-label" htmlFor="kokoro-native-voice">
@@ -316,15 +369,6 @@ export default function KokoroNativePanel(): React.JSX.Element {
         </select>
       </div>
 
-      {state === 'unsupported' && (
-        <div className="banner banner-info">
-          <p>
-            The native Kokoro engine is only available in the Android app. In the browser, use the in-browser Kokoro or
-            Pocket TTS model, or the system voice.
-          </p>
-        </div>
-      )}
-
       {busy && (
         <div className="kokoro-progress">
           <progress value={clamp01(fraction)} max={1} aria-label="Kokoro model download progress" />
@@ -332,15 +376,6 @@ export default function KokoroNativePanel(): React.JSX.Element {
             {progressLabel}
           </p>
         </div>
-      )}
-
-      {state === 'ready' && (
-        <p className="tts-status" role="status">
-          Ready on {formatThreads(status?.threads ?? threads)}
-          {status?.provider ? ` (${status.provider})` : ''}
-          {status?.sampleRate ? ` · ${Math.round(status.sampleRate / 1000)} kHz` : ''}
-          {status?.loaded ? ' · loaded' : ''}
-        </p>
       )}
 
       {dataWarning && (
@@ -362,14 +397,14 @@ export default function KokoroNativePanel(): React.JSX.Element {
         </p>
       )}
 
-      {failure && (
+      {shownFailure && (
         <div className="kokoro-diagnostics">
           <div className="banner banner-error" role="alert">
-            <p>{failure.message}</p>
+            <p>{shownFailure.message}</p>
           </div>
-          <details>
+          <details className="disc-sub">
             <summary>Error details</summary>
-            <pre style={DETAILS_STYLE}>{failure.details}</pre>
+            <pre style={DETAILS_STYLE}>{shownFailure.details}</pre>
           </details>
           <button
             type="button"
@@ -391,7 +426,7 @@ export default function KokoroNativePanel(): React.JSX.Element {
           <button
             type="button"
             className="btn btn-primary"
-            onClick={() => void download()}
+            onClick={downloadNow}
             disabled={spaceWarning !== null}
           >
             {downloaded
@@ -408,16 +443,6 @@ export default function KokoroNativePanel(): React.JSX.Element {
             Downloading…
           </button>
         )}
-        {(state === 'ready' || state === 'absent') && (
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => void measureSpeed()}
-            disabled={!ready || measuring}
-          >
-            {measuring ? 'Measuring…' : 'Measure speed'}
-          </button>
-        )}
         {ready && (
           <button
             type="button"
@@ -430,17 +455,84 @@ export default function KokoroNativePanel(): React.JSX.Element {
         )}
       </div>
 
-      {measure && (
-        <div className="kokoro-measure">
-          <p>
-            RTF {measure.rtf.toFixed(2)} · {Math.round(measure.durationMs)} ms of audio in {Math.round(measure.elapsedMs)}{' '}
-            ms · {Math.round(measure.sampleRate / 1000)} kHz
-          </p>
-          <p>{verdict(measure.rtf)}</p>
-        </div>
-      )}
+      <details className="disc-sub">
+        <summary>Advanced</summary>
+        <div className="disc-sub-body">
+          <div className="tts-field-grid">
+            <div className="field">
+              <span className="field-label" id="kokoro-native-size-label">
+                Model
+              </span>
+              <output id="kokoro-native-size" className="tts-value" aria-labelledby="kokoro-native-size-label">
+                {status?.modelId ? `${status.modelId} · ${sizeLabel}` : sizeLabel}
+              </output>
+            </div>
+            <div className="field">
+              <label className="field-label" htmlFor="kokoro-native-threads">
+                Threads
+              </label>
+              <select
+                id="kokoro-native-threads"
+                className="input"
+                value={threads}
+                onChange={(event) => void changeThreads(Number(event.target.value))}
+                disabled={state === 'unsupported' || busy}
+              >
+                {THREAD_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {formatThreads(option)}
+                    {option === DEFAULT_THREADS ? ' (recommended)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
 
-      <p className="field-hint">{status?.attribution ?? ATTRIBUTION}</p>
+          {state === 'ready' && (
+            <p className="tts-status" role="status">
+              Ready on {formatThreads(status?.threads ?? threads)}
+              {status?.provider ? ` (${status.provider})` : ''}
+              {status?.sampleRate ? ` · ${Math.round(status.sampleRate / 1000)} kHz` : ''}
+              {status?.loaded ? ' · loaded' : ''}
+            </p>
+          )}
+
+          {measure && (
+            <div className="kokoro-measure">
+              <p>
+                RTF {measure.rtf.toFixed(2)} · {Math.round(measure.durationMs)} ms of audio in{' '}
+                {Math.round(measure.elapsedMs)} ms · {Math.round(measure.sampleRate / 1000)} kHz
+              </p>
+              <p>{verdict(measure.rtf)}</p>
+            </div>
+          )}
+
+          {(state === 'ready' || state === 'absent') && (
+            <div className="tts-actions">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => void measureSpeed()}
+                disabled={!ready || measuring}
+              >
+                {measuring ? 'Measuring…' : 'Measure speed'}
+              </button>
+            </div>
+          )}
+
+          <p className="field-hint">{status?.attribution ?? ATTRIBUTION}</p>
+        </div>
+      </details>
+
+      <details className="disc-sub">
+        <summary>How this works</summary>
+        <div className="disc-sub-body">
+          <p className="field-hint">
+            Runs Kokoro-82M entirely on this phone through sherpa-onnx — no PC and no server. The model is a 334 MB
+            download that is stored in the app&apos;s private storage and survives restarts.
+          </p>
+        </div>
+      </details>
     </section>
   );
 }

@@ -5,9 +5,12 @@ import { db } from '../core/db';
 import {
   BRACKET_KEY,
   DEFAULT_PAUSE_MS,
+  DEFAULT_PREFETCH_AHEAD,
   DEFAULT_SKIP,
   LEGACY_BRACKET_KEY,
   PAUSE_KEY,
+  PREFETCH_AHEAD_KEY,
+  PREFETCH_CHOICES,
   SKIP_KEY,
   WORD_HIGHLIGHT_KEY,
 } from './reading';
@@ -15,7 +18,7 @@ import ReadingOptions from './ReadingOptions';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const ANNOUNCE_LABEL = 'Say “in brackets” (recommended)';
+const ANNOUNCE_LABEL = 'Pause around them (recommended)';
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -34,11 +37,24 @@ async function render(): Promise<void> {
   await act(async () => {
     root?.render(<ReadingOptions />);
   });
-  await waitFor(() => container.querySelector('input[aria-label="Tables"]') !== null, 'options rendered');
+  await waitFor(() => container.querySelector('button.chip') !== null, 'options rendered');
 }
 
 function box(label: string): HTMLInputElement {
   return container.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
+}
+
+/** The skip kinds are toggle chips, not checkboxes: label, then aria-pressed. */
+function chip(label: string): HTMLButtonElement {
+  const found = [...container.querySelectorAll<HTMLButtonElement>('button.chip')].find(
+    (button) => button.textContent === label,
+  );
+  if (!found) throw new Error(`no chip labelled ${label}`);
+  return found;
+}
+
+function pressed(label: string): boolean {
+  return chip(label).getAttribute('aria-pressed') === 'true';
 }
 
 async function stored(key: string): Promise<unknown> {
@@ -66,12 +82,13 @@ afterEach(async () => {
 });
 
 describe('ReadingOptions', () => {
-  it('renders the section with every switch on its default and the pause at 300 ms', async () => {
+  it('renders the panel with every skip kind held to its default and the pause at 300 ms', async () => {
     await render();
 
-    expect(container.querySelector('#reading-h2')?.textContent).toBe('Reading aloud');
-    expect(box('Tables').checked).toBe(DEFAULT_SKIP.tables);
-    expect(box('Citations').checked).toBe(DEFAULT_SKIP.citations);
+    expect(container.querySelector('.rd-options')).not.toBeNull();
+    expect(container.querySelector('#reading-h2')).toBeNull();
+    expect(pressed('Tables')).toBe(DEFAULT_SKIP.tables);
+    expect(pressed('Citations')).toBe(DEFAULT_SKIP.citations);
     expect(box(ANNOUNCE_LABEL).checked).toBe(true);
     expect(box('Highlight the word being spoken').checked).toBe(true);
 
@@ -80,12 +97,13 @@ describe('ReadingOptions', () => {
     expect(container.textContent).toContain('0.3 s of silence between paragraphs');
   });
 
-  it('offers exactly three ways to read brackets', async () => {
+  it('offers exactly four ways to read brackets', async () => {
     await render();
 
     const radios = [...container.querySelectorAll<HTMLInputElement>('input[name="rd-brackets"]')];
     expect(radios.map((radio) => radio.getAttribute('aria-label'))).toEqual([
       ANNOUNCE_LABEL,
+      'Say “in brackets”',
       'Read normally',
       'Skip',
     ]);
@@ -123,13 +141,13 @@ describe('ReadingOptions', () => {
     await render();
 
     await act(async () => {
-      box('Tables').click();
+      chip('Tables').click();
     });
     await waitFor(async () => (await stored(SKIP_KEY.tables)) === false, 'tables stored off');
-    await waitFor(() => box('Tables').checked === false, 'tables switch off');
+    await waitFor(() => pressed('Tables') === false, 'tables chip released');
 
     await act(async () => {
-      box('Tables').click();
+      chip('Tables').click();
     });
     await waitFor(async () => (await stored(SKIP_KEY.tables)) === true, 'tables stored on');
   });
@@ -155,5 +173,25 @@ describe('ReadingOptions', () => {
       box('Highlight the word being spoken').click();
     });
     await waitFor(async () => (await stored(WORD_HIGHLIGHT_KEY)) === false, 'word highlight off');
+  });
+
+  it('offers how many sentences to prepare ahead and stores the choice', async () => {
+    await render();
+
+    const select = container.querySelector<HTMLSelectElement>('#rd-prefetch')!;
+    expect(select.value).toBe(String(DEFAULT_PREFETCH_AHEAD));
+    expect([...select.options].map((option) => option.value)).toEqual(
+      PREFETCH_CHOICES.map(String)
+    );
+    expect(container.querySelector('#rd-prefetch-hint')?.textContent).toContain(
+      'uses more battery and storage'
+    );
+
+    await act(async () => {
+      // React reads the value from the event target on change.
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set?.call(select, '20');
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await waitFor(async () => (await stored(PREFETCH_AHEAD_KEY)) === 20, 'prefetch ahead stored');
   });
 });

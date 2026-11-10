@@ -499,6 +499,47 @@ shape.
 </ul>
 ```
 
+### Disclosure row
+- **Role:** the settings index row. A page of options is an index of collapsed rows,
+  not a scroll: one card per group holds rows separated by hairlines, and only the row
+  being read is open. Pressing a row opens it and closes the previous one; pressing the
+  open row closes it, and Android Back closes it before it leaves the page.
+- **Row:** the whole row is the button, 56px minimum, 10px/16px padding. Title 16px/600
+  ink; an optional second line at 14px muted, one line with an ellipsis, carrying a live
+  cheap value ("Kokoro · 1.0×", "Off", `v0.4.0 · GPL-3.0`) — never a number that would
+  need a scan or a model probe to know. Trailing 18px inline-SVG chevron, 1.7px stroke,
+  round caps, `currentColor`, rotating 90° in 120ms (it turns instantly under
+  `prefers-reduced-motion`). Focus ring drawn inside the row's own edge so the card's
+  rounded corner never clips it.
+- **Heading:** the button lives inside the `h2` (`.disc-h`), so the row is still a
+  heading in the outline and the button is named by its own text. A heading whose text
+  is only the title, with a sibling button, is not this pattern.
+- **Open body:** sits directly under its header inside the same card, with a hairline
+  above and 16px padding. It is **never unmounted**: closed means `hidden`, so a model
+  download or a timer inside a closed row keeps running. Shared styles do the work
+  (`.disc`, `.disc-head`, `.disc-body`, `.disc-chevron`).
+- **Second level:** native `<details class="disc-sub">` inside a panel — hairline above,
+  no box, a 44px summary at 14px/600 with its own 7px `::after` border chevron
+  (`list-style: none`, WebKit marker hidden). Native `<details name>` is not used to group
+  rows: the minimum Android WebView is 110 and named groups arrive in 120.
+- **Nested cards are neutralised:** a `.card` inside `.disc-body` loses its fill, border,
+  radius and padding — a panel inside a row already sits on a surface.
+
+```html
+<section id="backup" class="disc" aria-labelledby="backup-h2">
+  <h2 id="backup-h2" class="settings-h2 disc-h">
+    <button type="button" class="disc-head" aria-expanded="false" aria-controls="backup-body">
+      <span class="disc-text">
+        <span class="disc-title">Backup</span>
+        <span class="disc-summary">Last backup: never</span>
+      </span>
+      <svg class="disc-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 6 15.5 12 9.5 18" /></svg>
+    </button>
+  </h2>
+  <div class="disc-body" id="backup-body" hidden>…</div>
+</section>
+```
+
 ### Empty state
 - **Character:** the page speaking in its own voice. Borderless text in the column
   (`.empty-state`), 48px teal mark, a 19px title, one teaching paragraph, optionally a

@@ -17,7 +17,7 @@ import { speakPlan, type BracketMode } from './spoken';
 /** The kinds a parsed block can carry ('p' | 'h' | 'li' | 'table' | …). */
 export type BlockKind = Block['kind'];
 
-/** Keys whose value is an on/off switch (brackets is a three-way mode). */
+/** Keys whose value is an on/off switch (brackets is a four-way mode). */
 type SwitchKey = Exclude<keyof SkipOptions, 'brackets'>;
 
 export interface SkipOptions {
@@ -42,7 +42,7 @@ export const DEFAULT_SKIP: SkipOptions = {
   footnotes: true,
   references: true,
   citations: true,
-  brackets: 'announce',
+  brackets: 'pause',
 };
 
 /** Kinds that are read only when their switch is on. */
@@ -204,7 +204,7 @@ export const SKIP_KEY = {
   brackets: 'read.skip.brackets',
 } as const satisfies Record<keyof SkipOptions, string>;
 
-/** Three-way bracket setting. */
+/** Four-way bracket setting. */
 export const BRACKET_KEY = 'read.brackets';
 /** Old on/off switch; `true` meant "skip asides". Read once, never written. */
 export const LEGACY_BRACKET_KEY = SKIP_KEY.brackets;
@@ -213,8 +213,23 @@ export const PAUSE_KEY = 'read.pause.paragraphMs';
 export const WORD_HIGHLIGHT_KEY = 'read.wordHighlight';
 export const DEFAULT_PAUSE_MS = 300;
 
+/**
+ * How many sentences to render ahead of the one being spoken. More saves waiting
+ * after a pause or a skip, at the cost of battery and storage.
+ */
+export const PREFETCH_AHEAD_KEY = 'read.prefetchAhead';
+export const DEFAULT_PREFETCH_AHEAD = 10;
+/** The choices the settings screen offers; 50 is already minutes of audio. */
+export const PREFETCH_CHOICES = [2, 5, 10, 20, 50] as const;
+
+/** Live look-ahead size, ignoring a stored value the picker does not offer. */
+export function usePrefetchAhead(): number {
+  const stored = useSetting<number>(PREFETCH_AHEAD_KEY, DEFAULT_PREFETCH_AHEAD);
+  return (PREFETCH_CHOICES as readonly number[]).includes(stored) ? stored : DEFAULT_PREFETCH_AHEAD;
+}
+
 export function isBracketMode(value: unknown): value is BracketMode {
-  return value === 'announce' || value === 'read' || value === 'skip';
+  return value === 'pause' || value === 'announce' || value === 'read' || value === 'skip';
 }
 
 /** `read.brackets` wins; a legacy `read.skip.brackets: true` still means "skip". */

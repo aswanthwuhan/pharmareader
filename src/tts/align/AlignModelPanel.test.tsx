@@ -3,7 +3,8 @@ import 'fake-indexeddb/auto';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import AlignModelPanel from './AlignModelPanel';
+import { resetDownload } from '../downloads';
+import AlignModelPanel, { WHISPER_DOWNLOAD_ID } from './AlignModelPanel';
 
 /** The aligner's worker client, replaced by a scriptable stand-in. */
 const whisper = vi.hoisted(() => ({
@@ -40,6 +41,7 @@ beforeEach(() => {
   whisper.support = true;
   whisper.fail = false;
   whisper.prepares = 0;
+  resetDownload(WHISPER_DOWNLOAD_ID);
 });
 
 afterEach(async () => {

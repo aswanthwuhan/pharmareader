@@ -1,12 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   KOKORO_ARCHIVE_BYTES,
   KOKORO_REQUIRED_BYTES,
   downloadLabel,
+  downloadStageOf,
+  followRunningDownload,
   formatBytes,
+  isBusyError,
   meteredWarning,
   resumeFraction,
   storageWarning,
+  tagDownloadStage,
 } from './kokoroDownload';
 
 describe('formatBytes', () => {
@@ -75,5 +79,126 @@ describe('meteredWarning', () => {
     const warning = meteredWarning(true, false);
     expect(warning).toContain('334 MB');
     expect(warning).toContain('Wi-Fi');
+  });
+});
+
+describe('isBusyError', () => {
+  it('recognises the plugin refusal to start a second download', () => {
+    expect(isBusyError(Object.assign(new Error('A model download is already running'), { code: 'BUSY' }))).toBe(
+      true
+    );
+    // Older builds only sent the code on a plain object.
+    expect(isBusyError({ code: 'busy' })).toBe(true);
+    expect(isBusyError(new Error('A model download is already running'))).toBe(true);
+  });
+
+  it('does not mistake a real failure for a busy plugin', () => {
+    expect(isBusyError(null)).toBe(false);
+    expect(isBusyError(undefined)).toBe(false);
+    expect(isBusyError(new Error('disk full'))).toBe(false);
+    expect(isBusyError(Object.assign(new Error('not enough space'), { code: 'ENOSPC' }))).toBe(false);
+    expect(isBusyError('no such model')).toBe(false);
+  });
+});
+
+describe('tagDownloadStage', () => {
+  it('carries the stage the download failed in to the remounted panel', () => {
+    const boom = tagDownloadStage(new Error('disk full'), 'unpack');
+    expect(downloadStageOf(boom)).toBe('unpack');
+    expect(boom.message).toBe('disk full');
+
+    const text = tagDownloadStage('worker stopped', 'load');
+    expect(downloadStageOf(text)).toBe('load');
+    expect(text.message).toBe('worker stopped');
+
+    expect(downloadStageOf(new Error('plain'))).toBeUndefined();
+    expect(downloadStageOf(undefined)).toBeUndefined();
+  });
+});
+
+describe('followRunningDownload', () => {
+  it('follows the plugin state until the model is unpacked', async () => {
+    const statuses = [
+      { downloaded: false, partialBytes: 100, archiveBytes: 400 },
+      { downloaded: false, partialBytes: 400, archiveBytes: 400 },
+      { downloaded: true, partialBytes: 0, archiveBytes: 400 },
+    ];
+    const fractions: number[] = [];
+    const unpacked = vi.fn();
+    const unsubscribe = vi.fn();
+
+    await followRunningDownload({
+      status: async () => statuses.shift() ?? { downloaded: true },
+      listen: async () => unsubscribe,
+      onProgress: (fraction) => fractions.push(fraction),
+      onUnpacking: unpacked,
+      pollMs: 1,
+    });
+
+    expect(fractions).toEqual([0.25, 1]);
+    // The archive is complete but the model is not: that is the unpack/verify pass.
+    expect(unpacked).toHaveBeenCalledTimes(1);
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('takes progress from the plugin events as well as the polled bytes', async () => {
+    const statuses = [
+      { downloaded: false, partialBytes: 100, archiveBytes: 400 },
+      { downloaded: true },
+    ];
+    const fractions: number[] = [];
+
+    await followRunningDownload({
+      status: async () => statuses.shift() ?? { downloaded: true },
+      listen: async (onProgress) => {
+        onProgress(0.5);
+        return () => undefined;
+      },
+      onProgress: (fraction) => fractions.push(fraction),
+      pollMs: 1,
+    });
+
+    expect(fractions).toEqual([0.5, 0.25]);
+  });
+
+  it('does nothing when the download already finished', async () => {
+    const progress = vi.fn();
+    await followRunningDownload({
+      status: async () => ({ downloaded: true }),
+      listen: async () => () => undefined,
+      onProgress: progress,
+    });
+    expect(progress).not.toHaveBeenCalled();
+  });
+
+  it('gives up when the saved bytes stop moving, and stops listening', async () => {
+    const unsubscribe = vi.fn();
+    const waiting = followRunningDownload({
+      status: async () => ({ downloaded: false, partialBytes: 10, archiveBytes: 100 }),
+      listen: async () => unsubscribe,
+      onProgress: () => undefined,
+      pollMs: 1,
+      stallMs: 5,
+    });
+
+    await expect(waiting).rejects.toThrow('stopped making progress');
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives up when the unpack pass never finishes, and stops listening', async () => {
+    // The archive is complete but `downloaded` never turns true: the byte count
+    // is frozen at 100% by design, so only the unpack cap can end the wait.
+    const unsubscribe = vi.fn();
+    const waiting = followRunningDownload({
+      status: async () => ({ downloaded: false, partialBytes: 400, archiveBytes: 400 }),
+      listen: async () => unsubscribe,
+      onProgress: () => undefined,
+      onUnpacking: () => undefined,
+      pollMs: 1,
+      unpackMs: 5,
+    });
+
+    await expect(waiting).rejects.toThrow('unpacking it stopped making progress');
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 });

@@ -89,6 +89,41 @@ describe('speakPlan: citations', () => {
   });
 });
 
+describe('speakPlan: brackets, pause', () => {
+  const PAUSE: SpeakOptions = { citations: true, brackets: 'pause' };
+
+  it('sets an acronym off with commas and no extra words', () => {
+    expect(spokenText('The autonomic nervous system (ANS) controls the gut.', PAUSE)).toBe(
+      'The autonomic nervous system, ANS, controls the gut.'
+    );
+  });
+
+  it('sets an explanation off with commas', () => {
+    expect(spokenText('Digoxin (a cardiac glycoside) slows conduction.', PAUSE)).toBe(
+      'Digoxin, a cardiac glycoside, slows conduction.'
+    );
+  });
+
+  it('adds no comma before the full stop', () => {
+    expect(spokenText('It works (as above).', PAUSE)).toBe('It works, as above.');
+  });
+
+  it('reads a sentence-initial aside without a leading comma', () => {
+    expect(spokenText('(See Fig. 2) Capsaicin burns.', PAUSE)).toBe('See Fig. 2, Capsaicin burns.');
+  });
+
+  it('never says bracket', () => {
+    const text = spokenText('Atropine (an antimuscarinic) [3] and (ACh) block (e.g. at M2) receptors.', PAUSE);
+    expect(text).not.toMatch(/bracket/i);
+  });
+
+  it('keeps the highlight map on the original text', () => {
+    const plan = speakPlan('The system (ANS) acts.', PAUSE);
+    expect(plan.charMap).not.toBeNull();
+    expect(plan.text.length).toBe(plan.charMap!.length);
+  });
+});
+
 describe('speakPlan: brackets, announce', () => {
   it('names a short acronym right after a phrase', () => {
     expect(spokenText('The autonomic nervous system (ANS) controls the gut.', ANNOUNCE)).toBe(
@@ -109,31 +144,31 @@ describe('speakPlan: brackets, announce', () => {
 
   it('announces a Greek-letter aside as an aside, not an acronym', () => {
     expect(spokenText('The effect (β-blocker) is weak.', ANNOUNCE)).toBe(
-      'The effect, in brackets, β-blocker, close bracket, is weak.'
+      'The effect, in brackets, β-blocker, is weak.'
     );
   });
 
   it('announces a short explanation', () => {
     expect(spokenText('Digoxin (a cardiac glycoside) slows conduction.', ANNOUNCE)).toBe(
-      'Digoxin, in brackets, a cardiac glycoside, close bracket, slows conduction.'
+      'Digoxin, in brackets, a cardiac glycoside, slows conduction.'
     );
   });
 
   it('announces an example', () => {
     expect(spokenText('Give (e.g. atropine) for bradycardia.', ANNOUNCE)).toBe(
-      'Give, in brackets, e.g. atropine, close bracket, for bradycardia.'
+      'Give, in brackets, e.g. atropine, for bradycardia.'
     );
   });
 
   it('announces a cross-reference', () => {
     expect(spokenText('See (Fig. 2) for the curve.', ANNOUNCE)).toBe(
-      'See, in brackets, Fig. 2, close bracket, for the curve.'
+      'See, in brackets, Fig. 2, for the curve.'
     );
   });
 
   it('announces square brackets that are not citations', () => {
     expect(spokenText('It works [as above].', ANNOUNCE)).toBe(
-      'It works, in brackets, as above, close bracket.'
+      'It works, in brackets, as above.'
     );
   });
 
@@ -145,39 +180,39 @@ describe('speakPlan: brackets, announce', () => {
 
   it('announces doses in brackets too', () => {
     expect(spokenText('Give 5 mg/kg (bolus) slowly.', ANNOUNCE)).toBe(
-      'Give 5 mg/kg, in brackets, bolus, close bracket, slowly.'
+      'Give 5 mg/kg, in brackets, bolus, slowly.'
     );
     expect(spokenText('A dose (5 mg/kg) is safe.', ANNOUNCE)).toBe(
-      'A dose, in brackets, 5 mg/kg, close bracket, is safe.'
+      'A dose, in brackets, 5 mg/kg, is safe.'
     );
   });
 
   it('announces an aside at the start of a sentence', () => {
     expect(spokenText('(See Fig. 2) Capsaicin activates TRPV1.', ANNOUNCE)).toBe(
-      'In brackets, See Fig. 2, close bracket, Capsaicin activates TRPV1.'
+      'In brackets, See Fig. 2, Capsaicin activates TRPV1.'
     );
   });
 
   it('announces an aside at the end of a sentence without a trailing comma', () => {
     expect(spokenText('It acts on TRPV1 [as above].', ANNOUNCE)).toBe(
-      'It acts on TRPV1, in brackets, as above, close bracket.'
+      'It acts on TRPV1, in brackets, as above.'
     );
   });
 
   it('announces every bracket in a sentence with several', () => {
     expect(spokenText('A (b) and c (d) follow.', ANNOUNCE)).toBe(
-      'A, in brackets, b, close bracket, and c, in brackets, d, close bracket, follow.'
+      'A, in brackets, b, and c, in brackets, d, follow.'
     );
   });
 
   it('does not double the comma of a sentence that already has one', () => {
     expect(spokenText('Digoxin, (a glycoside) is used.', ANNOUNCE)).toBe(
-      'Digoxin, in brackets, a glycoside, close bracket, is used.'
+      'Digoxin, in brackets, a glycoside, is used.'
     );
   });
 
   it('never leaves a double space around the announcement', () => {
-    expect(spokenText('A (b) c', ANNOUNCE)).toBe('A, in brackets, b, close bracket, c');
+    expect(spokenText('A (b) c', ANNOUNCE)).toBe('A, in brackets, b, c');
   });
 
   it('drops empty brackets instead of saying "close bracket" alone', () => {

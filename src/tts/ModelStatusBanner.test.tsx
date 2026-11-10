@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../core/db';
 import { getSetting, setSetting } from '../core/settings';
+import { resetDownload, startDownload } from './downloads';
 import ModelStatusBanner from './ModelStatusBanner';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -105,6 +106,22 @@ async function unmount(): Promise<void> {
   container.remove();
 }
 
+/** A download that is still running, so the banner has progress to show. */
+function runningDownload(id: 'pocket' | 'kokoro', fraction: number): {
+  finish: () => void;
+  task: Promise<void>;
+} {
+  let finish!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const task = startDownload(id, async (report) => {
+    report({ fraction });
+    await gate;
+  });
+  return { finish, task };
+}
+
 beforeEach(() => {
   harness.state.pocketReady = false;
   harness.state.kokoroReady = false;
@@ -115,6 +132,8 @@ beforeEach(() => {
 
 afterEach(async () => {
   await unmount();
+  resetDownload('pocket');
+  resetDownload('kokoro');
   await flush(10);
   await db.delete();
   await db.open();
@@ -179,6 +198,42 @@ describe('ModelStatusBanner', () => {
     await unmount();
     const again = await mount();
     expect(again.querySelector('.banner')).toBeNull();
+  });
+
+  it('shows the running download instead of the missing-voice warning', async () => {
+    await setSetting('tts.engine', 'pocket');
+    const running = runningDownload('pocket', 0.42);
+    const view = await mount();
+
+    expect(view.querySelector('.banner-warning')).toBeNull();
+    expect(view.querySelector('.banner-info')?.textContent).toContain('Downloading Pocket TTS — 42%');
+    expect(view.querySelector('.banner-info')?.textContent).toContain('See the download in Settings');
+
+    await act(async () => running.finish());
+    await running.task;
+    await flush(20);
+    // Ended but not installed yet: the ordinary probe takes over again.
+    expect(view.querySelector('.banner-warning')?.textContent).toContain(
+      "Pocket TTS voice isn't downloaded yet",
+    );
+  });
+
+  it('follows a running download even when the choice is Auto', async () => {
+    await setSetting('tts.engine', 'auto');
+    const running = runningDownload('kokoro', 0.2);
+    const view = await mount();
+
+    const banner = view.querySelector('.banner-info');
+    expect(banner?.textContent).toContain('Downloading Kokoro — 20%');
+    // Not the "go download one" tip while one is already downloading.
+    expect(banner?.textContent).not.toContain('Download Kokoro or Pocket TTS in Settings');
+
+    await act(async () => running.finish());
+    await running.task;
+    await flush(20);
+    expect(view.querySelector('.banner-info')?.textContent).toContain(
+      "Using your phone's built-in voice.",
+    );
   });
 
   it('asks for a speed measurement when a model is installed but never timed', async () => {

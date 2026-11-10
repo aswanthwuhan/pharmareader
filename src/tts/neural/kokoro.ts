@@ -83,7 +83,13 @@ class KokoroEngine implements TtsEngine {
   private pendingInit: { resolve: () => void; reject: (err: Error) => void } | null = null;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly player = new FloatPlayer();
-  private onProgress: ((fraction: number) => void) | undefined;
+  /**
+   * One download, many watchers: the settings panel that started it, the reader that
+   * asked for a voice meanwhile, and a remounted panel all subscribe here. A single
+   * `onProgress` field meant the second caller silently got no progress ("the bar
+   * stayed at 0% and then said download error").
+   */
+  private readonly progressListeners = new Set<(fraction: number) => void>();
   private voiceIds: string[] = KOKORO_VOICES.map((voice) => voice.id);
   private nextId = 1;
   private ready = false;
@@ -99,19 +105,23 @@ class KokoroEngine implements TtsEngine {
   }
 
   async prepare(onProgress?: (fraction: number) => void): Promise<void> {
-    if (this.ready) return;
-    const pending = (this.loading ??= this.init(onProgress));
+    if (this.ready) {
+      onProgress?.(1);
+      return;
+    }
+    if (onProgress) this.progressListeners.add(onProgress);
+    const pending = (this.loading ??= this.init());
     try {
       await pending;
     } catch (err) {
+      if (onProgress) this.progressListeners.delete(onProgress);
       // Clear only our own attempt; a reset() may already have replaced it.
       if (this.loading === pending) this.loading = null;
       throw err;
     }
   }
 
-  private async init(onProgress?: (fraction: number) => void): Promise<void> {
-    this.onProgress = onProgress;
+  private async init(): Promise<void> {
     const device = await usableDevice();
     // WebGPU wants fp32 weights; WASM on phones is fastest with q8.
     const fallback: KokoroDtype = device === 'webgpu' ? 'fp32' : 'q8';
@@ -136,11 +146,21 @@ class KokoroEngine implements TtsEngine {
       }
 
       this.ready = true;
-      onProgress?.(1);
+      this.emitProgress(1);
       await setModelReady('kokoro', true);
     } finally {
-      // Do not retain the panel's progress callback once the download is over.
-      this.onProgress = undefined;
+      // Do not retain the panels' progress callbacks once the download is over.
+      this.progressListeners.clear();
+    }
+  }
+
+  private emitProgress(fraction: number): void {
+    for (const listener of [...this.progressListeners]) {
+      try {
+        listener(fraction);
+      } catch {
+        /* a watcher that throws must not break the load */
+      }
     }
   }
 
@@ -236,6 +256,7 @@ class KokoroEngine implements TtsEngine {
     this.worker = null;
     this.ready = false;
     this.loading = null;
+    this.progressListeners.clear();
     const init = this.pendingInit;
     this.pendingInit = null;
     init?.reject(new Error('Kokoro engine was reset'));
@@ -274,7 +295,7 @@ class KokoroEngine implements TtsEngine {
   private receive(msg: KokoroResponse): void {
     switch (msg.type) {
       case 'progress':
-        this.onProgress?.(msg.fraction);
+        this.emitProgress(msg.fraction);
         return;
       case 'ready':
         this.voiceIds = msg.voices.length > 0 ? msg.voices : this.voiceIds;

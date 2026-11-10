@@ -58,6 +58,12 @@ class PocketEngine implements TtsEngine {
   private readonly voices = new Map<string, Promise<string>>();
   private readonly player = new FloatPlayer();
   /**
+   * One download, many watchers: the settings panel that started it, the reader that
+   * asked for a voice meanwhile, and a remounted panel all subscribe here. A single
+   * `onProgress` field meant the second caller silently got no progress.
+   */
+  private readonly progressListeners = new Set<(fraction: number) => void>();
+  /**
    * `tts.generate()` is not re-entrant: the worker runs one job at a time and a
    * second concurrent call comes back with no audio chunks at all (a 44-byte,
    * zero-length WAV). The player prefetches two sentences ahead, so every
@@ -80,17 +86,23 @@ class PocketEngine implements TtsEngine {
   }
 
   async prepare(onProgress?: (fraction: number) => void): Promise<void> {
-    if (this.tts?.ready) return;
-    const pending = (this.loading ??= this.load(onProgress));
+    if (this.tts?.ready) {
+      onProgress?.(1);
+      return;
+    }
+    if (onProgress) this.progressListeners.add(onProgress);
+    const pending = (this.loading ??= this.load());
     try {
       await pending;
     } catch (err) {
+      // The attempt is over: nobody is going to receive progress for it any more.
+      this.progressListeners.clear();
       if (this.loading === pending) this.loading = null;
       throw err;
     }
   }
 
-  private async load(onProgress?: (fraction: number) => void): Promise<PocketTTS> {
+  private async load(): Promise<PocketTTS> {
     const epoch = this.epoch;
     const tts = new PocketTTS({
       language: LANGUAGE,
@@ -103,7 +115,7 @@ class PocketEngine implements TtsEngine {
       // isolates the page (Android's WebView does not — docs/PERFORMANCE.md).
       maxThreads: wasmThreadCount(),
     });
-    const report = createProgressAggregator(onProgress, POCKET_SIZE_MB * 1e6);
+    const report = createProgressAggregator((fraction) => this.emitProgress(fraction), POCKET_SIZE_MB * 1e6);
     let sawProgress = false;
     try {
       await tts.load((info: ProgressInfo) => {
@@ -131,8 +143,21 @@ class PocketEngine implements TtsEngine {
     }
     this.tts = tts;
     await setModelReady('pocket', true);
-    onProgress?.(1);
+    this.emitProgress(1);
+    // Do not retain the panels' progress callbacks once the download is over
+    // (Kokoro's init clears them in a `finally`; a success here kept them forever).
+    this.progressListeners.clear();
     return tts;
+  }
+
+  private emitProgress(fraction: number): void {
+    for (const listener of [...this.progressListeners]) {
+      try {
+        listener(fraction);
+      } catch {
+        /* a watcher that throws must not break the load */
+      }
+    }
   }
 
   async listVoices(): Promise<TtsVoice[]> {
@@ -243,6 +268,7 @@ class PocketEngine implements TtsEngine {
     this.tts?.destroy();
     this.tts = null;
     this.loading = null;
+    this.progressListeners.clear();
     this.voices.clear();
     this.queue = Promise.resolve();
     void this.player.dispose();

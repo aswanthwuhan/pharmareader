@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../core/db';
 import type { AudioCacheRecord } from '../core/types';
 import {
@@ -9,6 +9,7 @@ import {
   getAudio,
   pruneAudio,
   putAudio,
+  resetAudioSizeCache,
   sha256Hex,
   wavDurationMs,
 } from './cache';
@@ -16,6 +17,7 @@ import {
 afterEach(async () => {
   await db.delete();
   await db.open();
+  resetAudioSizeCache();
 });
 
 const rec = (key: string, engine: string, size = 10, createdAt = Date.now()): AudioCacheRecord => ({
@@ -68,25 +70,24 @@ describe('sha256Hex', () => {
 
 describe('cacheKey', () => {
   it('is stable and hex', async () => {
-    const a = await cacheKey('Paracetamol 500 mg', 'system', 'v1', 1, 'abc123');
-    const b = await cacheKey('Paracetamol 500 mg', 'system', 'v1', 1, 'abc123');
+    const a = await cacheKey('Paracetamol 500 mg', 'system', 'v1', 1);
+    const b = await cacheKey('Paracetamol 500 mg', 'system', 'v1', 1);
     expect(a).toBe(b);
     expect(a).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it('changes with every input that changes the audio', async () => {
-    const base = await cacheKey('text', 'system', 'v1', 1, 'lex');
-    expect(await cacheKey('text2', 'system', 'v1', 1, 'lex')).not.toBe(base);
-    expect(await cacheKey('text', 'pocket', 'v1', 1, 'lex')).not.toBe(base);
-    expect(await cacheKey('text', 'system', 'v2', 1, 'lex')).not.toBe(base);
-    expect(await cacheKey('text', 'system', 'v1', 1.5, 'lex')).not.toBe(base);
-    expect(await cacheKey('text', 'system', 'v1', 1, 'lex2')).not.toBe(base);
+    const base = await cacheKey('text', 'system', 'v1', 1);
+    expect(await cacheKey('text2', 'system', 'v1', 1)).not.toBe(base);
+    expect(await cacheKey('text', 'pocket', 'v1', 1)).not.toBe(base);
+    expect(await cacheKey('text', 'system', 'v2', 1)).not.toBe(base);
+    expect(await cacheKey('text', 'system', 'v1', 1.5)).not.toBe(base);
   });
 
   it('treats an absent voice like the empty id without colliding fields', async () => {
-    expect(await cacheKey('t', 'e', undefined, 1, 'l')).toBe(await cacheKey('t', 'e', '', 1, 'l'));
+    expect(await cacheKey('t', 'e', undefined, 1)).toBe(await cacheKey('t', 'e', '', 1));
     // Field boundaries are unambiguous: voice+rate must not run into each other.
-    expect(await cacheKey('t', 'e', '1', 2, 'l')).not.toBe(await cacheKey('t', 'e', '12', 2, 'l'));
+    expect(await cacheKey('t', 'e', '1', 2)).not.toBe(await cacheKey('t', 'e', '12', 2));
   });
 });
 
@@ -169,6 +170,71 @@ describe('pruneAudio', () => {
     expect(await db.audioCache.count()).toBe(1);
     expect(await getAudio('a')).toBeUndefined();
     expect(await getAudio('b')).toBeTruthy();
+  });
+});
+
+describe('running byte total', () => {
+  it('reads the table once, then a put costs one row read', async () => {
+    const scan = vi.spyOn(db.audioCache, 'toArray');
+    // The first put has no total yet, so it may scan once to learn it.
+    await putAudio(rec('a', 'system', 10));
+    scan.mockClear();
+
+    await putAudio(rec('b', 'system', 20));
+    await putAudio(rec('c', 'system', 30));
+
+    expect(scan).not.toHaveBeenCalled();
+    expect(await cacheSizeBytes()).toBe(60);
+  });
+
+  it('counts an overwritten key once', async () => {
+    await putAudio(rec('a', 'system', 10));
+    await putAudio(rec('a', 'system', 40));
+    expect(await cacheSizeBytes()).toBe(40);
+  });
+
+  it('subtracts what pruneAudio and clearAudio remove', async () => {
+    await putAudio(rec('a', 'system', 10, 1));
+    await putAudio(rec('b', 'system', 10, 2));
+    await putAudio(rec('c', 'system', 10, 3));
+    expect(await cacheSizeBytes()).toBe(30);
+
+    await pruneAudio(20);
+    expect(await cacheSizeBytes()).toBe(20);
+
+    await clearAudio('system');
+    expect(await cacheSizeBytes()).toBe(0);
+
+    await putAudio(rec('d', 'system', 7));
+    await clearAudio();
+    expect(await cacheSizeBytes()).toBe(0);
+  });
+
+  it('counts a clip once when two writers store the same key at once', async () => {
+    // Pre-rendering and a playback prefetch can render the same sentence at the
+    // same time: both find no row, both store it, and the total must stay one.
+    await cacheSizeBytes();
+    const shared = rec('shared', 'system', 10);
+    await Promise.all([putAudio(shared), putAudio(shared)]);
+    expect(await db.audioCache.count()).toBe(1);
+    expect(await cacheSizeBytes()).toBe(10);
+  });
+
+  it('stays exact when the total is read while the first clip is stored', async () => {
+    // StoragePanel asks for the size while the very first put is in flight. The
+    // scan must not be counted on top of the put's own delta.
+    const stored = putAudio(rec('a', 'system', 10));
+    const [, size] = await Promise.all([stored, cacheSizeBytes()]);
+    expect(size).toBe(10);
+    expect(await cacheSizeBytes()).toBe(10);
+  });
+
+  it('can be reset when the table changed behind its back', async () => {
+    await putAudio(rec('a', 'system', 10));
+    expect(await cacheSizeBytes()).toBe(10);
+    await db.audioCache.clear();
+    resetAudioSizeCache();
+    expect(await cacheSizeBytes()).toBe(0);
   });
 });
 

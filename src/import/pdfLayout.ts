@@ -819,13 +819,21 @@ export function needsModelLayout(page: PdfPage): boolean {
  * top of the next: it stops without terminal punctuation and the next page picks
  * up in lower case. Without this the reader gets two sentences that are really
  * halves of one, and a stray sentence id change at every page boundary.
+ *
+ * Only prose continues. The footer, the next page's running head, a figure and
+ * its caption sit between the two halves without being part of the sentence, so
+ * the join looks past them — and never glues body text onto one of them, which
+ * would make the reader skip that text as furniture.
  */
 export function stitchPages(paragraphs: PdfParagraph[]): PdfParagraph[] {
   const out: PdfParagraph[] = [];
+  const prose = (paragraph: PdfParagraph) => !paragraph.kind || paragraph.kind === 'p';
 
   for (const paragraph of paragraphs) {
-    const previous = out[out.length - 1];
-    if (!previous || !continuesAcrossPage(previous, paragraph)) {
+    let at = out.length - 1;
+    if (prose(paragraph)) while (at >= 0 && !prose(out[at]) && out[at].kind !== 'h') at--;
+    const previous = out[at];
+    if (!previous || !prose(previous) || !prose(paragraph) || !continuesAcrossPage(previous, paragraph)) {
       out.push(paragraph);
       continue;
     }
@@ -841,7 +849,7 @@ export function stitchPages(paragraphs: PdfParagraph[]): PdfParagraph[] {
       span.end = Math.min(span.end, base.length);
     }
 
-    out[out.length - 1] = {
+    out[at] = {
       page: previous.page,
       kind: previous.kind ?? paragraph.kind,
       text: prefix + paragraph.text,

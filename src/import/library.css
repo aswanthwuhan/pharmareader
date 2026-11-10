@@ -129,10 +129,30 @@
   color: var(--accent);
 }
 
+/* One meta line: authors give way with an ellipsis so the facts beside them —
+   chapter count, "Not started" — never move or disappear. Full author text
+   stays on the `title` attribute. */
 .lib-meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-width: 0;
   color: var(--muted);
   font-size: var(--fs-xs);
   line-height: var(--lh-snug);
+}
+
+.lib-authors {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-meta-dot,
+.lib-facts {
+  flex: none;
+  white-space: nowrap;
 }
 
 .lib-progress {
@@ -154,14 +174,14 @@
   letter-spacing: 0.02em;
 }
 
-.lib-delete {
+.lib-more {
   flex: none;
   color: var(--muted);
 }
 
-.lib-delete:hover {
-  background: var(--danger-bg);
-  color: var(--danger);
+/* A long book title wraps inside the sheet instead of pushing the actions off. */
+.lib-sheet-title {
+  overflow-wrap: anywhere;
 }
 
 /* --- Loading -------------------------------------------------------------- */
@@ -185,4 +205,47 @@
 
 .empty-state li {
   margin-left: var(--space-1);
+}
+
+/* --- Continue listening and backup reminder ------------------------------- */
+
+/* The last book opened, offered above the shelf as the one primary action. */
+.lib-continue {
+  margin: var(--space-4) 0 var(--space-3);
+}
+
+.lib-continue-btn {
+  max-width: 100%;
+}
+
+/* A long title loses its tail, never the button's shape. */
+.lib-continue-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Reminder about exports: one quiet line above the shelf, dismissable for a
+   week so it can never become nagging. */
+.lib-backup {
+  align-items: flex-start;
+  margin: 0 0 var(--space-4);
+}
+
+.lib-backup .banner-title a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.lib-backup-body {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.lib-backup-close {
+  flex: none;
+  margin-left: auto;
 }

@@ -106,11 +106,6 @@ public final class KokoroStore {
         return new File(root, KokoroModel.ID);
     }
 
-    /** Cache directory for synthesized WAV files (one per spoken sentence). */
-    public File audioCacheDir(Context context) {
-        return new File(context.getCacheDir(), ROOT_DIR);
-    }
-
     /** True when a complete, verified model is present. */
     public boolean isDownloaded() {
         File dir = modelDir();

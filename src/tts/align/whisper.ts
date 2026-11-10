@@ -62,9 +62,13 @@ export async function prepareWhisper(progress?: (fraction: number) => void): Pro
     progress?.(1);
     return;
   }
+  // A caller joining a load that playback started silently takes over the
+  // progress callback, so the Settings bar moves instead of sitting at 0%.
+  if (loading && progress) onProgress = progress;
   const attempt = (loading ??= init(progress));
   try {
     await attempt;
+    progress?.(1);
   } catch (err) {
     if (loading === attempt) loading = null;
     throw err;
@@ -78,7 +82,15 @@ async function init(progress?: (fraction: number) => void): Promise<void> {
     const loaded = new Promise<void>((resolve, reject) => {
       pendingInit = { resolve, reject };
     });
-    scope.postMessage({ type: 'init' } satisfies WhisperRequest);
+    try {
+      scope.postMessage({ type: 'init' } satisfies WhisperRequest);
+    } catch (err) {
+      // A worker that cannot take even the warm-up is dead; drop it, or every
+      // later warm-up would post into the same broken worker.
+      pendingInit = null;
+      fail(err instanceof Error ? err : new Error(String(err)));
+      throw err;
+    }
     await loaded;
     ready = true;
     downloaded = true;
@@ -200,9 +212,19 @@ function request(pcm: Float32Array): Promise<WhisperResult> {
   const id = nextId++;
   return new Promise<WhisperResult>((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    scope.postMessage(
-      { type: 'align', id, audio: pcm, sampleRate: WHISPER_SAMPLE_RATE } satisfies WhisperRequest,
-      [pcm.buffer as ArrayBuffer]
-    );
+    try {
+      scope.postMessage(
+        { type: 'align', id, audio: pcm, sampleRate: WHISPER_SAMPLE_RATE } satisfies WhisperRequest,
+        [pcm.buffer as ArrayBuffer]
+      );
+    } catch (err) {
+      // A worker that cannot take the message (a transferred buffer that is
+      // already detached, a worker that has died) would otherwise leave this
+      // request in the map forever: drop both it and the worker, so the next
+      // clip starts a new one.
+      pending.delete(id);
+      reject(alignError('transcribe', err));
+      fail(err instanceof Error ? err : new Error(String(err)));
+    }
   });
 }

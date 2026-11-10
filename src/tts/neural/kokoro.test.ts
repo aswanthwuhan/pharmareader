@@ -136,8 +136,28 @@ describe('KokoroEngine', () => {
     await setModelReady('kokoro', false);
   });
 
-  it('surfaces a worker failure to prepare and recovers with a new worker', async () => {
-    const first = kokoroEngine.prepare();
+  it('shows load progress to a caller that joins an in-flight load', async () => {
+    // A second screen (or a remounted settings panel) must see the same bar, not
+    // an empty one until it finishes.
+    const first: number[] = [];
+    const second: number[] = [];
+    const a = kokoroEngine.prepare((fraction) => first.push(fraction));
+    await waitFor(() => FakeWorker.instances.length === 1);
+    const b = kokoroEngine.prepare((fraction) => second.push(fraction));
+    const worker = lastWorker();
+    await waitFor(() => worker.posted.length > 0);
+
+    worker.reply({ type: 'progress', fraction: 0.42 });
+    worker.reply({ type: 'ready', voices: ['af_heart'] });
+    await Promise.all([a, b]);
+
+    expect(first).toContain(0.42);
+    expect(second).toContain(0.42);
+    expect(first.at(-1)).toBe(1);
+    expect(second.at(-1)).toBe(1);
+  });
+
+  it('surfaces a worker failure to prepare and recovers with a new worker', async () => {    const first = kokoroEngine.prepare();
     await waitFor(() => FakeWorker.instances.length === 1);
     await waitFor(() => lastWorker().posted.length > 0);
     lastWorker().fail('shader compile failed');

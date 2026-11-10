@@ -44,13 +44,24 @@ async function waitFor(check: () => boolean, label: string): Promise<void> {
   throw new Error(`timed out waiting for ${label}`);
 }
 
-async function renderView(rects: PdfRect[] = RECTS, file: Blob = new Blob(['%PDF-1.4'])): Promise<void> {
+async function renderView(
+  rects: PdfRect[] = RECTS,
+  file: Blob = new Blob(['%PDF-1.4']),
+  fullscreen = false
+): Promise<void> {
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
   await act(async () => {
     root?.render(
-      <PdfView docKey="book-1" file={file} page={1} rects={rects} onPageChange={() => undefined} />
+      <PdfView
+        docKey="book-1"
+        file={file}
+        page={1}
+        rects={rects}
+        onPageChange={() => undefined}
+        fullscreen={fullscreen}
+      />
     );
   });
 }
@@ -83,6 +94,7 @@ afterEach(() => {
   container.remove();
   vi.restoreAllMocks();
   delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+  delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight;
   delete (window as { devicePixelRatio?: number }).devicePixelRatio;
 });
 
@@ -159,6 +171,33 @@ describe('PdfView', () => {
 
     await waitFor(() => canvas().width === 600, 'paint once the width is known');
     expect(parseFloat(container.querySelector<HTMLElement>('.rd-pdf-rect')?.style.width ?? '')).toBeCloseTo(50);
+  });
+
+  it('fits the whole page in full screen and returns to width when it leaves', async () => {
+    // Full screen: a phone-width, phone-height box, so the page must shrink to
+    // the height instead of hanging off the bottom.
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 600 });
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 300 });
+    const file = new Blob(['%PDF-1.4']);
+
+    await renderView(RECTS, file, true);
+    // Fit width by default: 600pt page in 600px → scale 1, 2× bitmap.
+    await waitFor(() => canvas().width === 1200, 'fit-width paint in full screen');
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Fit page"]')?.click();
+    });
+    // Height fit is 300/792 ≈ 0.379, which is smaller than the width fit.
+    await waitFor(() => canvas().width === 454, 'fit-page paint');
+    expect(canvas().height).toBe(600);
+
+    // Leaving full screen drops fit page: the box can only be width-fitted.
+    await act(async () => {
+      root?.render(
+        <PdfView docKey="book-1" file={file} page={1} rects={RECTS} onPageChange={() => undefined} />
+      );
+    });
+    await waitFor(() => canvas().width === 1200, 'back to fit width');
   });
 
   it('says the stored file is gone instead of failing inside pdf.js', async () => {

@@ -12,6 +12,7 @@ import { useEffect, useState, type ReactElement } from 'react';
 import { Link } from 'react-router-dom';
 import { getSetting, setSetting, useSetting } from '../core/settings';
 import type { TtsEngine, TtsVoice } from '../core/types';
+import { useDownload } from './downloads';
 import { rtfSettingKey } from './neural/benchmark';
 import { allEngines, describeEngine, ENGINE_SETTING, kokoroFor, type EngineChoice } from './registry';
 
@@ -174,7 +175,19 @@ export interface ModelStatusBannerProps {
 export default function ModelStatusBanner({ context }: ModelStatusBannerProps) {
   const choice = useSetting<string>(ENGINE_SETTING, 'auto');
   const dismissed = useSetting<boolean>(NO_MODEL_TIP_KEY, false);
+  const pocketDownload = useDownload('pocket');
+  const kokoroDownload = useDownload('kokoro');
   const [banner, setBanner] = useState<Banner | null>(null);
+
+  // A download started from Settings keeps running while the reader browses; under
+  // Auto no model is named, so follow whichever one is actually downloading.
+  const runningId: 'pocket' | 'kokoro' | null =
+    pocketDownload.status === 'downloading' || pocketDownload.status === 'unpacking'
+      ? 'pocket'
+      : kokoroDownload.status === 'downloading' || kokoroDownload.status === 'unpacking'
+        ? 'kokoro'
+        : null;
+  const runningDownload = runningId === 'pocket' ? pocketDownload : runningId === 'kokoro' ? kokoroDownload : null;
 
   useEffect(() => {
     let alive = true;
@@ -227,7 +240,34 @@ export default function ModelStatusBanner({ context }: ModelStatusBannerProps) {
     return () => {
       alive = false;
     };
-  }, [choice]);
+  }, [
+    choice,
+    // Re-probe when a download ends: "isn't downloaded yet" must not outlive it.
+    pocketDownload.status,
+    kokoroDownload.status,
+  ]);
+
+  if (runningId && runningDownload) {
+    // The download is still running in the background store, so say that instead of
+    // "isn't downloaded yet" — the reader may be on a screen far from Settings.
+    const percent = Math.round(runningDownload.fraction * 100);
+    return (
+      <div className="banner banner-info" role="status" data-context={context}>
+        {ICON_INFO}
+        <div>
+          <p>
+            Downloading {MODEL_NAMES[runningId]} — {percent}%. Reading with the phone&apos;s built-in voice until it is
+            ready.
+          </p>
+          <p>
+            <Link to={SETTINGS_LINK} className="rd-banner-link">
+              See the download in Settings
+            </Link>
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (!banner) return null;
   if (banner.dismissible && dismissed) return null;

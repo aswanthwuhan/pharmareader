@@ -1,0 +1,119 @@
+/* Kokoro on-device model block: arrangement only.
+ *
+ * The .kokoro-* rules in ../tts.css describe a standalone card. This panel now
+ * lives inside the "On-device voice models" row body, next to the Pocket and
+ * Whisper blocks, so it drops its own frame and reads as one row: title, state,
+ * voice, the one action — and the depth behind the shared <details> blocks.
+ * Doubled class keeps these overrides from leaking onto other Kokoro surfaces.
+ */
+
+/* No card: the row body owns the frame. The hairline on top is the seam from
+   the model above it (Pocket), which is drawn by this panel because the shell
+   only knows the blocks it renders itself. */
+.kokoro-panel.kokoro-panel {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+}
+
+.kokoro-panel.kokoro-panel .kokoro-head {
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.kokoro-panel.kokoro-panel .kokoro-head-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.kokoro-panel.kokoro-panel .kokoro-title {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+  letter-spacing: var(--ls-tight);
+}
+
+.kokoro-panel.kokoro-panel .kokoro-sub {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+  color: var(--muted);
+}
+
+.kokoro-panel.kokoro-panel .status-chip {
+  flex: none;
+  margin-top: 2px;
+}
+
+.kokoro-panel.kokoro-panel .kokoro-progress {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.kokoro-panel.kokoro-panel .kokoro-progress progress {
+  width: 100%;
+}
+
+.kokoro-panel.kokoro-panel .tts-status,
+.kokoro-panel.kokoro-panel .field-hint {
+  margin: 0;
+}
+
+.kokoro-panel.kokoro-panel .tts-actions {
+  gap: var(--space-2);
+}
+
+/* The benchmark readout is a line inside Advanced, not its own card. */
+.kokoro-panel.kokoro-panel .kokoro-measure {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  color: var(--text);
+}
+
+.kokoro-panel.kokoro-panel .kokoro-measure p {
+  margin: 0;
+}
+
+.kokoro-panel.kokoro-panel .kokoro-diagnostics {
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* Error details: a disclosure row like the two above it, not a nested card. */
+.kokoro-panel.kokoro-panel .kokoro-diagnostics details {
+  width: 100%;
+}
+
+.kokoro-panel.kokoro-panel .kokoro-diagnostics pre {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-base);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kokoro-panel.kokoro-panel * {
+    transition: none;
+    animation: none;
+  }
+}

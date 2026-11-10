@@ -1,5 +1,15 @@
 import { useState } from 'react';
-import { backupFileName, exportBackup, importBackup, type ImportMode, type ImportReport } from './backup';
+import {
+  LAST_EXPORT_SETTING,
+  backupFileName,
+  exportBackup,
+  importBackup,
+  lastBackupLabel,
+  type ImportMode,
+  type ImportReport,
+} from './backup';
+import { setSetting, useSetting } from '../core/settings';
+import { saveFile } from '../core/saveFile';
 import './backup.css';
 
 const TABLE_LABEL: Record<string, readonly [string, string]> = {
@@ -19,12 +29,17 @@ function label(table: string, n: number): string {
   return n === 1 ? pair[0] : pair[1];
 }
 
-/** Backup panel for the Settings page: one card out, one card back in. */
+/**
+ * Backup panel for the Settings page: one flat block out, one flat block back
+ * in, with a hairline between them. The page supplies the surface, so neither
+ * block draws a card of its own.
+ */
 export default function BackupPanel() {
   const [busy, setBusy] = useState<'books' | 'data' | 'import' | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [mode, setMode] = useState<ImportMode>('merge');
   const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
+  const lastExport = useSetting<number>(LAST_EXPORT_SETTING, 0);
 
   async function runExport(includeBooks: boolean) {
     setBusy(includeBooks ? 'books' : 'data');
@@ -32,8 +47,13 @@ export default function BackupPanel() {
     try {
       const blob = await exportBackup({ includeBooks });
       const name = backupFileName();
-      download(blob, name);
-      setStatus({ ok: true, text: `Exported ${name} (${megabytes(blob.size)}).` });
+      // The banner waits for the save: an Android WebView used to drop the
+      // download while the panel still claimed the file was exported.
+      const { location } = await saveFile(blob, name);
+      // The file is saved by now; a failed timestamp write must not turn a
+      // successful export into an error banner.
+      await setSetting(LAST_EXPORT_SETTING, Date.now()).catch(() => undefined);
+      setStatus({ ok: true, text: `Saved ${name} (${megabytes(blob.size)}) to ${location}.` });
     } catch (err) {
       setStatus({ ok: false, text: message(err) });
     } finally {
@@ -65,12 +85,11 @@ export default function BackupPanel() {
 
   return (
     <div className="backup-panel">
-      <div className="card backup-card">
-        <h3 className="card-title">Export</h3>
-        <p className="card-body">
-          Everything stays on this device until you export. The audio cache is left out — it is rebuilt when you listen
-          again. AI settings and your API key are never written into a backup.
-        </p>
+      <section className="backup-block" aria-labelledby="backup-export-title">
+        <h3 className="card-title" id="backup-export-title">
+          Export
+        </h3>
+        <p className="backup-line">Everything stays on this device until you export it.</p>
         <div className="backup-actions">
           <button type="button" className="btn btn-primary" onClick={() => void runExport(true)} disabled={busy !== null}>
             {busy === 'books' ? 'Exporting…' : 'Export (with books)'}
@@ -79,12 +98,14 @@ export default function BackupPanel() {
             {busy === 'data' ? 'Exporting…' : 'Export (notes & cards only)'}
           </button>
         </div>
-        <p className="field-hint">A .zip file with your books and study data, saved wherever your browser downloads.</p>
-      </div>
+        <p className="muted backup-last tnum">{lastBackupLabel(lastExport)}</p>
+      </section>
 
-      <div className="card backup-card">
-        <h3 className="card-title">Import</h3>
-        <p className="card-body">Restores a backup made with PharmaReader, on this device or another one.</p>
+      <section className="backup-block" aria-labelledby="backup-import-title">
+        <h3 className="card-title" id="backup-import-title">
+          Import
+        </h3>
+        <p className="backup-line">Restores a backup made with PharmaReader, on this device or another one.</p>
 
         <div className="field">
           <label className="field-label" htmlFor="backup-file">
@@ -150,13 +171,34 @@ export default function BackupPanel() {
             {busy === 'import' ? 'Importing…' : 'Import backup'}
           </button>
         </div>
-      </div>
+      </section>
 
       {status ? (
         <div className={status.ok ? 'banner banner-success' : 'banner banner-error'} role={status.ok ? 'status' : 'alert'}>
           <p>{status.text}</p>
         </div>
       ) : null}
+
+      <details className="disc-sub">
+        <summary>How this works</summary>
+        <div className="disc-sub-body">
+          <div className="backup-explain">
+            <p>
+              The audio cache is left out of a backup — it is rebuilt when you listen again. AI settings and your API
+              key are never written into a backup.
+            </p>
+            <p>
+              The .zip holds your books and study data. On a phone it is saved in Documents/PharmaReader; in a browser
+              it goes to your Downloads folder.
+            </p>
+            <p>
+              Merge adds the backup to what is already here. Replace deletes local books, highlights, bookmarks, cards,
+              reviews, topics, pronunciations and settings first, so what you import is exactly what the other device
+              had.
+            </p>
+          </div>
+        </div>
+      </details>
     </div>
   );
 }
@@ -168,18 +210,6 @@ function describe(report: ImportReport): string {
     ? ` ${report.missingFile.length} book file${report.missingFile.length === 1 ? ' was' : 's were'} not in the zip — re-import those books to read them.`
     : '';
   return head + missing;
-}
-
-function download(blob: Blob, name: string): void {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = name;
-  link.rel = 'noopener';
-  document.body.append(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 function megabytes(bytes: number): string {

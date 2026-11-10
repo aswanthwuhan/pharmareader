@@ -1,5 +1,31 @@
 apply plugin: 'com.android.application'
 
+// --- Release signing: prepared, but inactive until a keystore exists ---------------------------
+// The shipped APK is currently signed with whatever debug key the build machine had, which is
+// why an upgrade from another machine needs an uninstall (and wipes the WebView's notes).
+// Create android/keystore.properties (git-ignored) with storeFile, storePassword, keyAlias and
+// keyPassword and assembleRelease signs with it; with no such file the release build is left
+// unsigned exactly as before, so this changes nothing until the lead activates it.
+def keystorePropertiesFile = rootProject.file('keystore.properties')
+def hasReleaseKeystore = keystorePropertiesFile.exists()
+def keystoreProperties = new Properties()
+if (hasReleaseKeystore) {
+    keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
+    def missing = ['storeFile', 'storePassword', 'keyAlias', 'keyPassword'].findAll {
+        !keystoreProperties[it]
+    }
+    if (!missing.isEmpty()) {
+        throw new GradleException(
+            "android/keystore.properties is missing ${missing.join(', ')}. " +
+            "Expected keys: storeFile, storePassword, keyAlias, keyPassword.")
+    }
+    if (!rootProject.file(keystoreProperties['storeFile']).exists()) {
+        throw new GradleException(
+            "android/keystore.properties points at ${keystoreProperties['storeFile']}, " +
+            "which does not exist relative to android/.")
+    }
+}
+
 android {
     namespace = "com.aurapharmlab.pharmareader"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,8 +33,8 @@ android {
         applicationId "com.aurapharmlab.pharmareader"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 4
-        versionName "0.2.0"
+        versionCode 5
+        versionName "0.3.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         // sherpa-onnx ships x86/x86_64 ONNX runtime builds too, but release only ever runs
         // on a real phone: dropping the emulator ABIs saves ~70 MB of APK. Debug adds
@@ -22,6 +48,18 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        // Only defined when android/keystore.properties exists; `buildTypes.release` below is
+        // then the only build type that uses it.
+        if (hasReleaseKeystore) {
+            release {
+                storeFile rootProject.file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
+        }
+    }
     buildTypes {
         debug {
             // Union with defaultConfig's filters: debug APKs also carry x86_64 natives so
@@ -33,6 +71,9 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (hasReleaseKeystore) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }

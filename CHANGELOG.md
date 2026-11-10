@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.3.0 — 2026-11-10
+From a full audit of 0.2.0 (data safety first). Installs over 0.2.0 without losing data.
+
+**Fixed — your data**
+- Restoring a backup failed for any library with a PDF ("invalid … kind"); backups now restore every block type, and 0.2.0 backups still load.
+- Export did nothing on Android (no file was saved while the app said "Exported"). Backups, notes and Anki cards now save to Documents/PharmaReader, and the message says where.
+- Re-analysing a PDF's layout could delete highlights and bookmarks and move your place; it now keeps every highlight and bookmark, remaps your position, and runs as one transaction.
+- Backups are written per book (no single giant file); a second export the same day no longer overwrites the first.
+- Notes and the AI key are no longer included in Google's automatic Android backup.
+- Undo a flashcard rating; a clock set back no longer crashes the review screen; a double tap no longer records two reviews.
+- Your reading position is saved the moment it changes, not 0.7 s later.
+
+**Fixed — listening**
+- The Android back key goes back (closes the open sheet, then returns to the Library) and asks "Exit PharmaReader?" instead of closing the app.
+- Reading continues with the screen locked: a foreground playback service with lock-screen and notification controls; unplugging headphones pauses.
+- Brackets: the default is now a short pause around the aside ("system, ANS, controls") instead of "in brackets … close bracket".
+- Model downloads keep going, and keep showing progress, when you leave Settings; a Kokoro download already running is picked up instead of reported as an error.
+- Whisper word alignment no longer fails after a while (unbounded backlog, broken session reused).
+- Word highlight works on sentences rendered ahead; the audio cache no longer re-reads itself on every sentence and survives lexicon updates.
+- PDF layout: reading order fixed for two- and three-column pages, wide margins and stray text; the layout used is saved per book; the layout model no longer leaks memory on a failed page.
+
+**New**
+- Full-screen reading (hides the system bars on Android) and a PDF Page view that fills the screen, with Fit page in full screen.
+- "Prepare ahead": choose how many sentences are rendered ahead (2–50, default 10).
+- Continue listening from the Library, sleep timer (10/20/30 min or end of chapter), backup reminder, Storage panel.
+- Pronunciation: rows the Android Kokoro model already says right are no longer respelled there (70 words); plurals and possessives follow their word's respelling.
+- Larger touch targets (48 px) in the reader, review and backup screens.
+
+**Known limits**
+- Still debug-signed (so it updates over 0.2.0). Release signing is prepared; see docs/ANDROID.md before switching, it needs a backup and reinstall.
+- Library loading still reads every book in full; large libraries open slowly (next release).
+
 ## 0.2.0 — 2026-11-10
 Release-gated on an Android 16 emulator with the factory WebView 134 (clean install, upgrade from 0.1.1, offline, 5 cold starts).
 

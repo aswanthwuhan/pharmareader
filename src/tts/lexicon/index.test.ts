@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../../core/db';
 import {
   BUILTIN_LEXICON,
@@ -13,8 +13,18 @@ import {
   seedLexicon,
   setEntryEnabled,
 } from './index';
+import rawNativeKnown from './kokoro-native-known.json?raw';
+
+// Android speaks through sherpa-onnx, which reads the model's own lexicon before
+// falling back to eSpeak; `expand(text, 'kokoro')` must skip the rows that file
+// already pronounces. The platform check is the only thing the tests fake.
+const native = vi.hoisted(() => ({ value: false }));
+vi.mock('@capacitor/core', () => ({
+  Capacitor: { isNativePlatform: () => native.value },
+}));
 
 afterEach(async () => {
+  native.value = false;
   await db.delete();
   await db.open();
   invalidate();
@@ -975,6 +985,9 @@ describe('term respellings (screened against Kokoro + Whisper)', () => {
     ['pralidoxime was given', 'pralidokseme was given'],
     ['obidoxime is an oxime', 'obidokseme is an oxime'],
     ['bleomycin was infused', 'bleeohmycin was infused'],
+    // Improvement 2: a plural or possessive the list has no row for reuses the
+    // stem's respelling (see the dedicated `plurals and possessives` group).
+    ['atorvastatins are used', 'attorvastatins are used'],
   ];
   for (const [input, want] of spoken) {
     it(`speaks ${JSON.stringify(input)}`, async () => {
@@ -1033,7 +1046,6 @@ describe('term respellings (screened against Kokoro + Whisper)', () => {
     'hydrochlorothiazide',
     'amoxicillin',
     'amoxicillin-clavulanate',
-    'atorvastatins',
     'sotalol', // tried: the respelling phonemises identically, so it was dropped
     'ritanserin', // tried: the transcript did not change, so it was dropped
     'dutasteride', // tried: IPA improved but the round trip did not, so it was dropped
@@ -1070,6 +1082,9 @@ describe('term respellings (screened against Kokoro + Whisper)', () => {
 
   it('keeps ids stable and every row a single whole-word rule', () => {
     const terms = BUILTIN_LEXICON.filter((e) => e.id.startsWith('term-'));
+    // term-109, term-110, term-111 and term-147 were deleted (their plurals are
+    // now handled by the stem rule); the gap is deliberate and the ids must
+    // never be reused, so this list is exact rather than a range check.
     expect(terms.map((e) => e.id)).toEqual([
       'term-1',
       'term-2',
@@ -1179,9 +1194,6 @@ describe('term respellings (screened against Kokoro + Whisper)', () => {
       'term-106',
       'term-107',
       'term-108',
-      'term-109',
-      'term-110',
-      'term-111',
       'term-112',
       'term-113',
       'term-114',
@@ -1217,7 +1229,6 @@ describe('term respellings (screened against Kokoro + Whisper)', () => {
       'term-144',
       'term-145',
       'term-146',
-      'term-147',
       'term-148',
       'term-149',
       'term-150',
@@ -1251,5 +1262,111 @@ describe('term respellings (screened against Kokoro + Whisper)', () => {
     expect(await expand('omeprazolelike')).toBe('omeprazolelike');
     expect(await expand('OMEPRAZOLE')).toBe('ohmeprazole');
     expect(await expand('(omeprazole)')).toBe('(ohmeprazole)');
+  });
+});
+
+describe('plurals and possessives (term word map)', () => {
+  // These four used to be rows of their own; the stem rule now covers them.
+  // Its output ends `-eens`, one letter shorter than the rows' `-eenes`;
+  // eSpeak measures both /iːnz/ (identical IPA), so the speech is unchanged.
+  const formerRows: [string, string][] = [
+    ['benzodiazepines are sedating', 'benzodiazepeens are sedating'],
+    ['tetracyclines were stopped', 'tetracycleens were stopped'],
+    ['anthracyclines are cardiotoxic', 'anthracycleens are cardiotoxic'],
+    ['chelates heavy metals', 'keelates heavy metals'],
+  ];
+  for (const [input, want] of formerRows) {
+    it(`covers the deleted row for ${JSON.stringify(input)}`, async () => {
+      expect(await expand(input)).toBe(want);
+      expect(await expand(want)).toBe(want); // and its output is stable
+    });
+  }
+
+  it('keeps the replacement and the possessive suffix', async () => {
+    expect(await expand("the doxycycline's half-life")).toBe("the doxycycleen's half-life");
+    expect(await expand('the doxycycline\u2019s half-life')).toBe('the doxycycleen\u2019s half-life');
+    expect(await expand("tyrosine's role")).toBe("tyroseene's role");
+  });
+
+  it('lets an exact entry win over the stem rule', async () => {
+    // `emetics`, `ascites` and `chelators` are rows themselves.
+    expect(await expand('emetics are listed')).toBe('emmetiks are listed');
+    expect(await expand('ascites was tapped')).toBe('asytees was tapped');
+    expect(await expand('chelators bind iron')).toBe('keelators bind iron');
+  });
+
+  it('never strips a word of four letters or fewer', async () => {
+    for (const word of ['gas', 'news', 'beds', 'ARDS']) {
+      expect(await expand(`${word} was noted`)).toBe(`${word} was noted`);
+    }
+  });
+
+  it('leaves a plural alone when the stem has no row', async () => {
+    for (const word of ['patients', 'dosages', 'placebos', 'illness']) {
+      expect(await expand(`the ${word} improved`)).toBe(`the ${word} improved`);
+    }
+  });
+});
+
+describe('native Kokoro (model lexicon consulted first)', () => {
+  const known = JSON.parse(rawNativeKnown) as string[];
+
+  it('is a sorted, unique list of ids that exist', () => {
+    expect(known.length).toBeGreaterThan(0);
+    expect(new Set(known).size).toBe(known.length);
+    const sorted = [...known].sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
+    expect(known).toEqual(sorted);
+    const ids = new Set(BUILTIN_LEXICON.map((e) => e.id));
+    for (const id of known) expect(ids.has(id)).toBe(true);
+  });
+
+  it('skips the rows the model lexicon already pronounces', async () => {
+    native.value = true;
+    expect(await expand('adenosine was given', 'kokoro')).toBe('adenosine was given');
+    expect(await expand('tetracycline was stopped', 'kokoro')).toBe('tetracycline was stopped');
+    expect(await expand('Nifedipine 10 mg', 'kokoro')).toBe('Nifedipine 10 milligrams');
+  });
+
+  it('still applies the rows it does not know', async () => {
+    native.value = true;
+    expect(await expand('quetiapine at night', 'kokoro')).toBe('quetiapeen at night');
+    expect(await expand('capecitabine tablets', 'kokoro')).toBe('capecitabeen tablets');
+  });
+
+  it('keeps an -ine row whose lexicon pronunciation is still /aɪn/', async () => {
+    native.value = true;
+    // Present, but the model lexicon ends it /ˌaɪn/: the row is still the fix.
+    expect(await expand('acetylcholine receptors', 'kokoro')).toBe('asetilcholene receptors');
+  });
+
+  it('applies every row without an engine id and on the web build', async () => {
+    expect(await expand('adenosine was given')).toBe('adenoseene was given');
+    expect(await expand('adenosine was given', 'kokoro')).toBe('adenoseene was given');
+  });
+
+  it('caches the two variants side by side', async () => {
+    native.value = true;
+    expect(await expand('adenosine', 'kokoro')).toBe('adenosine');
+    native.value = false;
+    expect(await expand('adenosine', 'kokoro')).toBe('adenoseene');
+    native.value = true;
+    expect(await expand('adenosine', 'kokoro')).toBe('adenosine');
+  });
+
+  it('still respells a plural of a skipped stem', async () => {
+    // The model lexicon is keyed by the exact token, so it does not hold the
+    // plural even when it holds the stem.
+    native.value = true;
+    expect(await expand('tetracyclines were stopped', 'kokoro')).toBe('tetracycleens were stopped');
+    expect(await expand('the doxycycline\u2019s half-life', 'kokoro')).toBe(
+      'the doxycycleen\u2019s half-life',
+    );
+  });
+
+  it('leaves the lexicon version alone', async () => {
+    const before = await lexiconVersion();
+    native.value = true;
+    expect(await expand('adenosine', 'kokoro')).toBe('adenosine');
+    expect(await lexiconVersion()).toBe(before);
   });
 });

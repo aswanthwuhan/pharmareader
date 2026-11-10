@@ -29,6 +29,14 @@
 
         </activity>
 
+        <!-- Reading aloud with the screen locked: a foreground mediaPlayback service keeps the
+             process alive between sentences and owns the notification / lock-screen controls.
+             It plays no audio itself (the WebView does), so it stays unexported. -->
+        <service
+            android:name=".playback.PlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -45,6 +53,20 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Read-only network type, so the Kokoro settings panel can warn before a 334 MB download on mobile data. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Reading aloud with the screen off: the service runs in the foreground as
+         mediaPlayback and holds a partial wake lock while it is playing, so the next sentence
+         can still be synthesised. POST_NOTIFICATIONS is asked at runtime on Android 13+. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- The backup export writes into Documents/, which needs a permission only on Android 8-9;
+         from API 29 the app uses MediaStore and this permission is neither needed nor granted. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 
     <!-- Android 11+ package visibility: without this the app cannot see the phone's TTS engine, so the system voice is silent. -->
     <queries>

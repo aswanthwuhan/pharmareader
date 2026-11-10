@@ -679,7 +679,9 @@ svg {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  min-height: 36px;
+  /* A thumb target first: the pill can look small, the box it answers to cannot
+     be under 48px (audit finding 16). */
+  min-height: var(--tap-comfort);
   padding: 0 var(--space-3);
   border: 1px solid var(--border-control);
   border-radius: var(--radius-full);
@@ -692,7 +694,7 @@ svg {
 }
 
 .chip-tap {
-  min-height: var(--tap);
+  min-height: var(--tap-comfort);
 }
 
 .chip:hover {
@@ -1062,6 +1064,174 @@ textarea.input {
     padding-left: var(--space-6);
     padding-right: var(--space-6);
   }
+}
+
+/* ============================================================================
+   DISCLOSURE — press-to-show index rows (Settings)
+
+   Top level, built by src/components/Disclosure.tsx:
+     <section class="disc">
+       <h2 class="settings-h2 disc-h"><button class="disc-head" aria-expanded>…</button></h2>
+       <div class="disc-body" hidden>…</div>
+     </section>
+   The body is never unmounted; `hidden` is the closed state, so a download or
+   a timer inside a closed row keeps running.
+
+   Second level, native HTML, used inside every panel:
+     <details class="disc-sub">
+       <summary>Advanced</summary>
+       <div class="disc-sub-body">…</div>
+     </details>
+   ========================================================================== */
+.disc {
+  scroll-margin-top: var(--space-4);
+}
+
+.disc + .disc {
+  border-top: 1px solid var(--border);
+}
+
+/* The h2 is only the heading wrapper; the row's type comes from the button. */
+.disc-h {
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+}
+
+.disc-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 56px;
+  padding: 10px var(--space-4);
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  transition: background-color var(--dur-1) var(--ease-standard);
+}
+
+.disc-head:hover {
+  background: var(--surface-sunken);
+}
+
+/* Inside the card the ring is drawn on the row's own edge, so it is never
+   clipped by the card's rounded corner. */
+.disc-head:focus-visible {
+  outline: var(--focus-width) solid var(--focus-color);
+  outline-offset: calc(-1 * var(--focus-width));
+}
+
+.disc-text {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+  min-width: 0;
+}
+
+.disc-title {
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+}
+
+.disc-summary {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.disc-chevron {
+  flex: 0 0 auto;
+  color: var(--muted);
+  transition: transform var(--dur-1) var(--ease-standard);
+}
+
+.disc-head[aria-expanded='true'] .disc-chevron {
+  transform: rotate(90deg);
+}
+
+.disc-body {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.disc-body[hidden] {
+  display: none;
+}
+
+/* A panel inside a row already sits on a surface: no card inside a card. */
+.disc-body .card {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+/* --- Second level: native <details> inside a panel ------------------------ */
+details.disc-sub {
+  margin: 0;
+  border-top: 1px solid var(--border);
+}
+
+details.disc-sub > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--tap);
+  padding: var(--space-2) 0;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+  list-style: none;
+  cursor: pointer;
+}
+
+/* Hide the native triangle in every engine that draws one. */
+details.disc-sub > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.disc-sub > summary::marker {
+  content: '';
+}
+
+/* Small chevron, drawn with two borders: no icon font, no image. */
+details.disc-sub > summary::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform var(--dur-1) var(--ease-standard);
+}
+
+details.disc-sub[open] > summary::after {
+  transform: translateY(1px) rotate(-135deg);
+}
+
+details.disc-sub > summary:focus-visible {
+  outline: var(--focus-width) solid var(--focus-color);
+  outline-offset: var(--focus-offset);
+  border-radius: var(--radius-xs);
+}
+
+.disc-sub-body {
+  display: grid;
+  gap: var(--space-3);
+  padding: 0 0 var(--space-4);
 }
 
 /* ============================================================================

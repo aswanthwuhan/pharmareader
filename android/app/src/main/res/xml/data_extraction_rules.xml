@@ -1,10 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android 12+: same exclusion for cloud backup and device transfer. -->
+<!--
+  Android 12+ extraction rules: the same two exclusions for cloud backup and device transfer.
+
+  app_webview/ holds the WebView's IndexedDB — the notes and the AI settings with the API key
+  in plain text — so it never leaves the device, not even to the user's own new phone through
+  device transfer. Kokoro's 334 MB model is excluded because it re-downloads.
+-->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="file" path="kokoro/" />
+        <exclude domain="root" path="app_webview/" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="file" path="kokoro/" />
+        <exclude domain="root" path="app_webview/" />
     </device-transfer>
 </data-extraction-rules>

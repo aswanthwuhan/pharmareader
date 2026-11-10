@@ -63,15 +63,16 @@ export interface KokoroDownloadResult {
 }
 
 export interface KokoroSynthesizeResult {
-  /** Path of the 16-bit WAV in the app cache directory. */
-  path: string;
   durationMs: number;
   sampleRate: number;
   /** Real-time factor of this synthesis (elapsed / audio duration). */
   rtf: number;
   elapsedMs?: number;
   bytes?: number;
-  /** Little-endian PCM16 mono WAV, base64 (no wrap) — for building a Blob. */
+  /**
+   * Little-endian PCM16 mono WAV, base64 (no wrap) — for building a Blob.
+   * This is the only copy of the audio: the plugin does not write a file.
+   */
   wavBase64?: string;
   /** Set when a concurrent `stop()` cut the synthesis short. */
   cancelled?: boolean;

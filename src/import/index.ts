@@ -51,11 +51,13 @@ export function titleFromFileName(name: string): string {
 }
 
 async function parseFile(
-  file: Blob,
+  bytes: ArrayBuffer,
+  type: string,
   name: string,
   onProgress?: (note: string) => void,
-): Promise<{ doc: ParsedDoc; warning?: string }> {
-  const format = detectFormat({ name, type: file.type });
+): Promise<{ doc: ParsedDoc; warning?: string; layout?: BookRecord['layout'] }> {
+  const format = detectFormat({ name, type });
+  const text = () => new TextDecoder().decode(bytes);
   if (!format) {
     throw new Error(`Unsupported file type: ${name}. Import a PDF, EPUB, DOCX, TXT, Markdown or HTML file.`);
   }
@@ -64,13 +66,13 @@ async function parseFile(
 
   switch (format) {
     case 'txt':
-      return { doc: parseText(await file.text(), fallback) };
+      return { doc: parseText(text(), fallback) };
 
     case 'md':
-      return { doc: parseMarkdown(await file.text(), fallback) };
+      return { doc: parseMarkdown(text(), fallback) };
 
     case 'html': {
-      const html = await file.text();
+      const html = text();
       const doc = new DOMParser().parseFromString(html, 'text/html');
       return {
         doc: parseHtmlDocument(doc, { format: 'html', title: normaliseText(doc.title) || fallback }),
@@ -80,7 +82,7 @@ async function parseFile(
     case 'pdf': {
       // Heavy extractors are loaded only when that file type is imported.
       const { parsePdf } = await import('./pdf');
-      const parsed = await parsePdf(await file.arrayBuffer(), fallback, (done, total, phase) => {
+      const parsed = await parsePdf(bytes, fallback, (done, total, phase) => {
         // A 1000-page paper takes a while; a note every 25 pages is enough to
         // prove the app is alive without re-rendering the library 1000 times.
         if (done !== total && done % 25 !== 0) return;
@@ -89,22 +91,22 @@ async function parseFile(
       // Under ~50 characters per page there is no real text layer: a scan.
       const warning =
         parsed.charsPerPage < 50 ? 'Looks scanned — OCR not supported yet' : undefined;
-      return { doc: parsed.doc, warning };
+      return { doc: parsed.doc, warning, layout: parsed.layout };
     }
 
     case 'epub': {
       const { parseEpub } = await import('./epub');
-      return { doc: await parseEpub(await file.arrayBuffer(), fallback) };
+      return { doc: await parseEpub(bytes, fallback) };
     }
 
     case 'docx': {
       const { parseDocx } = await import('./docx');
-      return { doc: await parseDocx(await file.arrayBuffer(), fallback) };
+      return { doc: await parseDocx(bytes, fallback) };
     }
   }
 }
 
-async function saveRecord(doc: ParsedDoc, fileBlob: Blob): Promise<string> {
+async function saveRecord(doc: ParsedDoc, fileBlob: Blob, layout?: BookRecord['layout']): Promise<string> {
   if (!doc.chapters.length) throw new Error('No readable text found in this file.');
 
   const record: BookRecord = {
@@ -117,6 +119,7 @@ async function saveRecord(doc: ParsedDoc, fileBlob: Blob): Promise<string> {
     parsed: doc,
     topicIds: [],
   };
+  if (layout) record.layout = layout;
 
   await db.books.add(record);
   return record.id;
@@ -174,10 +177,13 @@ export async function importFileDetailed(
   onProgress?: (note: string) => void,
 ): Promise<ImportResult> {
   // Read the picked file exactly once, and keep the bytes that were parsed: the
-  // picker's File handle is not a durable store (see ownedCopy).
-  const owned = await ownedCopy(file);
-  const { doc, warning } = await parseFile(owned, file.name, onProgress);
-  const bookId = await saveRecord(doc, owned);
+  // picker's File handle is not a durable store (see ownedCopy). The Blob is
+  // built first because pdf.js takes the buffer away for its worker; reading the
+  // Blob back for the parser would be a second full copy of a 150 MB textbook.
+  const bytes = await file.arrayBuffer();
+  const owned = new Blob([bytes], { type: file.type || 'application/octet-stream' });
+  const { doc, warning, layout } = await parseFile(bytes, file.type, file.name, onProgress);
+  const bookId = await saveRecord(doc, owned, layout);
   return { bookId, warning };
 }
 
@@ -263,15 +269,18 @@ export async function importUrl(url: string): Promise<string> {
 export interface ReanalyseResult {
   /** Which layout path ran, so the UI can say whether the model was used. */
   layout: 'model' | 'heuristic';
+  /** Pages the model actually laid out; the rest were plain enough for the text rules. */
+  modelPages: number;
   sentencesBefore: number;
   sentencesAfter: number;
-  /** Highlights whose text was found again; the rest are deleted with the text. */
+  /** Highlights whose text was found again. */
   highlightsKept: number;
-  highlightsDropped: number;
+  /** Highlights whose text is gone: kept with their text and note, linked to no sentence. */
+  highlightsUnlinked: number;
   bookmarksKept: number;
+  /** Bookmarks whose sentence is gone, now on the nearest text that survived. */
   bookmarksMoved: number;
-  bookmarksDropped: number;
-  /** Whether reading position still points at a sentence that exists. */
+  /** Whether the reading position is still on the very sentence it was on. */
   positionKept: boolean;
 }
 
@@ -283,9 +292,16 @@ interface FlatSentence {
 
 interface SentenceIndex {
   flat: FlatSentence[];
-  textOf: Map<string, string>;
-  firstOf: Map<string, string>;
+  /** Position in `flat` of each sentence id. */
+  indexOf: Map<string, number>;
+  /** Every position a text appears at: headings and stock phrases repeat. */
+  placesOf: Map<string, number[]>;
 }
+
+type Position = { chapterId: string; sentenceId: string };
+
+/** Where ReaderView keeps the position it opens a book at (it prefers this over `books.lastPos`). */
+const readerPosKey = (bookId: string) => `reader.lastPos.${bookId}`;
 
 /**
  * Re-read a PDF already in the library with the current layout settings, and
@@ -293,8 +309,10 @@ interface SentenceIndex {
  *
  * Sentence ids are positional (`chapter-block-sentence`), so re-analysis renumbers
  * them all. Matching is by text instead: a highlight is kept when the same run of
- * sentences appears again, and is deleted when its text no longer exists rather
- * than pointing at whatever now sits at that index.
+ * sentences appears again. One whose text no longer exists is kept too, linked to
+ * no sentence rather than to whatever now sits at that index; nothing the reader
+ * made is deleted. The parsing is done first and every write happens in one
+ * transaction, so a killed app leaves either the old book or the new one.
  */
 export async function reanalyseBook(bookId: string, onProgress?: (note: string) => void): Promise<ReanalyseResult> {
   const book = await db.books.get(bookId);
@@ -314,121 +332,129 @@ export async function reanalyseBook(bookId: string, onProgress?: (note: string) 
 
   const before = sentenceIndex(book.parsed);
   const after = sentenceIndex(parsed.doc);
-
-  let highlightsKept = 0;
-  let highlightsDropped = 0;
-  for (const highlight of await db.highlights.where('bookId').equals(bookId).toArray()) {
-    const texts = highlight.sentenceIds
-      .map((id) => before.textOf.get(id))
-      .filter((text): text is string => Boolean(text));
-    const ids = matchRun(texts, after);
-    if (!ids.length) {
-      highlightsDropped += 1;
-      await db.highlights.delete(highlight.id);
-      continue;
-    }
-    highlightsKept += 1;
-    if (ids.join('\u0000') !== highlight.sentenceIds.join('\u0000')) {
-      await db.highlights.update(highlight.id, { sentenceIds: ids });
-    }
-  }
-
-  let bookmarksKept = 0;
-  let bookmarksMoved = 0;
-  let bookmarksDropped = 0;
-  for (const bookmark of await db.bookmarks.where('bookId').equals(bookId).toArray()) {
-    const text = before.textOf.get(bookmark.sentenceId);
-    const same = text ? after.firstOf.get(text) : undefined;
-    if (same) {
-      bookmarksKept += 1;
-      if (same !== bookmark.sentenceId) await db.bookmarks.update(bookmark.id, { sentenceId: same });
-      continue;
-    }
-
-    // The sentence is gone but its chapter may not be: keep the bookmark at the
-    // start of that chapter rather than losing the reader's place entirely.
-    const oldChapter = book.parsed.chapters.find((chapter) => chapter.id === bookmark.chapterId);
-    const newChapter = oldChapter
-      ? parsed.doc.chapters.find((chapter) => chapter.title === oldChapter.title)
-      : undefined;
-    const opening = newChapter?.blocks.flatMap((block) => block.sentences)[0];
-    if (!newChapter || !opening) {
-      bookmarksDropped += 1;
-      await db.bookmarks.delete(bookmark.id);
-      continue;
-    }
-    bookmarksMoved += 1;
-    await db.bookmarks.update(bookmark.id, { chapterId: newChapter.id, sentenceId: opening.id });
-  }
-
-  let positionKept = true;
-  let lastPos = book.lastPos;
-  if (lastPos) {
-    const text = before.textOf.get(lastPos.sentenceId);
-    const same = text ? after.firstOf.get(text) : undefined;
-    const oldChapter = book.parsed.chapters.find((chapter) => chapter.id === lastPos!.chapterId);
-    const newChapter = oldChapter
-      ? parsed.doc.chapters.find((chapter) => chapter.title === oldChapter.title)
-      : undefined;
-    const opening = newChapter?.blocks.flatMap((block) => block.sentences)[0];
-    const target = same ? { chapterId: after.flat.find((s) => s.id === same)?.chapterId, sentenceId: same } : undefined;
-
-    if (target?.chapterId) {
-      lastPos = { chapterId: target.chapterId, sentenceId: target.sentenceId };
-    } else if (newChapter && opening) {
-      lastPos = { chapterId: newChapter.id, sentenceId: opening.id };
-    } else {
-      lastPos = undefined;
-      positionKept = false;
-    }
-  }
-
-  await db.books.update(bookId, { parsed: parsed.doc, lastPos });
-
-  return {
+  const result: ReanalyseResult = {
     layout: parsed.layout,
+    modelPages: parsed.modelPages,
     sentencesBefore: before.flat.length,
     sentencesAfter: after.flat.length,
-    highlightsKept,
-    highlightsDropped,
-    bookmarksKept,
-    bookmarksMoved,
-    bookmarksDropped,
-    positionKept,
+    highlightsKept: 0,
+    highlightsUnlinked: 0,
+    bookmarksKept: 0,
+    bookmarksMoved: 0,
+    positionKept: true,
   };
+
+  const moved = (position: Position | undefined): Position | undefined => {
+    if (!position) return undefined;
+    const place = relocate(position.sentenceId, before, after);
+    if (!place.exact) result.positionKept = false;
+    return { chapterId: place.sentence.chapterId, sentenceId: place.sentence.id };
+  };
+
+  await db.transaction('rw', [db.books, db.highlights, db.bookmarks, db.settings], async () => {
+    for (const highlight of await db.highlights.where('bookId').equals(bookId).toArray()) {
+      const ids = matchRun(highlight.sentenceIds, before, after);
+      if (ids.length) result.highlightsKept += 1;
+      else result.highlightsUnlinked += 1;
+      if (ids.join('\u0000') !== highlight.sentenceIds.join('\u0000')) {
+        await db.highlights.update(highlight.id, { sentenceIds: ids });
+      }
+    }
+
+    for (const bookmark of await db.bookmarks.where('bookId').equals(bookId).toArray()) {
+      const place = relocate(bookmark.sentenceId, before, after);
+      if (place.exact) result.bookmarksKept += 1;
+      else result.bookmarksMoved += 1;
+      await db.bookmarks.update(bookmark.id, { chapterId: place.sentence.chapterId, sentenceId: place.sentence.id });
+    }
+
+    const saved = (await db.settings.get(readerPosKey(bookId)))?.value as Partial<Position> | undefined;
+    if (typeof saved?.chapterId === 'string' && typeof saved.sentenceId === 'string') {
+      await db.settings.put({ key: readerPosKey(bookId), value: moved(saved as Position) });
+    }
+
+    await db.books.update(bookId, { parsed: parsed.doc, lastPos: moved(book.lastPos), layout: parsed.layout });
+  });
+
+  return result;
 }
 
 function sentenceIndex(doc: ParsedDoc): SentenceIndex {
   const flat: FlatSentence[] = [];
-  const textOf = new Map<string, string>();
-  const firstOf = new Map<string, string>();
+  const indexOf = new Map<string, number>();
+  const placesOf = new Map<string, number[]>();
 
   for (const chapter of doc.chapters) {
     for (const block of chapter.blocks) {
       for (const sentence of block.sentences) {
+        indexOf.set(sentence.id, flat.length);
+        const places = placesOf.get(sentence.text);
+        if (places) places.push(flat.length);
+        else placesOf.set(sentence.text, [flat.length]);
         flat.push({ id: sentence.id, chapterId: chapter.id, text: sentence.text });
-        textOf.set(sentence.id, sentence.text);
-        if (!firstOf.has(sentence.text)) firstOf.set(sentence.text, sentence.id);
       }
     }
   }
 
-  return { flat, textOf, firstOf };
+  return { flat, indexOf, placesOf };
+}
+
+/**
+ * Where the run of texts that started at old position `from` now starts. A text
+ * that appears more than once ("Mechanism of action" in every chapter) is taken
+ * at the occurrence closest to where it was, not at the first one in the book.
+ */
+function findRun(texts: string[], from: number, before: SentenceIndex, after: SentenceIndex): number | undefined {
+  const expected = (from / Math.max(1, before.flat.length)) * after.flat.length;
+  let best: number | undefined;
+  for (const start of after.placesOf.get(texts[0]) ?? []) {
+    if (!texts.every((text, offset) => after.flat[start + offset]?.text === text)) continue;
+    if (best === undefined || Math.abs(start - expected) < Math.abs(best - expected)) best = start;
+  }
+  return best;
 }
 
 /**
  * The new ids of a run of sentences, matched as a run so a highlight keeps its
  * extent; failing that, each sentence wherever it now appears.
  */
-function matchRun(texts: string[], after: SentenceIndex): string[] {
-  if (!texts.length) return [];
+function matchRun(sentenceIds: string[], before: SentenceIndex, after: SentenceIndex): string[] {
+  const places = sentenceIds
+    .map((id) => before.indexOf.get(id))
+    .filter((place): place is number => place !== undefined);
+  if (!places.length) return [];
 
-  for (let start = 0; start + texts.length <= after.flat.length; start++) {
-    const matches = texts.every((text, offset) => after.flat[start + offset].text === text);
-    if (matches) return after.flat.slice(start, start + texts.length).map((sentence) => sentence.id);
+  const texts = places.map((place) => before.flat[place].text);
+  const start = findRun(texts, places[0], before, after);
+  if (start !== undefined) return after.flat.slice(start, start + texts.length).map((sentence) => sentence.id);
+
+  return places
+    .map((place) => findRun([before.flat[place].text], place, before, after))
+    .filter((place): place is number => place !== undefined)
+    .map((place) => after.flat[place].id);
+}
+
+/**
+ * The sentence a bookmark or a reading position belongs on now: the same text,
+ * else the nearest earlier text that survived, else the nearest later one, else
+ * the start of the book. Never nothing — the reader's place is not ours to drop.
+ */
+function relocate(
+  sentenceId: string,
+  before: SentenceIndex,
+  after: SentenceIndex,
+): { sentence: FlatSentence; exact: boolean } {
+  const from = before.indexOf.get(sentenceId);
+  if (from !== undefined) {
+    const at = (place: number) => findRun([before.flat[place].text], place, before, after);
+    for (let place = from; place >= 0; place--) {
+      const found = at(place);
+      if (found !== undefined) return { sentence: after.flat[found], exact: place === from };
+    }
+    for (let place = from + 1; place < before.flat.length; place++) {
+      const found = at(place);
+      if (found !== undefined) return { sentence: after.flat[found], exact: false };
+    }
   }
-
-  return texts
-    .map((text) => after.firstOf.get(text))
-    .filter((id): id is string => Boolean(id));
+  return { sentence: after.flat[0], exact: false };
 }

@@ -1,0 +1,69 @@
+/* Storage section: the three figures that answer "am I safe?", then the rest
+   behind Advanced. The Settings page draws the surface, so nothing here is a
+   card. */
+.storage-panel {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.storage-facts {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.storage-fact {
+  display: grid;
+  gap: 2px;
+}
+
+.storage-fact dt {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.storage-fact dd {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+
+.storage-actions {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+}
+
+@media (min-width: 520px) {
+  .storage-actions {
+    display: flex;
+    flex-wrap: wrap;
+  }
+}
+
+.storage-note {
+  margin: 0;
+  max-width: var(--measure-ui);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+}
+
+/* Per-store breakdowns and what the opened half says. */
+.storage-advanced {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.storage-explain {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.storage-explain p {
+  margin: 0;
+  max-width: var(--measure-ui);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  text-wrap: pretty;
+}

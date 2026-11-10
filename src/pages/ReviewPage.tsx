@@ -7,6 +7,7 @@ import TopicPicker from '../syllabus/TopicPicker';
 import CardEditor, { type CardDraft } from '../study/CardEditor';
 import ReviewSession from '../study/ReviewSession';
 import { createCard, deleteCard, exportCardsCsv, exportNotesMarkdown, listCards, updateCard } from '../study/api';
+import { saveFile } from '../core/saveFile';
 import '../study/study.css';
 
 const TABS = [
@@ -17,16 +18,12 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]['id'];
 
-function downloadFile(filename: string, text: string, mime: string) {
-  const url = URL.createObjectURL(new Blob([text], { type: mime }));
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  // Revoking straight away cancels the download in some browsers.
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+/**
+ * saveFile explains in plain words why a phone refused (storage permission,
+ * no space), so that message is worth more than a generic "could not export".
+ */
+function failureMessage(err: unknown, fallback: string): string {
+  return err instanceof Error && err.message ? err.message : fallback;
 }
 
 /* --- Icons -----------------------------------------------------------------
@@ -190,20 +187,22 @@ export default function ReviewPage() {
   async function downloadNotes() {
     try {
       const markdown = await exportNotesMarkdown(exportBookId || undefined);
-      downloadFile(`pharmareader-notes-${new Date().toISOString().slice(0, 10)}.md`, markdown, 'text/markdown;charset=utf-8');
-      setStatus('Notes downloaded.');
-    } catch {
-      setStatus('Could not export notes.');
+      const name = `pharmareader-notes-${new Date().toISOString().slice(0, 10)}.md`;
+      const { location } = await saveFile(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }), name);
+      setStatus(`Notes saved to ${location}.`);
+    } catch (err) {
+      setStatus(failureMessage(err, 'Could not export notes.'));
     }
   }
 
   async function downloadCards() {
     try {
       const csv = await exportCardsCsv();
-      downloadFile(`pharmareader-cards-${new Date().toISOString().slice(0, 10)}.csv`, csv, 'text/csv;charset=utf-8');
-      setStatus('Cards downloaded.');
-    } catch {
-      setStatus('Could not export cards.');
+      const name = `pharmareader-cards-${new Date().toISOString().slice(0, 10)}.csv`;
+      const { location } = await saveFile(new Blob([csv], { type: 'text/csv;charset=utf-8' }), name);
+      setStatus(`Cards saved to ${location}.`);
+    } catch (err) {
+      setStatus(failureMessage(err, 'Could not export cards.'));
     }
   }
 

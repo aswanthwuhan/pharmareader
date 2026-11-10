@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android <= 11: keep the 334 MB Kokoro model out of cloud backup; it re-downloads. -->
+<!--
+  Android <= 11 backup rules.
+
+  The WebView data directory is excluded on purpose. It holds the IndexedDB stores: the notes
+  themselves and the AI settings, including the API key in plain text. Neither belongs in a
+  cloud backup that an account compromise or a device restore can read.
+-->
 <full-backup-content>
+    <!-- 334 MB model that re-downloads on demand. -->
     <exclude domain="file" path="kokoro/" />
+    <!-- app_webview/: IndexedDB (notes, AI API key), localStorage and caches. -->
+    <exclude domain="root" path="app_webview/" />
 </full-backup-content>

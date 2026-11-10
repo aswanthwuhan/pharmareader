@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { db } from '../../core/db';
 import { setSetting, useSetting } from '../../core/settings';
+import { resetDownload, startDownload, useDownload, type DownloadState } from '../downloads';
 import { copyText } from '../neural/clipboard';
 import { describeAlignError, type AlignErrorInfo } from './alignError';
 import styles from './AlignModelPanel.module.css';
@@ -17,6 +18,9 @@ import {
 /** Last measured speed: model time, end-to-end time, and the clip it ran on. */
 export const WHISPER_SPEED_SETTING = 'align.whisper.speed';
 
+/** The aligner download, shared by every mount of this panel. */
+export const WHISPER_DOWNLOAD_ID = 'whisper';
+
 interface SpeedRecord {
   modelMs: number;
   wallMs: number;
@@ -24,6 +28,9 @@ interface SpeedRecord {
   words: number;
   at: number;
 }
+
+/** What is on disk, independent of whether a download is running. */
+type Availability = 'loading' | 'unsupported' | 'absent' | 'ready';
 
 type PanelState =
   | { kind: 'loading' }
@@ -34,14 +41,42 @@ type PanelState =
   | { kind: 'error'; info: AlignErrorInfo };
 
 /**
+ * Derive the card from the download store and the disk check, so a download that
+ * outlived the panel is still shown as a download rather than as a failure.
+ */
+function panelState(
+  download: DownloadState,
+  available: Availability,
+  failure: AlignErrorInfo | null
+): PanelState {
+  if (available === 'unsupported') return { kind: 'unsupported' };
+  if (download.status === 'downloading' || download.status === 'unpacking') {
+    return { kind: 'downloading', fraction: download.fraction };
+  }
+  if (download.status === 'error') {
+    return {
+      kind: 'error',
+      info: describeAlignError(download.cause ?? download.error ?? 'The download failed.'),
+    };
+  }
+  if (failure) return { kind: 'error', info: failure };
+  if (download.status === 'done' || available === 'ready') return { kind: 'ready' };
+  if (available === 'loading') return { kind: 'loading' };
+  return { kind: 'absent' };
+}
+
+/**
  * Settings card for the on-device aligner.
  *
  * The word highlighting works without it (proportional estimate), so this card
  * has to make one thing obvious: what installing it buys, and how much it costs
- * to download and run.
+ * to download and run. The 42 MB download lives in the store (../downloads), so
+ * leaving Settings no longer loses it and returning shows the same progress.
  */
 export default function AlignModelPanel() {
-  const [state, setState] = useState<PanelState>({ kind: 'loading' });
+  const download = useDownload(WHISPER_DOWNLOAD_ID);
+  const [available, setAvailable] = useState<Availability>('loading');
+  const [failure, setFailure] = useState<AlignErrorInfo | null>(null);
   const [measuring, setMeasuring] = useState(false);
   const [measureError, setMeasureError] = useState<string | null>(null);
   const speed = useSetting<SpeedRecord | null>(WHISPER_SPEED_SETTING, null);
@@ -50,25 +85,24 @@ export default function AlignModelPanel() {
     let alive = true;
     void (async () => {
       if (!hasWhisperSupport()) {
-        if (alive) setState({ kind: 'unsupported' });
+        if (alive) setAvailable('unsupported');
         return;
       }
-      const available = await isWhisperAvailable();
-      if (alive) setState(available ? { kind: 'ready' } : { kind: 'absent' });
+      const ready = await isWhisperAvailable();
+      if (alive) setAvailable(ready ? 'ready' : 'absent');
     })();
     return () => {
       alive = false;
     };
   }, []);
 
-  const download = useCallback(async () => {
-    setState({ kind: 'downloading', fraction: 0 });
-    try {
-      await prepareWhisper((fraction) => setState({ kind: 'downloading', fraction }));
-      setState({ kind: 'ready' });
-    } catch (err) {
-      setState({ kind: 'error', info: describeAlignError(err) });
-    }
+  const startDownloadNow = useCallback(() => {
+    setFailure(null);
+    // The store keeps the download running when the panel unmounts; a second call
+    // while it is in flight joins the same promise instead of fetching again.
+    void startDownload(WHISPER_DOWNLOAD_ID, async (report) => {
+      await prepareWhisper((fraction) => report({ fraction }));
+    });
   }, []);
 
   const remove = useCallback(async () => {
@@ -77,9 +111,11 @@ export default function AlignModelPanel() {
       // browsers refuse the delete while it holds them.
       resetWhisperWorker();
       await deleteWhisperModel();
-      setState({ kind: 'absent' });
+      setFailure(null);
+      setAvailable('absent');
+      resetDownload(WHISPER_DOWNLOAD_ID);
     } catch (err) {
-      setState({ kind: 'error', info: describeAlignError(err) });
+      setFailure(describeAlignError(err));
     }
   }, []);
 
@@ -113,11 +149,12 @@ export default function AlignModelPanel() {
     }
   }, []);
 
+  const state = panelState(download, available, failure);
   const busy = state.kind === 'downloading' || measuring;
   const chip = chipFor(state);
 
   return (
-    <section className={styles.card} aria-labelledby="align-whisper-title">
+    <section className={styles.block} aria-labelledby="align-whisper-title">
       <header className={styles.head}>
         <h3 id="align-whisper-title" className={styles.title}>
           Word-by-word highlighting
@@ -128,7 +165,7 @@ export default function AlignModelPanel() {
             <button
               type="button"
               className="btn btn-primary"
-              onClick={() => void download()}
+              onClick={() => startDownloadNow()}
               disabled={busy || state.kind === 'loading'}
             >
               Download
@@ -150,11 +187,6 @@ export default function AlignModelPanel() {
         <span className={styles.size}>~{WHISPER_SIZE_MB} MB · use Wi-Fi</span>
       </div>
 
-      <p className={styles.intro}>
-        Words are highlighted as they are spoken. Without this model the timing is an estimate from
-        each word's length, which drifts on long drug names and pauses.
-      </p>
-
       {state.kind === 'unsupported' && (
         <p className={styles.hint}>
           This browser cannot run the on-device aligner, so words are highlighted by an estimate.
@@ -174,31 +206,48 @@ export default function AlignModelPanel() {
 
       {state.kind === 'error' && <ErrorDetails info={state.info} />}
 
-      <div className={styles.speed}>
-        <p className={styles.speedResult}>
-          {measureError ? (
-            <span className={styles.measureError}>{measureError}</span>
-          ) : speed ? (
-            <SpeedLine speed={speed} />
-          ) : (
-            <span>Speed not measured yet</span>
-          )}
+      {/* Measuring lives under Advanced, but a failed measurement is the answer
+          to the tap, so it stays in the open next to the model it belongs to. */}
+      {measureError && (
+        <p className={styles.measureError} role="alert">
+          {measureError}
         </p>
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={() => void measure()}
-          // Measuring runs the real model, so it must already be here.
-          disabled={busy || state.kind !== 'ready'}
-        >
-          {measuring ? 'Measuring…' : 'Measure speed'}
-        </button>
-      </div>
+      )}
 
-      <p className={styles.attribution}>
-        Whisper by OpenAI — MIT licence. ONNX export: onnx-community/whisper-tiny.en_timestamped
-        (q8).
-      </p>
+      <details className="disc-sub">
+        <summary>Advanced</summary>
+        <div className="disc-sub-body">
+          <div className={styles.speed}>
+            <p className={styles.speedResult}>
+              {speed ? <SpeedLine speed={speed} /> : <span>Speed not measured yet</span>}
+            </p>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => void measure()}
+              // Measuring runs the real model, so it must already be here.
+              disabled={busy || state.kind !== 'ready'}
+            >
+              {measuring ? 'Measuring…' : 'Measure speed'}
+            </button>
+          </div>
+
+          <p className={styles.attribution}>
+            Whisper by OpenAI — MIT licence. ONNX export: onnx-community/whisper-tiny.en_timestamped
+            (q8).
+          </p>
+        </div>
+      </details>
+
+      <details className="disc-sub">
+        <summary>How this works</summary>
+        <div className="disc-sub-body">
+          <p className={styles.intro}>
+            Words are highlighted as they are spoken. Without this model the timing is an estimate from
+            each word&apos;s length, which drifts on long drug names and pauses.
+          </p>
+        </div>
+      </details>
     </section>
   );
 }
@@ -261,7 +310,7 @@ function ErrorDetails({ info }: { info: AlignErrorInfo }) {
       <div className={styles.errorBlock} ref={blockRef}>
         <p className={styles.errorStage}>Failed while {info.stage}</p>
         <p className={styles.errorMessage}>{info.message}</p>
-        <details className={styles.errorDetails} open={copyState === 'failed'}>
+        <details className={`disc-sub ${styles.errorDetails}`} open={copyState === 'failed'}>
           <summary>Technical details</summary>
           <pre ref={detailsRef}>{info.details}</pre>
         </details>

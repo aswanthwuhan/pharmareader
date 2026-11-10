@@ -328,8 +328,9 @@ public class KokoroPlugin extends Plugin {
                                 ? defaultThreads() : threadsArg;
                         engine.load(store.modelDir(), threads, false);
                     }
+                    // In-memory WAV bytes only: nothing is written to disk (the JS player builds a
+                    // blob URL from wavBase64), so there is no file to clean up afterwards.
                     KokoroTtsEngine.SynthResult synth = engine.synthesize(
-                            store.audioCacheDir(getContext()),
                             text,
                             sid,
                             speed,
@@ -340,7 +341,6 @@ public class KokoroPlugin extends Plugin {
                         return;
                     }
                     JSObject result = new JSObject();
-                    result.put("path", synth.path);
                     result.put("durationMs", synth.durationMs);
                     result.put("sampleRate", synth.sampleRate);
                     result.put("rtf", synth.rtf);

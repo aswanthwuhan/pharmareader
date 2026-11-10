@@ -41,8 +41,13 @@ export interface PdfParseResult {
   /** Text extracted per page — under ~50 means the PDF is probably a scan. */
   charsPerPage: number;
   pageCount: number;
-  /** How the layout was decided, so the importer can tell the user what ran. */
+  /**
+   * How the layout was decided, so the importer can tell the user what ran:
+   * `model` when the detector was there for every page that asked for it.
+   */
   layout: 'model' | 'heuristic';
+  /** Pages the model laid out; 0 with `model` means no page needed it. */
+  modelPages: number;
 }
 
 export async function parsePdf(
@@ -51,6 +56,7 @@ export async function parsePdf(
   onProgress?: (done: number, total: number, phase?: 'text' | 'layout') => void,
 ): Promise<PdfParseResult> {
   const loadingTask = getDocument({ data: new Uint8Array(data) });
+  let detector: PageLayoutDetector | null = null;
 
   try {
     const pdf = await loadingTask.promise;
@@ -58,7 +64,7 @@ export async function parsePdf(
     const pages: PdfPage[] = [];
     const pageItems: PdfTextItem[][] = [];
     const pageBoxes: LayoutBox[][] = [];
-    let detector = await layoutDetector();
+    detector = await layoutDetector();
 
     for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
       const page = await pdf.getPage(pageNumber);
@@ -87,7 +93,11 @@ export async function parsePdf(
       if (detector && needsModelLayout(sheet)) {
         // The page has to be rasterised before `cleanup` drops its operators.
         const boxes = await detectBoxes(detector, page, viewport, pageNumber);
-        if (!boxes) detector = null;
+        if (!boxes) {
+          // Dropping the handle alone would leave the worker and its ~200 MB alive.
+          detector.dispose();
+          detector = null;
+        }
         pageBoxes.push(boxes ?? []);
       } else {
         pageBoxes.push([]);
@@ -101,7 +111,9 @@ export async function parsePdf(
       onProgress?.(pageNumber, pdf.numPages, detector ? 'layout' : 'text');
     }
 
+    const modelStayed = detector !== null;
     detector?.dispose();
+    detector = null;
 
     const clean = dropPageFurniture(pages);
     const metrics = clean.map((page) => lineMetrics(page.lines));
@@ -131,15 +143,17 @@ export async function parsePdf(
     const finalParagraphs = stitchPages(classifyParagraphs(paragraphs, clean));
     const charCount = finalParagraphs.reduce((sum, paragraph) => sum + paragraph.text.length, 0);
     const chapters = chaptersFromPages(finalParagraphs, await outlineStarts(pdf), pdf.numPages);
-    const usedModel = pageBoxes.some((boxes) => boxes.length > 0);
 
     return {
       doc: { title, author, format: 'pdf', chapters },
       charsPerPage: pdf.numPages ? charCount / pdf.numPages : 0,
       pageCount: pdf.numPages,
-      layout: usedModel ? 'model' : 'heuristic',
+      layout: modelStayed ? 'model' : 'heuristic',
+      modelPages: pageBoxes.filter((boxes) => boxes.length > 0).length,
     };
   } finally {
+    // A page that throws must not strand the model either.
+    detector?.dispose();
     await loadingTask.destroy();
   }
 }

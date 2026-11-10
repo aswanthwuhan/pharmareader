@@ -35,15 +35,8 @@ export interface PrerenderReport extends Omit<PrerenderProgress, 'done' | 'id'> 
 }
 
 export interface PrerenderDeps {
-  expand(text: string): Promise<string>;
-  lexiconVersion(): Promise<string>;
-  cacheKey(
-    text: string,
-    engineId: string,
-    voiceId: string | undefined,
-    rate: number,
-    lexVersion: string
-  ): Promise<string>;
+  expand(text: string, engineId?: string): Promise<string>;
+  cacheKey(text: string, engineId: string, voiceId: string | undefined, rate: number): Promise<string>;
   getAudio(key: string): Promise<AudioCacheRecord | null | undefined>;
   putAudio(record: AudioCacheRecord): Promise<unknown>;
   durationMs?(blob: Blob): Promise<number>;
@@ -94,7 +87,6 @@ export async function runPrerender(
       report.aborted = true;
       return report;
     }
-    const version = await deps.lexiconVersion();
 
     for (const item of items) {
       if (signal?.aborted) {
@@ -102,12 +94,12 @@ export async function runPrerender(
         break;
       }
       try {
-        const text = await deps.expand(item.text);
+        const text = await deps.expand(item.text, engine.id);
         if (signal?.aborted) {
           report.aborted = true;
           break;
         }
-        const key = await deps.cacheKey(text, engine.id, opts.voiceId, rate, version);
+        const key = await deps.cacheKey(text, engine.id, opts.voiceId, rate);
         const cached = await deps.getAudio(key);
         if (signal?.aborted) {
           report.aborted = true;
@@ -116,7 +108,7 @@ export async function runPrerender(
         if (cached) {
           report.skipped++;
         } else {
-          const audio = await synthesize(text, { voiceId: opts.voiceId, rate });
+          const audio = await synthesizeOnce(synthesize, text, { voiceId: opts.voiceId, rate }, signal);
           if (signal?.aborted) {
             report.aborted = true;
             break;
@@ -163,4 +155,25 @@ export async function runPrerender(
 
 function logItemError(error: unknown, item: PrerenderItem): void {
   console.warn(`Pre-render failed for ${item.id}`, error);
+}
+
+/**
+ * Kokoro native keeps one cancel epoch for playback and pre-render, so a cancel
+ * can belong to the other caller. When our own signal never fired, retry the
+ * item once; a second cancellation is a real failure.
+ */
+async function synthesizeOnce(
+  synthesize: (text: string, opts: { voiceId?: string; rate: number }) => Promise<Blob>,
+  text: string,
+  opts: { voiceId?: string; rate: number },
+  signal: AbortSignal | undefined
+): Promise<Blob> {
+  try {
+    return await synthesize(text, opts);
+  } catch (error) {
+    if (signal?.aborted || !/cancel/i.test(error instanceof Error ? error.message : String(error))) {
+      throw error;
+    }
+    return await synthesize(text, opts);
+  }
 }

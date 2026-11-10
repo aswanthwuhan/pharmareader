@@ -89,6 +89,22 @@ describe('importFile', () => {
     expect(book?.fileBlob).toBeTruthy();
   });
 
+  it('drops a UTF-8 BOM from a text file now the bytes are decoded instead of Blob.text()', async () => {
+    const body = new TextEncoder().encode('First sentence. Second sentence.');
+    const bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...body]);
+    const file = new File([bytes], 'bom-notes.txt', { type: 'text/plain' });
+
+    const bookId = await importFile(file);
+    const book = await db.books.get(bookId);
+    const text = book?.parsed.chapters.flatMap((chapter) =>
+      chapter.blocks.flatMap((block) => block.sentences.map((sentence) => sentence.text)),
+    );
+
+    // TextDecoder strips the BOM like Blob.text() did; no U+FEFF reaches a sentence.
+    expect(text?.join(' ')).not.toContain('\uFEFF');
+    expect(text?.[0]).toBe('First sentence.');
+  });
+
   it('rejects an unsupported file type with a clear message', async () => {
     const file = new File(['x'], 'deck.pptx');
 

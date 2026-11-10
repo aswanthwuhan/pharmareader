@@ -1,30 +1,35 @@
 /* On-device voice models.
    Shape, colour and buttons come from the app's tokens and the global .btn /
-   .banner / .progress rules; this file only arranges one model card. */
+   .banner / .progress rules; this file only arranges one model row.
+
+   The row body it renders into is already a surface, so a model is not a card:
+   no border, no background, no outer padding. Sibling models are separated by a
+   hairline and each one keeps only its name, state, size, everyday control and
+   the one action that moves it forward. */
 
 .panel {
   display: grid;
-  gap: var(--space-4);
 }
 
-.intro {
-  margin: 0;
-  max-width: var(--measure-ui);
-  font-size: var(--fs-sm);
-  line-height: var(--lh-base);
-  color: var(--muted);
+/* The row body's own top edge is the frame; a hairline right under it would rule
+   nothing. */
+.panel > :global(details.disc-sub):first-child {
+  border-top: 0;
 }
 
-.card {
+/* -- one model, no card ---------------------------------------------------- */
+
+/* The row body already draws the outer frame, so a model is separated from the
+   next one by a single hairline and keeps no border, radius or background of its
+   own. */
+.block {
   display: grid;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
+  gap: var(--space-2);
+  padding-block: var(--space-3);
+  border-top: 1px solid var(--border);
 }
 
-/* Name, what it is for, and the one action that moves it forward. */
+/* Name and the one action that moves it forward. */
 .head {
   display: flex;
   flex-wrap: wrap;
@@ -32,13 +37,20 @@
   gap: var(--space-2);
 }
 
+.name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
 .title {
   margin: 0;
-  font-family: var(--font-read);
-  font-size: var(--fs-lg);
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
   font-weight: var(--fw-semibold);
   line-height: var(--lh-snug);
-  letter-spacing: var(--ls-tight);
   color: var(--text);
 }
 
@@ -153,57 +165,15 @@
   gap: var(--space-1);
 }
 
-.disclosure {
-  border-top: 1px solid var(--border);
-  padding-top: var(--space-2);
-}
-
-.disclosure summary {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: var(--tap);
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-medium);
-  color: var(--text);
-  cursor: pointer;
-  list-style: none;
-}
-
-.disclosure summary::-webkit-details-marker {
-  display: none;
-}
-
-/* The affordance is a word, like the rest of this panel: no arrow glyph to
-   inherit a different baseline from. */
-.disclosure summary::after {
-  content: 'Show';
-  margin-left: auto;
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-normal);
-  color: var(--muted);
-}
-
-.disclosure[open] summary::after {
-  content: 'Hide';
-}
-
-.disclosureBody {
-  display: grid;
-  gap: var(--space-2);
-  padding-bottom: var(--space-2);
-}
-
 /* The measured result and the button that refreshes it, on one line: the
-   number is only worth as much as the test behind it. */
+   number is only worth as much as the test behind it. It sits inside a
+   disclosure body now, so it is not another ruled band. */
 .speed {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border);
 }
 
 .speedResult {
@@ -229,6 +199,8 @@
 }
 
 .measureError {
+  margin: 0;
+  font-size: var(--fs-sm);
   color: var(--danger);
 }
 
@@ -242,5 +214,14 @@
 .attribution {
   margin: 0;
   font-size: var(--fs-2xs);
+  color: var(--muted);
+}
+
+/* An explanation: never visible at rest, so it is prose, not a label. */
+.intro {
+  margin: 0;
+  max-width: var(--measure-ui);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
   color: var(--muted);
 }

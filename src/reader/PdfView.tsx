@@ -30,6 +30,8 @@ interface Props {
   /** Rectangles of the current sentence, on any page. */
   rects: PdfRect[];
   onPageChange(page: number): void;
+  /** Full screen offers "fit page" as well, for seeing a whole figure at once. */
+  fullscreen?: boolean;
 }
 
 const ZOOM_MIN = 0.6;
@@ -45,11 +47,15 @@ function touchDistance(touches: ArrayLike<{ clientX: number; clientY: number }>)
   return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
 }
 
-export default function PdfView({ docKey, file, page, rects, onPageChange }: Props) {
+export default function PdfView({ docKey, file, page, rects, onPageChange, fullscreen = false }: Props) {
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [pageCount, setPageCount] = useState(0);
   const [zoom, setZoom] = useState(1);
+  // How the page is fitted before `zoom`: the width by default, the whole page
+  // in full screen (where there is enough height to show it in one piece).
+  const [fit, setFit] = useState<'width' | 'page'>('width');
   const [width, setWidth] = useState(0);
+  const [height, setHeight] = useState(0);
   const [scale, setScale] = useState(1);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [error, setError] = useState<string | null>(null);
@@ -148,6 +154,10 @@ export default function PdfView({ docKey, file, page, rects, onPageChange }: Pro
     const measure = () => {
       const next = element.clientWidth;
       if (next > 0) setWidth((previous) => (previous === next ? previous : next));
+      // Zero in the normal layout (the wrap has no fixed height): then only the
+      // width can fit the page, which is what the non-fullscreen view wants.
+      const nextHeight = element.clientHeight;
+      if (nextHeight > 0) setHeight((previous) => (previous === nextHeight ? previous : nextHeight));
     };
 
     measure();
@@ -169,6 +179,11 @@ export default function PdfView({ docKey, file, page, rects, onPageChange }: Pro
       window.removeEventListener('orientationchange', measure);
     };
   }, []);
+
+  // Leaving full screen drops "fit page": the small box can only fit width.
+  useEffect(() => {
+    if (!fullscreen) setFit((current) => (current === 'page' ? 'width' : current));
+  }, [fullscreen]);
 
   // Paint the page whenever the document, page, zoom or width changes.
   useEffect(() => {
@@ -197,8 +212,13 @@ export default function PdfView({ docKey, file, page, rects, onPageChange }: Pro
         // Measure again at paint time: the `width` in state is what triggered
         // this run, but a box that grew since then must not be painted small.
         const availableWidth = wrap.current?.clientWidth || width;
-        const fit = availableWidth / base.width;
-        const viewport = pdfPage.getViewport({ scale: fit * zoom });
+        const availableHeight = wrap.current?.clientHeight || height;
+        const widthFit = availableWidth / base.width;
+        // "Fit page" is only offered in full screen, where the wrap is tall
+        // enough for the whole sheet to be visible at once.
+        const pageFit = availableHeight > 0 ? Math.min(widthFit, availableHeight / base.height) : widthFit;
+        const baseFit = fit === 'page' && fullscreen ? pageFit : widthFit;
+        const viewport = pdfPage.getViewport({ scale: baseFit * zoom });
         const ratio = Math.min(window.devicePixelRatio || 1, 2);
 
         // Publish the geometry *before* painting, so the sentence overlay is
@@ -243,7 +263,7 @@ export default function PdfView({ docKey, file, page, rects, onPageChange }: Pro
       cancelled = true;
       renderTask.current?.cancel();
     };
-  }, [doc, page, zoom, width]);
+  }, [doc, page, zoom, width, height, fit, fullscreen]);
 
   // Pinch rerenders the whole page; coalesce touchmove bursts to one per frame.
   function scheduleZoom(value: number): void {
@@ -380,10 +400,29 @@ export default function PdfView({ docKey, file, page, rects, onPageChange }: Pro
             className="btn btn-ghost btn-icon"
             aria-label="Fit width"
             title="Fit width"
-            onClick={() => setZoom(1)}
+            aria-pressed={fit === 'width'}
+            onClick={() => {
+              setFit('width');
+              setZoom(1);
+            }}
           >
             <Glyph>{icons.fit}</Glyph>
           </button>
+          {fullscreen ? (
+            <button
+              type="button"
+              className="btn btn-ghost btn-icon"
+              aria-label="Fit page"
+              title="Fit page"
+              aria-pressed={fit === 'page'}
+              onClick={() => {
+                setFit('page');
+                setZoom(1);
+              }}
+            >
+              <Glyph>{icons.page}</Glyph>
+            </button>
+          ) : null}
         </div>
       </div>
     </div>

@@ -11,17 +11,13 @@ import com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig;
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig;
 
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.OutputStream;
-import java.util.Arrays;
-import java.util.Comparator;
 import java.util.Locale;
 
 import kotlin.jvm.functions.Function1;
 
 /**
- * Owns the single {@link OfflineTts} instance and turns text into WAV files.
+ * Owns the single {@link OfflineTts} instance and turns text into 16-bit PCM WAV bytes.
  *
  * <p>sherpa-onnx's Kokoro model is a 310&nbsp;MiB ONNX graph; constructing the runtime and
  * running inference are both CPU-bound and multi-second, so this class is a lazy
@@ -42,7 +38,6 @@ import kotlin.jvm.functions.Function1;
 public final class KokoroTtsEngine {
 
     private static final String TAG = "KokoroTts";
-    private static final int MAX_CACHED_WAVS = 8;
     private static final int DEFAULT_SAMPLE_RATE = 24000;
 
     /** Providers the prebuilt sherpa-onnx AAR actually contains; see {@link #clampProvider}. */
@@ -53,16 +48,18 @@ public final class KokoroTtsEngine {
         boolean isStopped();
     }
 
-    /** One synthesized sentence. */
+    /**
+     * One synthesized sentence. The audio travels to JavaScript as {@link #wav} (a base64 string
+     * on the bridge); nothing is written to disk, so there is no file path and no cache to prune.
+     */
     public static final class SynthResult {
-        public String path;
         public byte[] wav;
         public long durationMs;
         public int sampleRate;
         public int sampleCount;
         public long elapsedMs;
         public double rtf;
-        /** True when {@link StopSignal} cut the generation short; no WAV was written. */
+        /** True when {@link StopSignal} cut the generation short; no audio was produced. */
         public boolean cancelled;
     }
 
@@ -74,7 +71,6 @@ public final class KokoroTtsEngine {
     private volatile int voiceCount;
     private volatile String modelDirPath;
     private volatile String provider = DEFAULT_PROVIDER;
-    private int sequence;
 
     private KokoroTtsEngine() {}
 
@@ -179,14 +175,17 @@ public final class KokoroTtsEngine {
     }
 
     /**
-     * Synthesize one sentence and write it as 16-bit PCM WAV into {@code audioCacheDir}.
+     * Synthesize one sentence into an in-memory 16-bit PCM WAV.
+     *
+     * <p>Nothing is written to disk: the caller ships {@link SynthResult#wav} over the bridge as
+     * base64 and the WebView plays it from a blob URL, so a per-sentence file in cacheDir would
+     * only cost write time and then need pruning.
      *
      * @param sid Kokoro speaker id (0..52), clamped into the model's range
      * @param speed 1.0 = natural pace (Kokoro's own speed control, faster than resampling)
      */
     public synchronized SynthResult synthesize(
-            File audioCacheDir, String text, int sid, float speed, StopSignal stop)
-            throws IOException {
+            String text, int sid, float speed, StopSignal stop) throws IOException {
         OfflineTts current = tts;
         if (current == null) {
             throw new IOException("Kokoro model is not loaded");
@@ -234,19 +233,8 @@ public final class KokoroTtsEngine {
         }
 
         byte[] wav = WavWriter.toBytes(samples, generatedRate);
-        if (!audioCacheDir.isDirectory() && !audioCacheDir.mkdirs()
-                && !audioCacheDir.isDirectory()) {
-            throw new IOException("Cannot create " + audioCacheDir.getAbsolutePath());
-        }
-        sequence = (sequence + 1) % 1000;
-        File file = new File(audioCacheDir,
-                String.format(Locale.US, "sentence-%03d-%d.wav", sequence, System.currentTimeMillis()));
-        try (OutputStream out = new FileOutputStream(file)) {
-            out.write(wav);
-        }
 
         SynthResult result = new SynthResult();
-        result.path = file.getAbsolutePath();
         result.wav = wav;
         result.sampleRate = generatedRate;
         result.sampleCount = samples.length;
@@ -257,7 +245,6 @@ public final class KokoroTtsEngine {
                 "synthesized %d chars sid=%d speed=%.2f in %d ms -> %d ms audio (RTF %.2f)",
                 trimmed.length(), speaker, rate, elapsedMs, result.durationMs, result.rtf));
 
-        pruneCache(audioCacheDir);
         return result;
     }
 
@@ -295,17 +282,5 @@ public final class KokoroTtsEngine {
 
     public String provider() {
         return provider;
-    }
-
-    /** Keep the cache small: a chapter of sentences would otherwise pile up in cacheDir. */
-    private static void pruneCache(File dir) {
-        File[] files = dir.listFiles((d, name) -> name.endsWith(".wav"));
-        if (files == null || files.length <= MAX_CACHED_WAVS) {
-            return;
-        }
-        Arrays.sort(files, Comparator.comparingLong(File::lastModified));
-        for (int i = 0; i < files.length - MAX_CACHED_WAVS; i++) {
-            KokoroStore.deleteRecursively(files[i]);
-        }
     }
 }

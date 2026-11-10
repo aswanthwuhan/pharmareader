@@ -32,6 +32,25 @@ export interface Sentence {
   cfi?: string;
 }
 
+/**
+ * Every block kind an importer may emit. Backup validation reads this list, so a
+ * new kind added here is restorable without a second edit.
+ */
+export const BLOCK_KINDS = [
+  'p',
+  'h',
+  'li',
+  'table',
+  'figure',
+  'caption',
+  'formula',
+  'header',
+  'footer',
+  'footnote',
+  'reference',
+  'code',
+] as const;
+
 /** A content block inside a chapter. */
 export interface Block {
   id: string;
@@ -39,7 +58,7 @@ export interface Block {
    * Layout role. 'p'/'h'/'li' are body text; the rest come from layout detection
    * (PP-DocLayout on PDFs, DOM structure elsewhere) and can be skipped when reading aloud.
    */
-  kind: 'p' | 'h' | 'li' | 'table' | 'figure' | 'caption' | 'formula' | 'header' | 'footer' | 'footnote' | 'reference' | 'code';
+  kind: (typeof BLOCK_KINDS)[number];
   sentences: Sentence[];
 }
 
@@ -68,6 +87,11 @@ export interface BookRecord {
   parsed: ParsedDoc;
   topicIds: string[];
   lastPos?: { chapterId: string; sentenceId: string };
+  /**
+   * PDFs only: what read the page layout of `parsed` — the PP-DocLayout model, or
+   * the text heuristics alone. Absent on books imported before this was recorded.
+   */
+  layout?: 'model' | 'heuristic';
 }
 
 /** A user highlight over one or more sentences. */

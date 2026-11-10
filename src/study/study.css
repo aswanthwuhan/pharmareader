@@ -24,7 +24,8 @@
 }
 
 /* Segmented control: one sunken track, the active view a raised paper face.
-   The face is 36px tall; the button's ::before still gives a 44px tap. */
+   The face is a full 48px target; the button's ::before also bridges the 3px
+   track padding, so a thumb that lands between two tabs still hits one. */
 .study-tabs {
   display: inline-grid;
   grid-auto-flow: column;
@@ -41,7 +42,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 36px;
+  min-height: var(--tap-comfort);
   padding: 0 var(--space-3);
   border: 0;
   border-radius: var(--radius-sm);
@@ -85,7 +86,7 @@
   align-items: center;
   gap: var(--space-1);
   min-width: 0;
-  min-height: var(--tap);
+  min-height: var(--tap-comfort);
   padding: 0 var(--space-3);
   border: 0;
   border-radius: var(--radius-full);
@@ -121,8 +122,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--tap);
-  min-height: var(--tap);
+  width: var(--tap-comfort);
+  min-height: var(--tap-comfort);
   border: 0;
   border-left: 1px solid var(--border);
   border-radius: 0 var(--radius-full) var(--radius-full) 0;
@@ -165,6 +166,11 @@
   gap: var(--space-4);
   /* Reserve the fixed rating dock's height at the end of the scroll. */
   padding-bottom: calc(var(--tap-comfort) + var(--space-5));
+}
+
+/* Undo adds a second row to the dock (and the grid gap above it), so reserve that too. */
+.review.has-undo {
+  padding-bottom: calc(var(--tap-comfort) * 2 + var(--space-2) + var(--space-5));
 }
 
 /* Status row: due count with its dot, then the position in the session. */
@@ -336,6 +342,14 @@
   margin: 0 auto;
 }
 
+/* A take-back, not a decision: quiet and centred, but a full-size target. */
+.btn.review-undo {
+  justify-self: center;
+  min-height: var(--tap-comfort);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
 /* Four equal buttons, two lines each: the label and the interval it buys. */
 .review-ratings {
   display: grid;
@@ -422,6 +436,11 @@
   .review {
     /* The dock gains the keyboard hint here, so it is taller than on touch. */
     padding-bottom: calc(var(--tap-comfort) * 2);
+  }
+
+  /* Two hint lines take the same room again: ratings, hint, undo. */
+  .review.has-undo {
+    padding-bottom: calc(var(--tap-comfort) * 3 + var(--space-2));
   }
 }
 
@@ -684,6 +703,8 @@ kbd {
 .hl-text {
   flex: 1 1 auto;
   min-width: 0;
+  /* A one-word highlight is shorter than a thumb; keep the whole row a target. */
+  min-height: var(--tap-comfort);
   margin: 0;
   padding: 0;
   border: 0;
@@ -731,7 +752,7 @@ kbd {
 
 .btn.hl-note-btn {
   justify-self: start;
-  min-height: var(--tap);
+  min-height: var(--tap-comfort);
   padding: 0 var(--space-2);
   margin-left: calc(var(--space-1) * -1);
   color: var(--accent);
@@ -779,7 +800,7 @@ kbd {
 
 .hl-select {
   width: auto;
-  min-height: var(--tap);
+  min-height: var(--tap-comfort);
   padding: 0 var(--space-2);
   font-size: var(--fs-sm);
   text-transform: capitalize;
@@ -812,6 +833,8 @@ kbd {
 .hl-bookmark-text {
   flex: 1 1 auto;
   min-width: 0;
+  /* One line of text plus padding is short of a thumb; the row is the target. */
+  min-height: var(--tap-comfort);
   padding: var(--space-2) 0;
   border: 0;
   background: none;

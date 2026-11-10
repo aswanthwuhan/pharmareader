@@ -11,11 +11,9 @@
  * a later launch reads them back offline — same bookkeeping as the TTS engines
  * in `src/tts/neural/models.ts`.
  */
-import { getSetting, setSetting } from '../../core/settings';
 import { LABELS } from './engine';
 
 export const LAYOUT_CACHE = 'pharma-reader-layout-v1';
-const READY_KEY = 'import.layout.ready';
 
 export const LAYOUT_MODEL = {
   label: 'PP-DocLayout-L',
@@ -40,10 +38,13 @@ async function cachedModel(): Promise<Response | null> {
   }
 }
 
-/** True when the weights are cached (or a download reported success at least once). */
+/**
+ * True when the weights are cached. Nothing else counts: a remembered "it was
+ * downloaded once" survives a restored backup and an evicted cache, and then the
+ * panel says Ready, hides Download, and every import silently skips the model.
+ */
 export async function isLayoutModelReady(): Promise<boolean> {
-  if (await cachedModel()) return true;
-  return getSetting<boolean>(READY_KEY, false);
+  return (await cachedModel()) !== null;
 }
 
 /** The cached weights, or null when the user has not downloaded the model yet. */
@@ -93,7 +94,6 @@ export async function downloadLayoutModel(onProgress?: (fraction: number) => voi
     throw new Error('Could not store the layout model — the device may be out of space.');
   }
 
-  await setSetting(READY_KEY, true);
   onProgress?.(1);
 }
 
@@ -103,5 +103,4 @@ export async function deleteLayoutModel(): Promise<void> {
     await caches.delete(LAYOUT_CACHE);
     if (await cachedModel()) throw new Error('Could not delete the downloaded model files');
   }
-  await setSetting(READY_KEY, false);
 }

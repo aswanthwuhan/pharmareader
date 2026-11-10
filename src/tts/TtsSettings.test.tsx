@@ -26,8 +26,23 @@ async function mount(): Promise<void> {
   });
   await flush();
   // Every section loads asynchronously (voices, lexicon, cache); wait for the
-  // lexicon list so no state update lands after the test finished.
-  await waitFor(() => container.querySelectorAll('.tts-rule').length > 0);
+  // lexicon count so no state update lands after the test finished. The
+  // built-in rows themselves stay unmounted until their disclosure opens.
+  await waitFor(() => container.querySelector('.tts-lexicon-count')?.textContent !== 'Loading rules…');
+}
+
+/**
+ * Open a native `<details>` the way a click would. jsdom does not run the
+ * summary's activation behaviour, so set `open` and fire the toggle event the
+ * panel listens on.
+ */
+async function openDisclosure(summary: Element): Promise<void> {
+  const details = summary.closest('details') as HTMLDetailsElement;
+  await act(async () => {
+    details.open = true;
+    details.dispatchEvent(new Event('toggle'));
+  });
+  await flush();
 }
 
 /** Let IndexedDB promises, effects and timers settle inside act(). */
@@ -117,9 +132,15 @@ describe('TtsSettings', () => {
 
   it('lists built-in rules and persists a toggle', async () => {
     await mount();
-    await waitFor(() => container.querySelectorAll('.tts-rule').length > 0);
+    const summary = [...container.querySelectorAll('summary')].find((s) =>
+      s.textContent?.startsWith('Built-in rules'),
+    )!;
+    await openDisclosure(summary);
+    await waitFor(() => container.querySelectorAll('.tts-rules-builtin .tts-rule').length > 0);
 
-    const boxes = container.querySelectorAll<HTMLInputElement>('.tts-rule input[type="checkbox"]');
+    const boxes = container.querySelectorAll<HTMLInputElement>(
+      '.tts-rules-builtin .tts-rule input[type="checkbox"]',
+    );
     expect(boxes.length).toBeGreaterThan(0);
     expect(boxes[0]?.checked).toBe(true);
 
@@ -133,9 +154,44 @@ describe('TtsSettings', () => {
     expect(disabled.length).toBe(1);
   });
 
+  it('keeps the built-in rules behind their disclosure until it opens', async () => {
+    await mount();
+    expect(container.querySelectorAll('.tts-rules-builtin .tts-rule')).toHaveLength(0);
+
+    const summary = [...container.querySelectorAll('summary')].find((s) =>
+      s.textContent?.startsWith('Built-in rules'),
+    )!;
+    expect(summary.textContent).toMatch(/^Built-in rules \(\d+\)$/);
+
+    await openDisclosure(summary);
+    await waitFor(() => container.querySelectorAll('.tts-rules-builtin .tts-rule').length > 0);
+  });
+
+  it('searches the built-in rules from their own field', async () => {
+    await mount();
+    const summary = [...container.querySelectorAll('summary')].find((s) =>
+      s.textContent?.startsWith('Built-in rules'),
+    )!;
+    await openDisclosure(summary);
+    await waitFor(() => container.querySelectorAll('.tts-rules-builtin .tts-rule').length > 0);
+    const all = container.querySelectorAll('.tts-rules-builtin .tts-rule').length;
+
+    const search = container.querySelector<HTMLInputElement>('#tts-lexicon-search')!;
+    await act(async () => {
+      setInputValue(search, 'cyp');
+    });
+    await flush();
+
+    const matches = container.querySelectorAll('.tts-rules-builtin .tts-rule').length;
+    expect(matches).toBeGreaterThan(0);
+    expect(matches).toBeLessThan(all);
+    expect(container.querySelector('.tts-lexicon-count')?.textContent).toMatch(
+      /^Showing \d+ of \d+ rules$/,
+    );
+  });
+
   it('previews text through the lexicon rules', async () => {
     await mount();
-    await waitFor(() => container.querySelectorAll('.tts-rule').length > 0);
 
     const input = container.querySelector<HTMLInputElement>('#tts-lexicon-preview')!;
     await act(async () => {

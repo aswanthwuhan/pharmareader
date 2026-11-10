@@ -1,13 +1,22 @@
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { db } from '../core/db';
+import { pushBackHandler } from '../core/backButton';
+import { setSetting, useSetting } from '../core/settings';
 import type { BookRecord } from '../core/types';
 import { deleteBook, importFileDetailed, importText, importUrl } from '../import';
 import '../import/library.css';
+import { LAST_BOOK_KEY, type LastBook } from '../reader/lastBook';
 import ModelStatusBanner from '../tts/ModelStatusBanner';
 
 const ACCEPT = '.pdf,.epub,.docx,.txt,.md,.html';
+
+/** Written by the backup worker after a successful export. */
+const BACKUP_KEY = 'backup.lastExportAt';
+/** Set when the reader dismisses the reminder, so it stays quiet for a week. */
+const BACKUP_DISMISS_KEY = 'backup.reminderDismissedAt';
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 const FORMAT_LABEL: Record<BookRecord['format'], string> = {
   pdf: 'PDF',
@@ -69,13 +78,12 @@ function WarningIcon() {
   );
 }
 
-function TrashIcon() {
+function MoreIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4.5 7h15" />
-      <path d="M9.5 7V4.8h5V7" />
-      <path d="M6.6 7l.8 12.3a1.8 1.8 0 0 0 1.8 1.7h5.6a1.8 1.8 0 0 0 1.8-1.7L17.4 7" />
-      <path d="M10.4 11v6M13.6 11v6" />
+      <circle cx="12" cy="5.6" r="1.1" />
+      <circle cx="12" cy="12" r="1.1" />
+      <circle cx="12" cy="18.4" r="1.1" />
     </svg>
   );
 }
@@ -110,6 +118,72 @@ function ShelfMark() {
   );
 }
 
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />
+    </svg>
+  );
+}
+
+/**
+ * The row's "more" sheet, which is also the delete confirmation: a row menu
+ * that opened a second dialog would be two sheets for one decision.
+ */
+function BookActionsSheet({
+  book,
+  onCancel,
+  onDelete,
+}: {
+  book: BookRecord;
+  onCancel: () => void;
+  onDelete: () => void;
+}) {
+  const titleId = useId();
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  // Mount-only effect: the latest callbacks, without re-running focus on every render.
+  const cancelRefFn = useRef(onCancel);
+  cancelRefFn.current = onCancel;
+
+  useEffect(() => {
+    cancelRef.current?.focus();
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') cancelRefFn.current();
+    }
+    document.addEventListener('keydown', onKeyDown);
+    // Same one-line hook as the import panels: Android back closes the sheet
+    // instead of leaving the library under it.
+    const dispose = pushBackHandler(() => {
+      cancelRefFn.current();
+      return true;
+    });
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      dispose();
+    };
+  }, []);
+
+  return (
+    <>
+      <div className="sheet-backdrop" onClick={onCancel} />
+      <div className="sheet" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+        <h2 id={titleId} className="sheet-title lib-sheet-title">
+          {book.title}
+        </h2>
+        <p className="muted">Its highlights, bookmarks and cards go with it.</p>
+        <div className="sheet-actions">
+          <button ref={cancelRef} type="button" className="btn btn-secondary" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className="btn btn-danger" onClick={onDelete}>
+            Delete book
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function LibraryPage() {
   const navigate = useNavigate();
 
@@ -130,6 +204,10 @@ export default function LibraryPage() {
   const [errors, setErrors] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<Warning[]>([]);
   const [panel, setPanel] = useState<'none' | 'web' | 'text'>('none');
+  // The row whose "more" sheet is open, plus the button that opened it so focus
+  // can come back to the same row when the sheet closes.
+  const [menuBook, setMenuBook] = useState<BookRecord | null>(null);
+  const menuTrigger = useRef<HTMLButtonElement | null>(null);
   const [url, setUrl] = useState('');
   const [pasteTitle, setPasteTitle] = useState('');
   const [pasteText, setPasteText] = useState('');
@@ -137,6 +215,35 @@ export default function LibraryPage() {
   const busy = status !== null;
   const loading = books === undefined;
   const shelf = books ?? [];
+
+  // The Android back key closes an open import panel before it can mean
+  // "leave the library": a half-typed URL or pasted chapter is not lost by
+  // one stray press.
+  useEffect(() => {
+    if (panel === 'none') return;
+    return pushBackHandler(() => {
+      setPanel('none');
+      return true;
+    });
+  }, [panel]);
+
+  // "Continue listening": the last book opened in the reader, offered in one
+  // tap instead of making her find the row again.
+  const lastBook = useSetting<LastBook | undefined>(LAST_BOOK_KEY, undefined);
+  const continueBook = lastBook ? shelf.find((book) => book.id === lastBook.bookId) : undefined;
+
+  // Notes and cards live only on this phone; a week without an export is worth
+  // one quiet reminder, and a dismissal buys another quiet week.
+  const now = Date.now();
+  const lastExportAt = useSetting<number | undefined>(BACKUP_KEY, undefined);
+  const backupDismissedAt = useSetting<number | undefined>(BACKUP_DISMISS_KEY, undefined);
+  const backupStale = lastExportAt === undefined || now - lastExportAt > WEEK_MS;
+  const backupQuiet = backupDismissedAt !== undefined && now - backupDismissedAt < WEEK_MS;
+  const showBackupReminder = shelf.length > 0 && backupStale && !backupQuiet;
+
+  function dismissBackupReminder(): void {
+    void setSetting(BACKUP_DISMISS_KEY, Date.now()).catch(() => {});
+  }
 
   async function handleFiles(list: FileList | null) {
     const files = Array.from(list ?? []);
@@ -204,13 +311,21 @@ export default function LibraryPage() {
   }
 
   async function handleDelete(book: BookRecord) {
-    if (!window.confirm(`Delete “${book.title}”? Its highlights, bookmarks and cards go with it.`)) return;
-
     try {
       await deleteBook(book.id);
     } catch (error) {
       setErrors([`Could not delete “${book.title}”: ${errorMessage(error)}`]);
     }
+  }
+
+  function openBookMenu(book: BookRecord, trigger: HTMLButtonElement): void {
+    menuTrigger.current = trigger;
+    setMenuBook(book);
+  }
+
+  function closeBookMenu(): void {
+    setMenuBook(null);
+    menuTrigger.current?.focus();
   }
 
   const countSub = loading
@@ -366,6 +481,36 @@ export default function LibraryPage() {
         </div>
       ))}
 
+      {!loading && continueBook ? (
+        <p className="lib-continue">
+          <Link className="btn btn-primary lib-continue-btn" to={`/read/${continueBook.id}?play=1`}>
+            Continue: <span className="lib-continue-title">{continueBook.title}</span>
+          </Link>
+        </p>
+      ) : null}
+
+      {showBackupReminder ? (
+        <div className="banner banner-info lib-backup">
+          <div className="lib-backup-body">
+            <p className="banner-title">
+              <Link to="/settings#backup">Back up your notes and cards</Link>
+            </p>
+            <p>
+              Highlights, cards and reading positions live on this phone only. An export is the copy that survives a
+              lost or reset phone.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon lib-backup-close"
+            aria-label="Dismiss the backup reminder"
+            onClick={dismissBackupReminder}
+          >
+            <CloseIcon />
+          </button>
+        </div>
+      ) : null}
+
       {loading ? (
         <ul className="lib-list lib-skeleton" aria-hidden="true">
           {[0, 1, 2].map((row) => (
@@ -388,7 +533,7 @@ export default function LibraryPage() {
               work too.
             </li>
             <li>
-              Add a voice once in <Link to="/settings">Settings → On-device voice models</Link> and the reader can play
+              Add a voice once in <Link to="/settings#voice-models">Settings → On-device voice models</Link> and the reader can play
               any chapter aloud, in your pocket, on the ward.
             </li>
             <li>
@@ -402,7 +547,7 @@ export default function LibraryPage() {
             <button type="button" className="btn btn-primary" onClick={() => fileInput.current?.click()} disabled={busy}>
               Import a file
             </button>
-            <Link className="btn btn-secondary" to="/settings">
+            <Link className="btn btn-secondary" to="/settings#voice-models">
               Settings
             </Link>
           </div>
@@ -412,9 +557,6 @@ export default function LibraryPage() {
           {shelf.map((book) => {
             const progress = progressById.get(book.id) ?? null;
             const chapters = chapterCount(book);
-            const meta = [book.author, `${chapters} ${chapters === 1 ? 'chapter' : 'chapters'}`]
-              .filter(Boolean)
-              .join(' · ');
 
             return (
               <li className="lib-row" key={book.id}>
@@ -426,8 +568,20 @@ export default function LibraryPage() {
                     </span>
                   </span>
                   <span className="lib-meta">
-                    {meta}
-                    {progress === null && <span className="lib-idle"> · Not started</span>}
+                    {book.author ? (
+                      <>
+                        <span className="lib-authors" title={book.author}>
+                          {book.author}
+                        </span>
+                        <span className="lib-meta-dot" aria-hidden="true">
+                          ·
+                        </span>
+                      </>
+                    ) : null}
+                    <span className="lib-facts">
+                      {chapters} {chapters === 1 ? 'chapter' : 'chapters'}
+                      {progress === null && <span className="lib-idle"> · Not started</span>}
+                    </span>
                   </span>
                   {progress !== null && (
                     <span className="lib-progress">
@@ -440,16 +594,30 @@ export default function LibraryPage() {
                 </Link>
                 <button
                   type="button"
-                  className="btn btn-icon btn-ghost lib-delete"
-                  aria-label={`Delete ${book.title}`}
-                  onClick={() => void handleDelete(book)}
+                  className="btn btn-icon btn-ghost lib-more"
+                  aria-label={`More actions for ${book.title}`}
+                  aria-haspopup="dialog"
+                  aria-expanded={menuBook?.id === book.id}
+                  onClick={(event) => openBookMenu(book, event.currentTarget)}
                 >
-                  <TrashIcon />
+                  <MoreIcon />
                 </button>
               </li>
             );
           })}
         </ul>
+      )}
+
+      {menuBook && (
+        <BookActionsSheet
+          book={menuBook}
+          onCancel={closeBookMenu}
+          onDelete={() => {
+            const book = menuBook;
+            closeBookMenu();
+            void handleDelete(book);
+          }}
+        />
       )}
     </section>
   );

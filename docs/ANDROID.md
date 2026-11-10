@@ -5,7 +5,7 @@
   Android Studio: `C:\Program Files\Android\Android Studio\jbr` (openjdk 21.0.9, verified).
 - **Android SDK** — `ANDROID_HOME=C:\Users\albit\AppData\Local\Android\Sdk` (build-tools 36.0.0,
   platforms android-36). Android Studio itself is not needed to build.
-- `minSdk 24` (WebView WebAssembly SIMD/threads), `compileSdk`/`targetSdk 36` → `android/variables.gradle`.
+- `minSdk 26` (Android 8.0; WebView 110+), `compileSdk`/`targetSdk 36` → `android/variables.gradle`.
 - `pnpm install` once; only `dist/` is packaged, so build the web app first.
 
 ## Build → APK
@@ -17,7 +17,18 @@ cd android; .\gradlew.bat assembleDebug       # first run downloads Gradle 8.14.
 adb install -r app\build\outputs\apk\debug\app-debug.apk
 adb shell am start -n com.aurapharmlab.pharmareader/.MainActivity
 ```
-APK: `android\app\build\outputs\apk\debug\app-debug.apk` (~4.2 MB)
+APK: `android\app\build\outputs\apk\debug\app-debug.apk` (~105 MB: sherpa-onnx native libraries for arm64, armeabi-v7a and, in debug only, x86_64).
+
+## Release signing
+Releases are still debug-signed so they install over earlier builds without losing data.
+Moving to a release key changes the signature, and Android then refuses the update: the
+app must be uninstalled, which deletes IndexedDB. Before switching, export a backup
+(Settings → Backup, with books), install the release build, and import it.
+
+To enable release signing, create a keystore outside the repo and add
+`android/keystore.properties` (gitignored) with `storeFile` (forward slashes), `storePassword`,
+`keyAlias` and `keyPassword`; `assembleRelease` then signs with it. Without the file the
+release build stays unsigned. Keep a copy of the keystore: losing it means no further updates.
 
 ## Debugging the WebView
 Debug builds call `WebView.setWebContentsDebuggingEnabled(true)` in `MainActivity`, guarded by

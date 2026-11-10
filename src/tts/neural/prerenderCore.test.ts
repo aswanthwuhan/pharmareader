@@ -26,7 +26,6 @@ function fakeDeps(overrides: Partial<PrerenderDeps> = {}): PrerenderDeps & {
 } {
   const deps = {
     expand: async (text: string) => `expanded:${text}`,
-    lexiconVersion: async () => 'v1',
     cacheKey: async (text: string) => `key:${text}`,
     getAudio: vi.fn(async (_key: string) => null as AudioCacheRecord | null),
     putAudio: vi.fn(async (_record: AudioCacheRecord) => undefined),
@@ -157,6 +156,73 @@ describe('runPrerender', () => {
     expect(report).toMatchObject({ aborted: true, failed: 0, done: 0 });
     expect(engine.synthesize).not.toHaveBeenCalled();
     expect(deps.putAudio).not.toHaveBeenCalled();
+  });
+
+  it('retries an item the engine cancelled once', async () => {
+    // Kokoro native shares one cancel epoch between playback and pre-render, so
+    // a cancel can belong to playback; one retry is cheaper than a hole.
+    const engine = fakeEngine();
+    let cancels = 1;
+    (engine.synthesize as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      if (cancels > 0) {
+        cancels--;
+        throw new Error('Job was cancelled');
+      }
+      return blob;
+    });
+
+    const report = await runPrerender(engine, items, {}, undefined, fakeDeps());
+
+    expect(report).toMatchObject({ done: 2, synthesised: 2, failed: 0 });
+    expect(engine.synthesize).toHaveBeenCalledTimes(3); // s1, s2 cancelled, s2 retried
+  });
+
+  it('counts an item failed when the cancel repeats', async () => {
+    const engine = fakeEngine();
+    (engine.synthesize as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      throw new Error('cancelled');
+    });
+    const onItemError = vi.fn();
+
+    const report = await runPrerender(engine, items, {}, undefined, fakeDeps({ onItemError }));
+
+    expect(report).toMatchObject({ done: 2, synthesised: 0, failed: 2 });
+    expect(engine.synthesize).toHaveBeenCalledTimes(4); // exactly one retry per item
+    expect(onItemError).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry a cancel that came with our own abort', async () => {
+    const controller = new AbortController();
+    const engine = fakeEngine();
+    (engine.synthesize as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      controller.abort();
+      throw new Error('cancelled');
+    });
+
+    const report = await runPrerender(engine, items, { signal: controller.signal }, undefined, fakeDeps());
+
+    expect(report).toMatchObject({ aborted: true, failed: 0 });
+    expect(engine.synthesize).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry a failure that is not a cancel', async () => {
+    const engine = fakeEngine();
+    (engine.synthesize as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      throw new Error('model not loaded');
+    });
+
+    const report = await runPrerender(engine, items, {}, undefined, fakeDeps());
+
+    expect(report).toMatchObject({ failed: 2 });
+    expect(engine.synthesize).toHaveBeenCalledTimes(2);
+  });
+
+  it('passes the engine id to the lexicon', async () => {
+    const expand = vi.fn(async (text: string) => text);
+    await runPrerender(fakeEngine(), items, {}, undefined, fakeDeps({ expand }));
+
+    expect(expand).toHaveBeenCalledWith('one', 'pocket');
+    expect(expand).toHaveBeenCalledWith('two', 'pocket');
   });
 
   it('refuses engines that cannot synthesize', async () => {

@@ -7,6 +7,7 @@ import {
   needsModelLayout,
   pagesToParagraphs,
   rectsForRange,
+  stitchPages,
   type PdfLine,
   type PdfPage,
   type PdfParagraph,
@@ -406,5 +407,45 @@ describe('needsModelLayout', () => {
       line('And a last line under it.', 514),
     ];
     expect(needsModelLayout(page(lines))).toBe(true);
+  });
+});
+
+describe('stitchPages', () => {
+  const kinded = (pageNumber: number, text: string, kind: PdfParagraph['kind']): PdfParagraph => ({
+    ...paragraph(pageNumber, text),
+    kind,
+  });
+
+  it('joins a sentence cut by a page break', () => {
+    const out = stitchPages([paragraph(1, 'Thiazides act on the distal'), paragraph(2, 'convoluted tubule.')]);
+    expect(out.map((part) => part.text)).toEqual(['Thiazides act on the distal convoluted tubule.']);
+  });
+
+  it('joins across the footer and the running head that sit between the two halves', () => {
+    const out = stitchPages([
+      paragraph(1, 'Thiazides act on the distal'),
+      kinded(1, 'Downloaded from bpspubs on 12 May 2024', 'footer'),
+      kinded(2, 'H-J An et al', 'header'),
+      paragraph(2, 'convoluted tubule.'),
+    ]);
+
+    // The body sentence is whole and still body text; the furniture stays skippable
+    // and is not glued onto the page that follows it.
+    expect(out.map((part) => `${part.kind ?? 'p'}: ${part.text}`)).toEqual([
+      'p: Thiazides act on the distal convoluted tubule.',
+      'footer: Downloaded from bpspubs on 12 May 2024',
+      'header: H-J An et al',
+    ]);
+  });
+
+  it('never continues a caption or a table into the prose of the next page', () => {
+    const out = stitchPages([
+      paragraph(1, 'The dose was halved.'),
+      kinded(1, 'Figure 2 Effects of melittin on filaggrin', 'caption'),
+      paragraph(2, 'and the response was measured weekly.'),
+    ]);
+
+    expect(out.map((part) => part.kind ?? 'p')).toEqual(['p', 'caption', 'p']);
+    expect(out[1].text).toBe('Figure 2 Effects of melittin on filaggrin');
   });
 });

@@ -3,6 +3,7 @@ import 'fake-indexeddb/auto';
 import { act, createElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
+import { resetDownload } from '../downloads';
 import NeuralModelsPanel from './NeuralModelsPanel';
 import { NEURAL_STAGES, neuralError } from './neuralError';
 
@@ -16,7 +17,11 @@ vi.mock('@capacitor/core', () => ({
 vi.mock('./KokoroNativePanel', () => ({ default: () => null }));
 
 /** Pocket's download fails on demand, like a blocked phone connection. */
-const pocket = vi.hoisted(() => ({ failWith: null as Error | null }));
+const pocket = vi.hoisted(() => ({
+  failWith: null as Error | null,
+  prepare: null as null | ((onProgress?: (fraction: number) => void) => Promise<void>),
+  prepares: 0,
+}));
 vi.mock('./pocket', () => ({
   POCKET_RATE_MIN: 0.8,
   POCKET_RATE_MAX: 1.25,
@@ -26,7 +31,11 @@ vi.mock('./pocket', () => ({
     label: 'Pocket TTS',
     capabilities: { streaming: true, prerender: true, wordBoundaries: false, needsDownload: true },
     isReady: () => false,
-    prepare: () => (pocket.failWith ? Promise.reject(pocket.failWith) : Promise.resolve()),
+    prepare: (onProgress?: (fraction: number) => void) => {
+      pocket.prepares += 1;
+      if (pocket.prepare) return pocket.prepare(onProgress);
+      return pocket.failWith ? Promise.reject(pocket.failWith) : Promise.resolve();
+    },
     listVoices: () => Promise.resolve([]),
     synthesize: () => Promise.resolve(new Blob()),
   },
@@ -40,6 +49,11 @@ beforeEach(() => {
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
+  pocket.failWith = null;
+  pocket.prepare = null;
+  pocket.prepares = 0;
+  resetDownload('pocket');
+  resetDownload('kokoro');
 });
 
 afterEach(async () => {
@@ -110,5 +124,47 @@ describe('NeuralModelsPanel', () => {
     expect(
       [...container.querySelectorAll('button')].some((button) => button.textContent === 'Copy error details')
     ).toBe(true);
+  });
+
+  it('keeps the progress when the panel is left and opened again mid-download', async () => {
+    let progress: ((fraction: number) => void) | undefined;
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    pocket.prepare = (onProgress) => {
+      progress = onProgress;
+      return gate;
+    };
+
+    await renderPanel();
+    const download = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Download'
+    );
+    await act(async () => {
+      download!.click();
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    });
+    await act(async () => {
+      progress?.(0.35);
+    });
+    expect(container.textContent).toContain('Downloading 35%');
+
+    // Leave Settings: the card unmounts while the engine is still downloading.
+    await act(async () => root!.unmount());
+    root = createRoot(container);
+
+    const again = await renderPanel();
+    expect(again).toContain('Downloading 35%');
+    expect(again).not.toContain('Failed');
+    // The remount joined the running download instead of starting another one.
+    expect(pocket.prepares).toBe(1);
+
+    await act(async () => {
+      finish();
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    });
+    expect(container.textContent).toContain('Ready');
+    expect(pocket.prepares).toBe(1);
   });
 });

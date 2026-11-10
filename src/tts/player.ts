@@ -1,6 +1,6 @@
 import type { AudioCacheRecord, TtsEngine } from '../core/types';
 import { cacheKey, getAudio, putAudio, wavDurationMs } from './cache';
-import { expand, lexiconVersion } from './lexicon';
+import { expand } from './lexicon';
 import { estimateTimings, wordTimings, type WordTiming } from './align';
 
 /** What the reader is doing with one sentence of the queue. */
@@ -24,6 +24,8 @@ export interface PlayerOptions {
   startIndex?: number;
   voiceId?: string;
   rate: number;
+  /** How many sentences to render ahead of the one being spoken (1–50, default 10). */
+  prefetchAhead?: number;
   /** Fired when a sentence's audio actually starts — never while it is being rendered. */
   onSentence?(id: string, index: number): void;
   onItemState?(id: string, state: ItemState): void;
@@ -47,9 +49,17 @@ export interface Player {
   readonly bufferAhead: number;
 }
 
-/** Object URLs kept alive for retries/backtracking; each holds a whole clip. */
-const URL_LRU_SIZE = 6;
-const PREFETCH_AHEAD = 2;
+/** Rendered ahead of the playing sentence before playback starts to wait. */
+const PREFETCH_AHEAD_DEFAULT = 10;
+const PREFETCH_AHEAD_MIN = 1;
+const PREFETCH_AHEAD_MAX = 50;
+/** Object URLs kept beyond the look-ahead, for back/seek retries. */
+const URL_LRU_EXTRA = 4;
+
+function clampPrefetchAhead(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) return PREFETCH_AHEAD_DEFAULT;
+  return Math.min(Math.max(Math.trunc(value), PREFETCH_AHEAD_MIN), PREFETCH_AHEAD_MAX);
+}
 
 /**
  * 44-byte silent WAV. Played muted from the tap handler that starts playback:
@@ -77,6 +87,15 @@ interface Clip {
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Kokoro native words a cancelled job "… was cancelled", and shares one cancel
+ * epoch between playback and pre-render, so a cancel can belong to the other
+ * caller. A cancel we did not ask for is worth one retry.
+ */
+function isCancel(err: unknown): boolean {
+  return /cancel/i.test(err instanceof Error ? err.message : String(err));
+}
+
 /** Slow, steady guess at how long one sentence takes to say. */
 function assumedDurationMs(text: string, rate: number): number {
   const seconds = Math.max(0.6, text.length / (14 * Math.max(0.5, rate)));
@@ -99,6 +118,9 @@ function charAtFraction(text: string, fraction: number): number {
 export function createPlayer(options: PlayerOptions): Player {
   const { engine, items } = options;
   const canSynthesize = typeof engine.synthesize === 'function';
+  const prefetchAhead = clampPrefetchAhead(options.prefetchAhead);
+  /** The in-memory clip cache covers the look-ahead and a little history. */
+  const urlLruSize = prefetchAhead + URL_LRU_EXTRA;
 
   let state: 'idle' | 'playing' | 'paused' = 'idle';
   /** Reading state through a call keeps TS from narrowing it to a literal. */
@@ -112,7 +134,7 @@ export function createPlayer(options: PlayerOptions): Player {
   let audioKey: string | null = null;
   let settleClip: (() => void) | null = null;
 
-  const urls = new Map<string, string>();
+  const clips = new Map<string, Clip>();
   const inflight = new Map<string, Promise<Clip>>();
   const states = new Map<string, ItemState>();
   const timings = new Map<string, Promise<WordTiming[]>>();
@@ -173,8 +195,8 @@ export function createPlayer(options: PlayerOptions): Player {
   }
 
   function revokeAll(): void {
-    for (const url of urls.values()) URL.revokeObjectURL(url);
-    urls.clear();
+    for (const clip of clips.values()) URL.revokeObjectURL(clip.url);
+    clips.clear();
     inflight.clear();
     timings.clear();
     audioKey = null;
@@ -182,45 +204,61 @@ export function createPlayer(options: PlayerOptions): Player {
   }
 
   function evictOne(): boolean {
-    for (const key of urls.keys()) {
+    for (const key of clips.keys()) {
       // The element still points at this URL; revoking it is harmless while
       // paused, but keeping it means a back/seek retry needs no synthesis.
       if (key === audioKey) continue;
-      const url = urls.get(key);
-      if (url === undefined) continue;
-      urls.delete(key);
-      URL.revokeObjectURL(url);
+      const clip = clips.get(key);
+      if (clip === undefined) continue;
+      clips.delete(key);
+      URL.revokeObjectURL(clip.url);
       return true;
     }
     return false;
   }
 
-  function remember(key: string, blob: Blob): string {
-    const known = urls.get(key);
+  /**
+   * Remember a clip — URL included — and return it. Word timing needs the blob
+   * and the duration, so the URL alone is not enough to serve.
+   */
+  function remember(clip: Omit<Clip, 'url'>): Clip {
+    const known = clips.get(clip.key);
     if (known !== undefined) {
-      urls.delete(key);
-      urls.set(key, known); // refresh its LRU position
+      clips.delete(clip.key);
+      clips.set(clip.key, known); // refresh its LRU position
       return known;
     }
-    const url = URL.createObjectURL(blob);
-    urls.set(key, url);
-    while (urls.size > URL_LRU_SIZE && evictOne()) {
+    const stored: Clip = { ...clip, url: URL.createObjectURL(clip.blob) };
+    clips.set(clip.key, stored);
+    while (clips.size > urlLruSize && evictOne()) {
       /* trim */
     }
-    return url;
+    return stored;
+  }
+
+  /** Synthesize one sentence, retrying once when the engine cancelled it for us. */
+  async function synthesizeForItem(text: string, gen: number): Promise<Blob> {
+    const synthesize = engine.synthesize!;
+    const request = { voiceId: options.voiceId, rate: options.rate };
+    try {
+      return await synthesize(text, request);
+    } catch (err) {
+      if (gen !== generation || !isCancel(err)) throw err;
+      return await synthesize(text, request);
+    }
   }
 
   async function audioClipFor(item: Item, gen: number): Promise<Clip> {
     const original = item.spoken ?? item.text;
-    const text = (await expand(original)) || original;
+    const text = (await expand(original, engine.id)) || original;
     if (gen !== generation) throw new AbortPlayback();
-    const version = await lexiconVersion();
-    if (gen !== generation) throw new AbortPlayback();
-    const key = await cacheKey(text, engine.id, options.voiceId, options.rate, version);
+    const key = await cacheKey(text, engine.id, options.voiceId, options.rate);
     if (gen !== generation) throw new AbortPlayback();
 
-    const cached = urls.get(key);
-    if (cached !== undefined) return { key, url: cached, blob: new Blob(), durationMs: 0 };
+    const cached = clips.get(key);
+    // The whole clip, not just its URL: a prefetched sentence is the normal
+    // case, and an empty blob with a 0 ms duration pins the word mark to word 0.
+    if (cached !== undefined) return remember(cached);
 
     const pending = inflight.get(key);
     if (pending !== undefined) {
@@ -238,9 +276,12 @@ export function createPlayer(options: PlayerOptions): Player {
     const job = (async (): Promise<Clip> => {
       const stored = await getAudio(key);
       if (stored) {
-        return { key, url: remember(key, stored.audio), blob: stored.audio, durationMs: stored.durationMs };
+        // A stop/seek that landed while this row was read already revoked every
+        // URL; the row stays in the cache for the next play.
+        if (gen !== generation) throw new AbortPlayback();
+        return remember({ key, blob: stored.audio, durationMs: stored.durationMs });
       }
-      const blob = await engine.synthesize!(text, { voiceId: options.voiceId, rate: options.rate });
+      const blob = await synthesizeForItem(text, gen);
       const durationMs = await wavDurationMs(blob);
       const record: AudioCacheRecord = {
         key,
@@ -250,7 +291,10 @@ export function createPlayer(options: PlayerOptions): Player {
         createdAt: Date.now(),
       };
       await putAudio(record);
-      return { key, url: remember(key, blob), blob, durationMs };
+      // The audio is in the cache now; a stop/seek that landed while it was
+      // rendering must not leave behind an object URL nothing will revoke.
+      if (gen !== generation) throw new AbortPlayback();
+      return remember({ key, blob, durationMs });
     })();
     inflight.set(key, job);
     try {
@@ -266,16 +310,63 @@ export function createPlayer(options: PlayerOptions): Player {
     }
   }
 
-  function prefetch(from: number, gen: number): void {
-    if (!canSynthesize) return; // a streaming voice renders as it speaks
-    const end = Math.min(items.length, from + PREFETCH_AHEAD);
-    for (let i = from; i < end; i++) {
+  /**
+   * The nearest upcoming sentence that still needs a clip. The look-ahead fills
+   * in order, so the sentence the reader will reach next is prepared first and a
+   * seek never waits behind a queue of later ones.
+   */
+  function nextPrefetchItem(): Item | null {
+    const end = Math.min(items.length, index + 1 + prefetchAhead);
+    for (let i = index + 1; i < end; i++) {
       const item = items[i];
       if (!item) continue;
-      if (states.get(item.id) === 'ready' || states.get(item.id) === 'generating') continue;
-      setState(item, 'queued');
-      void audioClipFor(item, gen).catch(() => {});
+      const known = states.get(item.id);
+      if (known === 'ready' || known === 'playing' || known === 'done' || known === 'error') continue;
+      return item;
     }
+    return null;
+  }
+
+  let prefetching = false;
+  let prefetchAgain = false;
+
+  /**
+   * Render the look-ahead one clip at a time. The engine is single-threaded, so
+   * starting N renders at once would put the sentence the reader is waiting for
+   * at the back of a long queue; the chain dies with its generation on a
+   * seek/stop and is restarted by the next play.
+   */
+  function prefetch(): void {
+    if (!canSynthesize) return; // a streaming voice renders as it speaks
+    if (prefetching) {
+      // A seek or an advance happened mid-chain: look again when this pass ends.
+      prefetchAgain = true;
+      return;
+    }
+    prefetching = true;
+    void (async () => {
+      try {
+        do {
+          prefetchAgain = false;
+          const gen = generation;
+          for (;;) {
+            const item = nextPrefetchItem();
+            if (!item) break;
+            setState(item, 'queued');
+            try {
+              await audioClipFor(item, gen);
+            } catch {
+              // Aborted by a seek/stop, or this clip failed: a queued pass (if
+              // any) starts over from wherever the queue is now.
+              break;
+            }
+            if (gen !== generation) break;
+          }
+        } while (prefetchAgain && canSynthesize);
+      } finally {
+        prefetching = false;
+      }
+    })();
   }
 
   function waitWhilePaused(gen: number): Promise<void> {
@@ -298,7 +389,12 @@ export function createPlayer(options: PlayerOptions): Player {
     if (known) return known;
     const spoken = item.spoken ?? item.text;
     if (!spoken.trim()) return Promise.resolve([]);
-    const job = wordTimings(clip.blob, spoken, clip.durationMs || 1).catch(() => estimateTimings(spoken, 1));
+    // A clip with no measurable duration (an empty or unknown-length WAV) has no
+    // word timing worth asking Whisper for: estimate from the text instead.
+    const job =
+      clip.durationMs > 1
+        ? wordTimings(clip.blob, spoken, clip.durationMs).catch(() => estimateTimings(spoken, 1))
+        : Promise.resolve(estimateTimings(spoken, 1));
     timings.set(item.id, job);
     return job;
   }
@@ -369,9 +465,12 @@ export function createPlayer(options: PlayerOptions): Player {
     const item = items[i]!;
     const clip = await audioClipFor(item, gen);
     if (gen !== generation) throw new AbortPlayback();
+    // Protect this clip's URL before the prefetch below can evict it: it is not
+    // loaded in the element yet, so evictOne would not know to spare it.
+    audioKey = clip.key;
     // The sentence the reader is waiting for must not queue behind prefetches:
     // only start rendering ahead once this clip exists.
-    prefetch(i + 1, gen);
+    prefetch();
     await waitWhilePaused(gen);
     if (gen !== generation) throw new AbortPlayback();
 
@@ -379,7 +478,6 @@ export function createPlayer(options: PlayerOptions): Player {
     detachClip();
     el.muted = false;
     el.src = clip.url;
-    audioKey = clip.key;
     audioUrl = clip.url;
 
     await new Promise<void>((resolve, reject) => {
@@ -425,7 +523,7 @@ export function createPlayer(options: PlayerOptions): Player {
   async function speakItem(i: number, gen: number): Promise<void> {
     const item = items[i]!;
     const spoken = item.spoken ?? item.text;
-    const text = (await expand(spoken)) || spoken;
+    const text = (await expand(spoken, engine.id)) || spoken;
     if (gen !== generation) throw new AbortPlayback();
     await waitWhilePaused(gen);
     if (gen !== generation) throw new AbortPlayback();

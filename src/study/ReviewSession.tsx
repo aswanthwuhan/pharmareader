@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { fsrs, type Grade } from 'ts-fsrs';
 import { db } from '../core/db';
 import type { CardRecord } from '../core/types';
-import { dueCards, fromFsrs, reviewCard } from './api';
+import { dueCards, fromFsrs, reviewCard, reviewNow, undoReview, type ReviewResult } from './api';
 import './study.css';
 
 /** Book rows carry the file blob and the parsed document, so load a title once. */
@@ -33,8 +33,11 @@ function formatGap(ms: number): string {
 }
 
 function previewIntervals(card: CardRecord): Record<number, string> {
-  const now = new Date();
-  const preview = scheduler.repeat(fromFsrs(card.fsrs), now);
+  const fsrsCard = fromFsrs(card.fsrs);
+  // Preview at the instant `rate` will use: ts-fsrs throws "Invalid delta_t" for
+  // a review dated before the card's own last_review, and this runs during render.
+  const now = reviewNow(fsrsCard.last_review);
+  const preview = scheduler.repeat(fsrsCard, now);
   const out: Record<number, string> = {};
   for (const { value } of RATINGS) {
     out[value] = formatGap(preview[value as Grade].card.due.getTime() - now.getTime());
@@ -94,7 +97,13 @@ export default function ReviewSession({ topicIds }: { topicIds?: string[] }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [loadToken, setLoadToken] = useState(0);
+  // The one rating that can still be taken back: its card as it was before,
+  // and what the rating wrote. Cleared by the next rating or by a reload.
+  const [lastRating, setLastRating] = useState<{ previous: CardRecord; result: ReviewResult } | null>(null);
   const mounted = useRef(true);
+  // `busy` only re-renders after the handler returns, so a second tap in the
+  // same tick would still read busy=false. The ref is the real in-flight guard.
+  const inFlight = useRef(false);
   const topicKey = topicIds?.join(',') ?? '';
 
   useEffect(() => {
@@ -113,12 +122,15 @@ export default function ReviewSession({ topicIds }: { topicIds?: string[] }) {
         setQueue(cards);
         setPos(0);
         setRevealed(false);
+        // A fresh queue renumbers positions, so the old undo target is gone.
+        setLastRating(null);
         setLoading(false);
       })
       .catch(() => {
         if (!alive) return;
         setQueue([]);
         setPos(0);
+        setLastRating(null);
         setLoading(false);
       });
     return () => {
@@ -161,17 +173,50 @@ export default function ReviewSession({ topicIds }: { topicIds?: string[] }) {
   }, [bookId]);
 
   async function rate(rating: 1 | 2 | 3 | 4) {
-    if (!current || busy) return;
+    if (!current || busy || inFlight.current) return;
+    inFlight.current = true;
+    const previous = current;
     setBusy(true);
     setError('');
     try {
-      await reviewCard(current.id, rating);
+      const result = await reviewCard(previous.id, rating);
       if (!mounted.current) return;
+      setLastRating({ previous, result });
       setRevealed(false);
       setPos((p) => p + 1);
     } catch {
       if (mounted.current) setError('That rating could not be saved. Try again.');
     } finally {
+      inFlight.current = false;
+      if (mounted.current) setBusy(false);
+    }
+  }
+
+  /** Put the last rated card back, unrevealed, and leave the rest of the session alone. */
+  async function undoLast() {
+    if (!lastRating || busy || inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true);
+    setError('');
+    try {
+      await undoReview(lastRating.result, lastRating.previous);
+      if (!mounted.current) return;
+      setLastRating(null);
+      setRevealed(false);
+      setPos((p) => Math.max(0, p - 1));
+    } catch (err) {
+      if (!mounted.current) return;
+      // A card changed or deleted since the rating can never be undone, so the
+      // undo is dropped instead of inviting a retry that cannot work.
+      const reason = err instanceof Error ? err.message : '';
+      if (/deleted|changed|belongs to/.test(reason)) {
+        setLastRating(null);
+        setError('That rating can no longer be undone: the card changed since.');
+      } else {
+        setError('That rating could not be undone. Try again.');
+      }
+    } finally {
+      inFlight.current = false;
       if (mounted.current) setBusy(false);
     }
   }
@@ -202,6 +247,19 @@ export default function ReviewSession({ topicIds }: { topicIds?: string[] }) {
 
   if (loading) return <p className="muted">Loading cards…</p>;
 
+  // One take-back, offered while it is still the last thing that happened.
+  const undoButton = lastRating ? (
+    <button
+      type="button"
+      className="btn btn-ghost review-undo"
+      aria-label="Undo last rating"
+      disabled={busy}
+      onClick={() => void undoLast()}
+    >
+      Undo
+    </button>
+  ) : null;
+
   if (!current) {
     // Pos is the number of ratings given; an empty queue straight away means nothing was rated.
     const rated = pos;
@@ -215,6 +273,7 @@ export default function ReviewSession({ topicIds }: { topicIds?: string[] }) {
             : 'No cards are due right now. Cards return when their interval ends; new cards come from highlights in the reader and from the Cards tab.'}
         </p>
         <div className="empty-state-actions">
+          {undoButton}
           <button
             type="button"
             className="btn btn-secondary"
@@ -232,7 +291,7 @@ export default function ReviewSession({ topicIds }: { topicIds?: string[] }) {
   const percentage = (done / queue.length) * 100;
 
   return (
-    <section className="review" aria-label="Review session">
+    <section className={lastRating ? 'review has-undo' : 'review'} aria-label="Review session">
       <div className="review-meter">
         <p className="review-status tnum" aria-live="polite">
           <span className="review-due">
@@ -317,6 +376,7 @@ export default function ReviewSession({ topicIds }: { topicIds?: string[] }) {
               </p>
             </>
           )}
+          {undoButton}
         </div>
       </div>
     </section>

@@ -4,12 +4,14 @@
  * top, then speed, stepping, play and the voice that will speak.
  *
  * The two popovers keep the sheet itself to a single row of controls; both are
- * dismissable with Escape, a tap outside, or the same button that opened them.
+ * dismissable with Escape, the Android back key, a tap outside, or the same
+ * button that opened them.
  * Generation status ("Generating sentence 15…", "2 ready ahead") lives under the
  * position line, so waiting is visible instead of looking like a stuck button.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { pushBackHandler } from '../core/backButton';
 import { Glyph, icons } from './Icon';
 
 export type PlayState = 'idle' | 'playing' | 'paused';
@@ -67,6 +69,10 @@ interface Props {
   onPrerender(): void;
   onCancelPrerender(): void;
   onPlayFromHere(): void;
+  /** Sleep timer ran out: pause where the voice is, do not stop or close. */
+  onSleepEnd(): void;
+  /** "End of chapter" is armed or disarmed, so the player can stop advancing. */
+  onSleepAtChapterEndChange(atEnd: boolean): void;
 }
 
 const RATE_MIN = 0.5;
@@ -74,6 +80,17 @@ const RATE_MAX = 2;
 const RATE_STEP = 0.05;
 /** The speeds most listeners actually use. Everything else lives on the slider. */
 const RATE_PRESETS = [0.75, 1, 1.25, 1.5, 2];
+
+/** Sleep timer choices. "End of chapter" is the one that is not a duration. */
+type SleepChoice = 'off' | '10' | '20' | '30' | 'end';
+
+const SLEEP_OPTIONS: { value: SleepChoice; text: string; label: string }[] = [
+  { value: 'off', text: 'Off', label: 'Sleep timer off' },
+  { value: '10', text: '10 min', label: 'Sleep timer 10 minutes' },
+  { value: '20', text: '20 min', label: 'Sleep timer 20 minutes' },
+  { value: '30', text: '30 min', label: 'Sleep timer 30 minutes' },
+  { value: 'end', text: 'Chapter end', label: 'Sleep timer end of chapter' },
+];
 
 function rateLabel(rate: number): string {
   return `${rate.toFixed(2).replace(/0$/, '')}×`;
@@ -102,10 +119,75 @@ export default function PlayerBar({
   onPrerender,
   onCancelPrerender,
   onPlayFromHere,
+  onSleepEnd,
+  onSleepAtChapterEndChange,
 }: Props) {
   const playing = state === 'playing';
   const busy = progress !== null;
   const [open, setOpen] = useState<'none' | 'speed' | 'more'>('none');
+  const [sleepChoice, setSleepChoice] = useState<SleepChoice>('off');
+  const [sleepEndsAt, setSleepEndsAt] = useState<number | null>(null);
+  const [sleepNow, setSleepNow] = useState(() => Date.now());
+
+  // Both callbacks are re-created by the reader on every render; keep the
+  // interval and the choice handler reading the current ones.
+  const sleepEnd = useRef(onSleepEnd);
+  sleepEnd.current = onSleepEnd;
+  const sleepAtChapterEnd = useRef(onSleepAtChapterEndChange);
+  sleepAtChapterEnd.current = onSleepAtChapterEndChange;
+  /** A one-shot "End of chapter" only resets once playback has actually run. */
+  const wasPlaying = useRef(false);
+
+  useEffect(() => {
+    if (sleepEndsAt === null) return;
+    // Re-check on a coarse tick: a minute is the resolution shown, and a phone
+    // that slept through ticks still fires on the first wake-up past the time.
+    const tick = () => {
+      const now = Date.now();
+      setSleepNow(now);
+      if (now < sleepEndsAt) return;
+      setSleepEndsAt(null);
+      setSleepChoice('off');
+      sleepEnd.current();
+    };
+    const id = window.setInterval(tick, 15_000);
+    return () => window.clearInterval(id);
+  }, [sleepEndsAt]);
+
+  // "End of chapter" is spent once the chapter finishes (or the reader stops),
+  // so the next chapter plays normally rather than stopping again at its end.
+  useEffect(() => {
+    if (state === 'playing') {
+      wasPlaying.current = true;
+      return;
+    }
+    if (state === 'paused' || sleepChoice !== 'end' || !wasPlaying.current) return;
+    // A picked passage ending is not the chapter ending: "Continue from here"
+    // still has to stop at the end of the chapter, so keep the one-shot armed.
+    if (selection !== null) return;
+    wasPlaying.current = false;
+    setSleepChoice('off');
+    sleepAtChapterEnd.current(false);
+  }, [state, sleepChoice, selection]);
+
+  function chooseSleep(choice: SleepChoice): void {
+    const now = Date.now();
+    setSleepNow(now);
+    setSleepChoice(choice);
+    wasPlaying.current = state === 'playing';
+    if (choice === 'off') {
+      setSleepEndsAt(null);
+      sleepAtChapterEnd.current(false);
+      return;
+    }
+    if (choice === 'end') {
+      setSleepEndsAt(null);
+      sleepAtChapterEnd.current(true);
+      return;
+    }
+    setSleepEndsAt(now + Number(choice) * 60_000);
+    sleepAtChapterEnd.current(false);
+  }
 
   useEffect(() => {
     if (open === 'none') return;
@@ -116,6 +198,17 @@ export default function PlayerBar({
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
 
+  // The Android back key dismisses the popover the way Escape does. Without
+  // this the press reaches the app bridge, which leaves the book: the sheet was
+  // the top layer, so it has to be the thing that closes.
+  useEffect(() => {
+    if (open === 'none') return;
+    return pushBackHandler(() => {
+      setOpen('none');
+      return true;
+    });
+  }, [open]);
+
   const percent =
     selection !== null
       ? selection.total > 0
@@ -124,6 +217,15 @@ export default function PlayerBar({
       : sentenceTotal > 0
         ? Math.round((sentenceNumber / sentenceTotal) * 100)
         : 0;
+
+  const minutesLeft = sleepEndsAt === null ? 0 : Math.max(1, Math.ceil((sleepEndsAt - sleepNow) / 60_000));
+  const sleepValue = sleepEndsAt !== null ? `${minutesLeft} min` : sleepChoice === 'end' ? 'Chapter end' : 'Off';
+  const sleepNote =
+    sleepEndsAt !== null
+      ? `Pauses in ${minutesLeft} ${minutesLeft === 1 ? 'minute' : 'minutes'}`
+      : sleepChoice === 'end'
+        ? 'Pauses at the end of this chapter'
+        : null;
 
   function togglePanel(panel: 'speed' | 'more'): void {
     setOpen((current) => (current === panel ? 'none' : panel));
@@ -333,6 +435,32 @@ export default function PlayerBar({
               <p className="rd-pop-note">Plays back with no waiting, and keeps working offline.</p>
             </div>
           ) : null}
+
+          <div className="rd-pop-slot">
+            <div className="rd-pop-head">
+              <span className="rd-pop-title">Sleep timer</span>
+              <span className="rd-pop-value">{sleepValue}</span>
+            </div>
+            <div className="rd-sleep-choices" role="group" aria-label="Sleep timer">
+              {SLEEP_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className="rd-preset"
+                  aria-label={option.label}
+                  aria-pressed={sleepChoice === option.value}
+                  onClick={() => chooseSleep(option.value)}
+                >
+                  {option.text}
+                </button>
+              ))}
+            </div>
+            {sleepNote !== null ? (
+              <p className="rd-pop-note rd-sleep-note" role="status">
+                {sleepNote}
+              </p>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>

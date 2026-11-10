@@ -9,12 +9,22 @@ import AiSettings from './AiSettings';
  * components must not crash and must show the right empty state.
  */
 describe('AI panels', () => {
-  it('shows the privacy notice and the key field in settings', () => {
+  it('keeps the privacy line and the switch while AI is off', () => {
     const html = renderToStaticMarkup(<AiSettings />);
     expect(html).toContain('Selected text is sent to the provider you choose.');
-    expect(html).toContain('type="password"');
-    expect(html).toContain('>Test<');
-    expect(html).toContain('>Custom<');
+    expect(html).toContain('Enable AI');
+    expect(html).toContain('Turn AI on to choose a provider and enter a key.');
+    // With AI off there is nothing to fill in yet, so the key field is not there.
+    expect(html).not.toContain('type="password"');
+  });
+
+  it('explains where the key goes and keeps the endpoints behind Advanced', () => {
+    const html = renderToStaticMarkup(<AiSettings />);
+    expect(html).toContain('<summary>Advanced</summary>');
+    expect(html).toContain('<summary>How this works</summary>');
+    expect(html).toContain('stored only on this device');
+    expect(html).toContain('id="ai-base-url"');
+    expect(html).toContain('id="ai-model"');
   });
 
   it('explains that AI is off and disables the actions', () => {

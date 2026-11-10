@@ -1,9 +1,9 @@
 /**
  * Audio cache contract: hash-addressed pre-rendered speech in IndexedDB.
  *
- * Key = SHA-256(text + engine + voice + rate + lexicon version), so editing the
- * lexicon or changing voice/rate misses the old entries instead of replaying a
- * clip that says the wrong thing.
+ * Key = SHA-256(text + engine + voice + rate). The text is the lexicon-expanded
+ * sentence, so a rule that changes how a sentence is said changes its key and
+ * misses the old entry; a rule that does not touch the sentence keeps it.
  */
 import { db } from '../core/db';
 import type { AudioCacheRecord } from '../core/types';
@@ -22,10 +22,9 @@ export async function cacheKey(
   engineId: string,
   voiceId: string | undefined,
   rate: number,
-  lexVersion: string,
 ): Promise<string> {
   // NUL separators: no field can contain one, so the tuple is unambiguous.
-  return sha256Hex([engineId, voiceId ?? '', String(rate), lexVersion, text].join('\u0000'));
+  return sha256Hex([engineId, voiceId ?? '', String(rate), text].join('\u0000'));
 }
 
 export async function getAudio(key: string): Promise<AudioCacheRecord | undefined> {
@@ -36,20 +35,74 @@ export async function getAudio(key: string): Promise<AudioCacheRecord | undefine
 export const DEFAULT_MAX_CACHE_BYTES = 300 * 1024 * 1024;
 
 /**
+ * Bytes currently stored, or `null` until the first `cacheSizeBytes()` call
+ * fills it from the whole table. Every write path below keeps it in step, so
+ * storing a clip never reads the table (a chapter pre-render would otherwise
+ * pay one full scan per sentence).
+ */
+let audioBytes: number | null = null;
+
+/** Forget the memoised total: for tests, and after the DB is deleted behind us. */
+export function resetAudioSizeCache(): void {
+  audioBytes = null;
+}
+
+/**
+ * One write at a time. A playback prefetch and a pre-render can render the same
+ * sentence together: each reads the row before the other stores it, and each
+ * then adds the clip's bytes, so the total would count it twice and the next
+ * prune would evict clips that fit. The first scan also has to be inside the
+ * queue, otherwise a put's delta can land on top of a total another read just
+ * filled from the table.
+ */
+let audioQueue: Promise<unknown> = Promise.resolve();
+
+function queueAudio<T>(job: () => Promise<T>): Promise<T> {
+  const run = audioQueue.then(job, job);
+  // A failed write must not wedge every later one: the chain itself stays set.
+  audioQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+/** Sum the table into `audioBytes`; only called from inside the queue. */
+async function loadAudioBytes(): Promise<number> {
+  if (audioBytes === null) {
+    let total = 0;
+    for (const rec of await db.audioCache.toArray()) total += rec.audio.size ?? 0;
+    audioBytes = total;
+  }
+  return audioBytes;
+}
+
+/**
  * Store a clip, then evict the oldest ones until the cache is back under budget.
- * Rows are keyed by lexicon hash, so an edited rule leaves the old row behind
- * forever unless something prunes it; this is that something.
+ * Rows are keyed by content hash, so an edited sentence leaves the old row
+ * behind forever unless something prunes it; this is that something.
  *
  * Returns the record through unchanged so callers can await it as before.
  */
-export async function putAudio(rec: AudioCacheRecord, maxBytes = DEFAULT_MAX_CACHE_BYTES): Promise<void> {
-  await db.audioCache.put(rec);
-  // Storage pressure must never fail playback: the clip is already stored.
-  try {
-    await pruneAudio(maxBytes);
-  } catch {
-    /* IndexedDB quota/lock errors are not a reason to stop the sentence */
-  }
+export function putAudio(rec: AudioCacheRecord, maxBytes = DEFAULT_MAX_CACHE_BYTES): Promise<void> {
+  return queueAudio(async () => {
+    // A key can be rewritten (two callers rendered the same sentence at once), so
+    // subtract what the row held before: one row read, never a table scan.
+    const previous = audioBytes === null ? undefined : await getAudio(rec.key);
+    await db.audioCache.put(rec);
+    if (audioBytes === null) {
+      // First write of the session: one scan gives an exact total, row included.
+      await loadAudioBytes();
+    } else {
+      audioBytes = Math.max(0, audioBytes + (rec.audio.size ?? 0) - (previous?.audio.size ?? 0));
+    }
+    // Storage pressure must never fail playback: the clip is already stored.
+    try {
+      await pruneAudioNow(maxBytes);
+    } catch {
+      /* IndexedDB quota/lock errors are not a reason to stop the sentence */
+    }
+  });
 }
 
 /**
@@ -57,8 +110,12 @@ export async function putAudio(rec: AudioCacheRecord, maxBytes = DEFAULT_MAX_CAC
  * `createdAt` is indexed in the core schema, so this is one index walk.
  * Returns the number of bytes freed.
  */
-export async function pruneAudio(maxBytes = DEFAULT_MAX_CACHE_BYTES): Promise<number> {
-  const total = await cacheSizeBytes();
+export function pruneAudio(maxBytes = DEFAULT_MAX_CACHE_BYTES): Promise<number> {
+  return queueAudio(() => pruneAudioNow(maxBytes));
+}
+
+async function pruneAudioNow(maxBytes: number): Promise<number> {
+  const total = await loadAudioBytes();
   if (total <= maxBytes) return 0;
 
   let freed = 0;
@@ -69,24 +126,33 @@ export async function pruneAudio(maxBytes = DEFAULT_MAX_CACHE_BYTES): Promise<nu
     freed += rec.audio.size ?? 0;
   }
   if (doomed.length > 0) await db.audioCache.bulkDelete(doomed);
+  audioBytes = Math.max(0, total - freed);
   return freed;
 }
 
 /** Drop cached audio for one engine, or everything when no engine is given. */
-export async function clearAudio(engineId?: string): Promise<void> {
-  if (engineId === undefined) {
-    await db.audioCache.clear();
-    return;
-  }
-  // `engine` is not indexed (schema is owned by core), so filter the keys.
-  const keys = await db.audioCache.filter((r) => r.engine === engineId).primaryKeys();
-  await db.audioCache.bulkDelete(keys);
+export function clearAudio(engineId?: string): Promise<void> {
+  return queueAudio(async () => {
+    if (engineId === undefined) {
+      await db.audioCache.clear();
+      audioBytes = 0;
+      return;
+    }
+    // `engine` is not indexed (schema is owned by core), so filter the table.
+    const rows = await db.audioCache.filter((r) => r.engine === engineId).toArray();
+    await db.audioCache.bulkDelete(rows.map((r) => r.key));
+    if (audioBytes !== null) {
+      for (const row of rows) audioBytes -= row.audio.size ?? 0;
+      audioBytes = Math.max(0, audioBytes);
+    }
+  });
 }
 
 export async function cacheSizeBytes(): Promise<number> {
-  let total = 0;
-  for (const rec of await db.audioCache.toArray()) total += rec.audio.size ?? 0;
-  return total;
+  // Reading a known total is not a mutation; only the first fill must wait for
+  // any put in flight, or it could scan a table and then be adjusted again.
+  if (audioBytes !== null) return audioBytes;
+  return queueAudio(loadAudioBytes);
 }
 
 /**

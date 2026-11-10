@@ -8,7 +8,7 @@
  * Long chapters (a PDF fallback page can be ~1500 sentences) render a window
  * around the cursor — see `windowRange` — and grow it as the reader moves.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { Chapter, Highlight } from '../core/types';
 import { windowRange, type FlatSentence } from './sentences';
 
@@ -44,6 +44,54 @@ const PRESS_SLOP_PX = 10;
 const WINDOW_RADIUS = 200;
 /** Grow the window before the reader actually reaches its edge. */
 const GROW_AHEAD = 20;
+
+interface SentenceProps {
+  id: string;
+  text: string;
+  className: string;
+  /** Highlight colour, when this sentence has one. */
+  hl?: string;
+  /**
+   * Character offset of the spoken word, but only for the sentence being
+   * spoken. Every other sentence gets null, so a karaoke tick re-renders one
+   * span instead of the whole chapter. `undefined` is not used: memo compares
+   * it loosely with null anyway, and one sentinel keeps the props flat.
+   */
+  charIndex: number | null;
+}
+
+/** Split a sentence around the spoken word so only that word is marked. */
+function marked(text: string, charIndex: number) {
+  // The player reports a character inside the word; take the whole word so the
+  // underline never starts halfway through a token.
+  let start = Math.min(Math.max(0, charIndex), Math.max(0, text.length - 1));
+  while (start > 0 && !/\s/.test(text[start - 1]!)) start -= 1;
+  let end = start;
+  while (end < text.length && !/\s/.test(text[end]!)) end += 1;
+  if (end === start) return text;
+  return (
+    <>
+      {text.slice(0, start)}
+      <mark className="rd-word">{text.slice(start, end)}</mark>
+      {text.slice(end)}
+    </>
+  );
+}
+
+/**
+ * One sentence. Memoised on plain values so the parent re-rendering for any
+ * reason (a spoken word, a highlight, the window growing) only touches the
+ * sentences whose own class, colour or word mark actually changed.
+ */
+const Sentence = memo(function Sentence({ id, text, className, hl, charIndex }: SentenceProps) {
+  return (
+    <span className={className} data-sid={id} data-hl={hl}>
+      {charIndex === null ? text : marked(text, charIndex)}
+      {' '}
+    </span>
+  );
+});
+
 
 export default function ReflowView({
   chapter,
@@ -190,25 +238,6 @@ export default function ReflowView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** Split a sentence around the spoken word so only that word is marked. */
-  function spoken(text: string, id: string) {
-    if (!wordHighlight || !wordChar || wordChar.id !== id) return text;
-    // The player reports a character inside the word; take the whole word so the
-    // underline never starts halfway through a token.
-    let start = Math.min(Math.max(0, wordChar.charIndex), Math.max(0, text.length - 1));
-    while (start > 0 && !/\s/.test(text[start - 1]!)) start -= 1;
-    let end = start;
-    while (end < text.length && !/\s/.test(text[end]!)) end += 1;
-    if (end === start) return text;
-    return (
-      <>
-        {text.slice(0, start)}
-        <mark className="rd-word">{text.slice(start, end)}</mark>
-        {text.slice(end)}
-      </>
-    );
-  }
-
   function spans(block: Chapter['blocks'][number]) {
     return block.sentences
       .filter((sentence) => {
@@ -221,10 +250,18 @@ export default function ReflowView({
         if (sentence.id === readingId) classes.push('reading');
         if (sentence.id === generatingId) classes.push('generating');
         if (selectedSet.has(sentence.id)) classes.push('selected');
+        // Only the spoken sentence is handed the offset, so the memo above can
+        // skip every other span when the word moves.
+        const charIndex = wordHighlight !== false && wordChar?.id === sentence.id ? wordChar.charIndex : null;
         return (
-          <span key={sentence.id} className={classes.join(' ')} data-sid={sentence.id} data-hl={highlight?.color}>
-            {spoken(sentence.text, sentence.id)}{' '}
-          </span>
+          <Sentence
+            key={sentence.id}
+            id={sentence.id}
+            text={sentence.text}
+            className={classes.join(' ')}
+            hl={highlight?.color}
+            charIndex={charIndex}
+          />
         );
       });
   }

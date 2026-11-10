@@ -2,7 +2,8 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { db } from '../core/db';
-import { createCard } from './api';
+import { createCard, fromFsrs, toFsrs } from './api';
+import { State } from 'ts-fsrs';
 import ReviewSession from './ReviewSession';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -103,5 +104,104 @@ describe('ReviewSession keyboard shortcuts', () => {
     });
 
     expect(await db.reviewLogs.where('cardId').equals(card.id).count()).toBe(1);
+  });
+});
+
+describe('ReviewSession previews', () => {
+  it('previews and rates a card whose last review is ahead of the clock', async () => {
+    // A clock moved back after a rating leaves last_review in the future. ts-fsrs
+    // counts the gap in whole UTC days, so it refuses a card dated two days ahead
+    // with "Invalid delta_t" — in `repeat()` too, which runs while rendering.
+    const ahead = new Date(Date.now() + 48 * 60 * 60 * 1000);
+    const card = await createCard({
+      front: 'Q',
+      back: 'A',
+      kind: 'qa',
+      fsrs: toFsrs(
+        fromFsrs({
+          due: new Date(Date.now() - 60_000).toISOString(),
+          last_review: ahead.toISOString(),
+          state: State.Review,
+          reps: 3,
+          stability: 10,
+          difficulty: 5,
+          scheduled_days: 3,
+        }),
+      ),
+    });
+
+    await mountSession();
+    await key(document.body, ' ');
+    const good = [...container.querySelectorAll<HTMLButtonElement>('.review-rate')].find((button) =>
+      button.textContent?.includes('Good'),
+    );
+    // The four interval previews are computed and labelled.
+    expect(good?.getAttribute('aria-label')).toMatch(/^Good, next review in \d+[a-z]/);
+
+    await key(document.body, '3');
+    await waitForText('Session complete');
+    expect(await db.reviewLogs.where('cardId').equals(card.id).count()).toBe(1);
+  });
+});
+
+describe('ReviewSession undo and double taps', () => {
+  const ratingButton = (label: string): HTMLButtonElement => {
+    const button = [...container.querySelectorAll<HTMLButtonElement>('.review-rate')].find((candidate) =>
+      candidate.textContent?.includes(label),
+    );
+    if (!button) throw new Error(`no ${label} rating button; saw "${container.textContent ?? ''}"`);
+    return button;
+  };
+
+  it('offers no undo until something has been rated', async () => {
+    await createCard({ front: 'Q', back: 'A', kind: 'qa' });
+    await mountSession();
+    expect(container.querySelector('button[aria-label="Undo last rating"]')).toBeNull();
+  });
+
+  it('puts the rated card back unrevealed and deletes the log it wrote', async () => {
+    const card = await createCard({ front: 'Q', back: 'A', kind: 'qa' });
+    const before = await db.cards.get(card.id);
+    await mountSession();
+
+    await key(document.body, ' ');
+    await key(document.body, '3');
+    await waitForText('Session complete');
+
+    const undo = container.querySelector<HTMLButtonElement>('button[aria-label="Undo last rating"]');
+    expect(undo).not.toBeNull();
+    await act(async () => {
+      undo?.click();
+    });
+    await waitForText('Show answer');
+
+    // The same card is current again, and it is not revealed.
+    expect(container.textContent).toContain('Card 1 of 1');
+    expect(container.textContent).toContain('Q');
+    expect(container.textContent).not.toContain('Again');
+    // Nothing left to take back, and the rating is gone from storage.
+    expect(container.querySelector('button[aria-label="Undo last rating"]')).toBeNull();
+    expect(await db.cards.get(card.id)).toEqual(before);
+    expect(await db.reviewLogs.where('cardId').equals(card.id).count()).toBe(0);
+  });
+
+  it('records one review when a rating is clicked twice in the same tick', async () => {
+    const card = await createCard({ front: 'Q', back: 'A', kind: 'qa' });
+    await mountSession();
+    await key(document.body, ' ');
+    const good = ratingButton('Good');
+
+    await act(async () => {
+      good.click();
+      good.click();
+    });
+    await waitForText('Session complete');
+    // Let a second rating settle if the guard let one through.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+
+    expect(await db.reviewLogs.where('cardId').equals(card.id).count()).toBe(1);
+    expect(container.textContent).toContain('You rated 1 card');
   });
 });

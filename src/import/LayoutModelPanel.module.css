@@ -1,7 +1,9 @@
 /* Smart PDF layout.
    Shape, colour and buttons come from the app's tokens and the global .btn /
    .banner / .progress / .status-chip rules; this file only arranges one model
-   card and the card's two jobs (download it, re-read the books it missed). */
+   block and the block's two jobs (download it, re-read the books it missed).
+   The Settings page already draws the surface, so the block has no card of its
+   own — just its rows. */
 
 .panel {
   display: grid;
@@ -16,13 +18,30 @@
   color: var(--muted);
 }
 
-.card {
+/* Name, state, size, one action, the choice — nothing that needs opening. */
+.block {
   display: grid;
   gap: var(--space-3);
-  padding: var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
+}
+
+/* The opened half: measured numbers and the books already in the library. */
+.advanced,
+.explain {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.explain {
+  gap: var(--space-2);
+}
+
+.explain p {
+  margin: 0;
+  max-width: var(--measure-ui);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  color: var(--muted);
+  text-wrap: pretty;
 }
 
 /* Name, what it detects, and the one action that moves it forward. */
@@ -42,11 +61,6 @@
   line-height: var(--lh-snug);
   letter-spacing: var(--ls-tight);
   color: var(--text);
-}
-
-.qualifier {
-  font-size: var(--fs-xs);
-  color: var(--muted);
 }
 
 .actions {
@@ -166,8 +180,6 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border);
 }
 
 .speedResult {
@@ -216,8 +228,6 @@
   display: grid;
   justify-items: start;
   gap: var(--space-2);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border);
 }
 
 .redo .btn {
@@ -237,7 +247,7 @@
   color: var(--text);
 }
 
-.attribution {
+.explain .attribution {
   margin: 0;
   font-size: var(--fs-2xs);
   color: var(--muted);

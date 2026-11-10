@@ -5,12 +5,15 @@
  * everything here: which chapter is shown, which sentence is highlighted, where
  * playback starts and what `lastPos` stores.
  */
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../core/db';
+import { pushBackHandler } from '../core/backButton';
 import { getSetting, setSetting, useSetting } from '../core/settings';
 import type { BookRecord, Highlight } from '../core/types';
+import { nativePlayback } from '../tts/native/playbackPlugin';
+import { setImmersive } from '../tts/native/systemUi';
 import { createPlayer, type ItemState, type Player } from '../tts/player';
 import { describeEngine, ENGINE_SETTING, warmEngine, type EngineInfo } from '../tts/registry';
 import { prerenderChapter } from '../tts/neural/prerender';
@@ -32,12 +35,14 @@ import PlayerBar, { type PageNav, type PlayState } from './PlayerBar';
 import SelectionBar, { type HighlightColor } from './SelectionBar';
 import { Glyph, icons } from './Icon';
 import ReflowView from './ReflowView';
+import { LAST_BOOK_KEY } from './lastBook';
 import {
   DEFAULT_PAUSE_MS,
   PAUSE_KEY,
   planChapter,
   planSelection,
   skippedLabel,
+  usePrefetchAhead,
   useSkipOptions,
   WORD_HIGHLIGHT_KEY,
   type ChapterPlan,
@@ -70,6 +75,9 @@ const LINE_HEIGHTS = [1.5, 1.7, 1.9];
 const LINE_LABELS = ['Tight', 'Normal', 'Relaxed'];
 const SAVE_POS_MS = 700;
 const RATE_RESTART_MS = 350;
+/** How long the floating exit control stays visible after entering or a tap. */
+const IMMERSIVE_HINT_MS = 3000;
+const FULLSCREEN_KEY = 'reader.fullscreen';
 
 /**
  * What the player calls the voice in her ear. Engine ids and class names mean
@@ -119,6 +127,10 @@ interface SelectionPlay {
 
 export default function ReaderView() {
   const { bookId } = useParams<{ bookId: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  // The library opens a book at /read/<id>?play=1 ("Continue listening").
+  const wantsAutoPlay = searchParams.get('play') === '1';
+  const autoPlayed = useRef(false);
 
   // Loaded once, not live: the record includes `parsed` (and the original
   // file), so a live query would re-read the whole book on every position save.
@@ -133,6 +145,7 @@ export default function ReaderView() {
   const skip = useSkipOptions();
   const wordHighlight = useSetting<boolean>(WORD_HIGHLIGHT_KEY, true);
   const pauseMs = useSetting<number>(PAUSE_KEY, DEFAULT_PAUSE_MS);
+  const prefetchAhead = usePrefetchAhead();
 
   const [cursor, setCursor] = useState<Pos | null>(null);
   const [mode, setMode] = useState<'text' | 'page'>('text');
@@ -159,6 +172,12 @@ export default function ReaderView() {
   const [cursorOnScreen, setCursorOnScreen] = useState(true);
   /** Which screen of text is showing, for the page buttons label. */
   const [screen, setScreen] = useState({ at: 1, total: 1 });
+  /** Full screen hides the reader's own chrome and asks Android to hide its bars. */
+  const [fullscreen, setFullscreen] = useState(false);
+  /** In full screen the bar, dock and chapter nav can be summoned by a tap. */
+  const [chromeVisible, setChromeVisible] = useState(true);
+  /** The floating exit control, shown for a moment after entering or a tap. */
+  const [exitHint, setExitHint] = useState(false);
 
   const index = useMemo(() => (book ? indexBook(book.parsed) : null), [book?.parsed]);
   const highlightsFor = useLiveQuery(async () => (bookId ? listHighlights(bookId) : []), [bookId]);
@@ -182,6 +201,11 @@ export default function ReaderView() {
   cursorOnScreenRef.current = cursorOnScreen;
   const playStateRef = useRef<PlayState>(playState);
   playStateRef.current = playState;
+  const fullscreenRef = useRef(fullscreen);
+  fullscreenRef.current = fullscreen;
+  /** The saved choice is re-applied once per open, not on every render. */
+  const fullscreenRestored = useRef(false);
+  const hintTimer = useRef<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const restored = useRef(false);
   const lastSavedKey = useRef('');
@@ -196,10 +220,15 @@ export default function ReaderView() {
   pauseRef.current = pauseMs;
   const wordRef = useRef(wordHighlight);
   wordRef.current = wordHighlight;
+  // The look-ahead size is read when a player is created, like rate/voice.
+  const prefetchRef = useRef(prefetchAhead);
+  prefetchRef.current = prefetchAhead;
   /** Plans are pure and cheap-ish; a chapter is planned once per settings change. */
   const planCache = useRef(new Map<string, ChapterPlan>());
   /** True while the page number came from the spoken sentence, not from a tap. */
   const pageFromCursor = useRef(false);
+  /** The sleep timer's "End of chapter": stop instead of auto-advancing. */
+  const sleepAtChapterEnd = useRef(false);
 
   const chapterIndex = cursor?.chapterIndex ?? 0;
   const chapter = book?.parsed.chapters[chapterIndex];
@@ -231,11 +260,18 @@ export default function ReaderView() {
 
   // -- position ------------------------------------------------------------
 
-  /** Hand the latest reading position back to the library (one write, not one per sentence). */
+  /**
+   * Hand the latest reading position back to the library (one write, not one
+   * per sentence) and make sure the settings copy is on its way too. Both are
+   * started here, synchronously: `pagehide` may never give a timer its turn.
+   */
   function flushBookPos(): void {
     const pending = pendingPos.current;
     if (!pending) return;
     pendingPos.current = null;
+    void setSetting(lastPosKey(pending.bookId), pending.pos).catch(() => {
+      // A convenience only: never fail closing a book over it.
+    });
     void db.books.update(pending.bookId, { lastPos: pending.pos }).catch(() => {
       // The position is a convenience; a failed write must never break reading.
     });
@@ -244,6 +280,7 @@ export default function ReaderView() {
   useEffect(() => {
     let alive = true;
     restored.current = false;
+    fullscreenRestored.current = false;
     lastSavedKey.current = '';
     setBook(undefined);
     setCursor(null);
@@ -287,6 +324,12 @@ export default function ReaderView() {
         const sentence = sentenceAt(index, pos);
         if (sentence) lastSavedKey.current = `${parsed.chapters[pos.chapterIndex]?.id ?? ''}:${sentence.id}`;
         setCursor(pos);
+        // The library's "Continue listening" button needs one cheap pointer to
+        // the last book. Written here, after the position read has resolved, so
+        // the write never races the restore (the read stays first and immediate).
+        void setSetting(LAST_BOOK_KEY, { bookId: book.id, at: Date.now() }).catch(() => {
+          // A convenience only: never fail opening a book over it.
+        });
       });
 
     return () => {
@@ -300,13 +343,16 @@ export default function ReaderView() {
     if (!sentence) return;
     const chapterId = book.parsed.chapters[cursor.chapterIndex]?.id ?? '';
     const key = `${chapterId}:${sentence.id}`;
-    if (lastSavedKey.current === key) return;
-
     const id = book.id;
     const pos: SavedPos = { chapterId, sentenceId: sentence.id };
+    // Remember the move at once, not after the debounce: a reader who leaves
+    // within SAVE_POS_MS must still come back to where they stopped, and the
+    // unmount/pagehide flush reads this ref. This happens even for a sentence
+    // settings already holds: the ref is what the close flush writes.
+    pendingPos.current = { bookId: id, pos };
+    if (lastSavedKey.current === key) return;
     const timer = window.setTimeout(() => {
       lastSavedKey.current = key;
-      pendingPos.current = { bookId: id, pos };
       void setSetting(lastPosKey(id), pos);
     }, SAVE_POS_MS);
     return () => window.clearTimeout(timer);
@@ -322,6 +368,124 @@ export default function ReaderView() {
   useEffect(() => {
     window.scrollTo?.({ top: 0 });
   }, [chapterIndex]);
+
+  // -- full screen ---------------------------------------------------------
+
+  /** Keep the floating exit control on screen for a moment. */
+  function showExitHint(): void {
+    if (!fullscreenRef.current) return;
+    setExitHint(true);
+    if (hintTimer.current !== null) window.clearTimeout(hintTimer.current);
+    hintTimer.current = window.setTimeout(() => {
+      hintTimer.current = null;
+      setExitHint(false);
+    }, IMMERSIVE_HINT_MS);
+  }
+
+  function exitFullscreen(): void {
+    setFullscreen(false);
+    void setSetting(FULLSCREEN_KEY, false).catch(() => {});
+  }
+
+  function toggleFullscreen(): void {
+    if (fullscreenRef.current) {
+      exitFullscreen();
+      return;
+    }
+    setFullscreen(true);
+    void setSetting(FULLSCREEN_KEY, true).catch(() => {});
+  }
+
+  // Re-enter the mode the reader left in, once per open. Applied after the book
+  // loads (and after the first paint), so a browser that refuses the request
+  // still shows the reader normally.
+  useEffect(() => {
+    if (!book || fullscreenRestored.current) return;
+    fullscreenRestored.current = true;
+    let alive = true;
+    void getSetting<boolean>(FULLSCREEN_KEY, false)
+      .catch(() => false)
+      .then((on) => {
+        if (alive && on) setFullscreen(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [book]);
+
+  useEffect(() => {
+    if (!fullscreen) {
+      setChromeVisible(true);
+      setExitHint(false);
+      return;
+    }
+    // The platform bars go away with the reader's own: ask Android (or the
+    // Fullscreen API on the web), and show the exit pill before the first tap.
+    // setImmersive never throws, but a broken WebView must not break reading.
+    void setImmersive(true).catch(() => {});
+    setChromeVisible(false);
+    showExitHint();
+    return () => {
+      if (hintTimer.current !== null) {
+        window.clearTimeout(hintTimer.current);
+        hintTimer.current = null;
+      }
+      // Leaving the reader or leaving full screen: give the bars back.
+      void setImmersive(false).catch(() => {});
+    };
+    // showExitHint only reads refs and sets state; re-running on its identity
+    // would re-request immersion on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fullscreen]);
+
+  // The browser can leave full screen on its own: Escape, a swipe from the screen
+  // edge, the system handing the screen to another window. Follow it, or the reader
+  // would stay chromeless with the toggle still lit and the mode still remembered.
+  useEffect(() => {
+    if (!fullscreen) return;
+    function sync(): void {
+      if (document.fullscreenElement) return;
+      exitFullscreen();
+    }
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+    // exitFullscreen only touches refs and state setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fullscreen]);
+
+  // Back leaves full screen before it leaves the reader. A sheet that is open
+  // still closes first: its handler is registered later, so it runs first.
+  useEffect(() => {
+    if (!fullscreen) return;
+    return pushBackHandler(() => {
+      if (aiText !== null || typeOpen || drawer !== 'none' || selection) return false;
+      exitFullscreen();
+      return true;
+    });
+    // exitFullscreen only touches refs and state setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fullscreen, aiText, typeOpen, drawer, selection]);
+
+  /**
+   * In full screen the bar, dock and chapter nav are gone; a tap on blank space
+   * brings them back (a second tap puts them away). A tap on a sentence or a
+   * control does what it always did.
+   */
+  function onImmersiveClick(event: ReactMouseEvent<HTMLElement>): void {
+    if (!fullscreenRef.current) return;
+    const target = event.target as HTMLElement;
+    // Any tap re-surfaces the way out, even when it is a sentence tap.
+    showExitHint();
+    // Tapping the chrome or a sentence is not a request to toggle the chrome.
+    if (
+      target.closest(
+        '.rd-s, button, a, input, label, select, textarea, .rd-sheet, .rd-select, .rd-bar, .rd-dock, .rd-chapter-nav'
+      )
+    ) {
+      return;
+    }
+    setChromeVisible((visible) => !visible);
+  }
 
   // Resolve the engine before the first tap for two reasons: the Play handler
   // must call player.play() synchronously (autoplay gesture), and a slow model
@@ -384,7 +548,10 @@ export default function ReaderView() {
     const measure = () => {
       const height = Math.max(1, window.innerHeight);
       const total = Math.max(1, Math.ceil(document.documentElement.scrollHeight / height));
-      setScreen({ at: Math.min(total, Math.round(window.scrollY / height) + 1), total });
+      const at = Math.min(total, Math.round(window.scrollY / height) + 1);
+      // Scrolling fires this on every frame; a new object would re-render the
+      // whole reader (and the chapter) for a label that did not change.
+      setScreen((prev) => (prev.at === at && prev.total === total ? prev : { at, total }));
     };
     measure();
     window.addEventListener('scroll', measure, { passive: true });
@@ -423,6 +590,69 @@ export default function ReaderView() {
     const target = planFor(ci);
     if (!target) return [];
     return target.items.map((item) => ({ id: item.id, text: item.spoken ?? item.text }));
+  }
+
+  /**
+   * The player wiring both playback modes share: engine, voice, rate, and every
+   * callback. `mine` is the generation that created the player, so a released
+   * one can never write into the screen. Callers add only what makes their mode
+   * different: where the cursor follows, and what happens at the end.
+   */
+  function startPlayer(
+    info: EngineInfo,
+    items: ChapterPlan['items'],
+    startIndex: number,
+    mine: number,
+    onSentence: (id: string) => void,
+    onDone: () => void,
+  ): Player {
+    return createPlayer({
+      engine: info.engine,
+      items,
+      startIndex,
+      voiceId: voiceRef.current || undefined,
+      rate: rateRef.current,
+      prefetchAhead: prefetchRef.current,
+      // Fires only when this sentence's audio actually starts (B1).
+      onSentence: (id) => {
+        if (mine !== generation.current) return;
+        setWord(null);
+        onSentence(id);
+      },
+      onItemState: (id, state) => {
+        if (mine !== generation.current) return;
+        setItemStates((current) => {
+          const next = new Map(current);
+          next.set(id, state);
+          return next;
+        });
+      },
+      onBuffer: (count) => {
+        if (mine !== generation.current) return;
+        setReadyAhead(count);
+      },
+      onWord: (id, charIndex) => {
+        if (mine !== generation.current || !wordRef.current) return;
+        setWord({ id, charIndex });
+      },
+      onDone: () => {
+        if (mine !== generation.current) return;
+        onDone();
+      },
+      onError: (err, id) => {
+        if (mine !== generation.current) return;
+        // A browser that blocks the programmatic start ("Continue listening" is
+        // not a tap on this screen) is not an error to shout about: release the
+        // player, keep the position, and let the Play button start it.
+        if (/notallowederror|not allowed/i.test(err.message)) {
+          releasePlayer();
+          return;
+        }
+        setPlayState('idle');
+        setError(err.message);
+        if (id) setFailed({ id, message: err.message });
+      },
+    });
   }
 
   /**
@@ -472,51 +702,26 @@ export default function ReaderView() {
     setReadyAhead(0);
     setWord(null);
 
-    const player = createPlayer({
-      engine: info.engine,
-      items: target.items,
-      startIndex: queueIndex,
-      voiceId: voiceRef.current || undefined,
-      rate: rateRef.current,
-      // Fires only when this sentence's audio actually starts (B1).
-      onSentence: (id) => {
-        if (mine !== generation.current) return;
+    const player = startPlayer(
+      info,
+      target.items,
+      queueIndex,
+      mine,
+      (id) => {
         const pos = index.byId.get(id);
         if (pos) setCursor(pos);
-        setWord(null);
       },
-      onItemState: (id, state) => {
-        if (mine !== generation.current) return;
-        setItemStates((current) => {
-          const next = new Map(current);
-          next.set(id, state);
-          return next;
-        });
-      },
-      onBuffer: (count) => {
-        if (mine !== generation.current) return;
-        setReadyAhead(count);
-      },
-      onWord: (id, charIndex) => {
-        if (mine !== generation.current || !wordRef.current) return;
-        setWord({ id, charIndex });
-      },
-      onDone: () => {
-        if (mine !== generation.current) return;
+      () => {
         const nextInfo = engineRef.current ?? info;
-        if (chapterIdx + 1 < index.chapters.length) {
+        // The sleep timer's "End of chapter" stops here instead of carrying on
+        // into the next chapter.
+        if (chapterIdx + 1 < index.chapters.length && !sleepAtChapterEnd.current) {
           beginPlayback(nextInfo, chapterIdx + 1, 0);
           return;
         }
         setPlayState('idle');
-      },
-      onError: (err, id) => {
-        if (mine !== generation.current) return;
-        setPlayState('idle');
-        setError(err.message);
-        if (id) setFailed({ id, message: err.message });
-      },
-    });
+      }
+    );
     playerRef.current = player;
     setPlayState('playing');
     // Move the page to what is being spoken now, not when the first clip is
@@ -558,52 +763,26 @@ export default function ReaderView() {
     setReadyAhead(0);
     setWord(null);
 
-    const player = createPlayer({
-      engine: info.engine,
+    const player = startPlayer(
+      info,
       items,
-      startIndex: 0,
-      voiceId: voiceRef.current || undefined,
-      rate: rateRef.current,
-      onSentence: (id) => {
-        if (mine !== generation.current) return;
+      0,
+      mine,
+      (id) => {
         const pos = index.byId.get(id);
         if (pos) setCursor(pos);
-        setWord(null);
         const at = positions.get(id);
         if (at === undefined) return;
         setSelectionPlay((current) => (current ? { ...current, at: at + 1 } : current));
       },
-      onItemState: (id, state) => {
-        if (mine !== generation.current) return;
-        setItemStates((current) => {
-          const next = new Map(current);
-          next.set(id, state);
-          return next;
-        });
-      },
-      onBuffer: (count) => {
-        if (mine !== generation.current) return;
-        setReadyAhead(count);
-      },
-      onWord: (id, charIndex) => {
-        if (mine !== generation.current || !wordRef.current) return;
-        setWord({ id, charIndex });
-      },
-      onDone: () => {
-        if (mine !== generation.current) return;
+      () => {
         // The end of the passage, not the end of the chapter: stay put and offer
         // the two ways on.
         setPlayState('idle');
         setWord(null);
         setSelectionPlay((current) => (current ? { ...current, at: current.total, done: true } : current));
-      },
-      onError: (err, id) => {
-        if (mine !== generation.current) return;
-        setPlayState('idle');
-        setError(err.message);
-        if (id) setFailed({ id, message: err.message });
-      },
-    });
+      }
+    );
     playerRef.current = player;
     setPlayState('playing');
     setSelectionPlay({ ids: [...ids], chapterIndex: ci, total: items.length, at: 1, done: false });
@@ -755,6 +934,21 @@ export default function ReaderView() {
     if (!index || !cursor) return;
     const target = neighbour(cursor, delta);
     if (!target) return;
+    // The notification's Next/Previous while paused steps the marker and keeps
+    // the paused state — and so the notification — instead of dropping to idle.
+    // The paused player belongs to the old sentence, so it goes; Play then
+    // starts at the neighbour.
+    if (playStateRef.current === 'paused') {
+      generation.current += 1;
+      playerRef.current?.stop();
+      playerRef.current = null;
+      setItemStates(new Map());
+      setReadyAhead(0);
+      setWord(null);
+      setSelectionPlay(null);
+      setCursor(target);
+      return;
+    }
     goToPos(target);
   }
 
@@ -805,6 +999,9 @@ export default function ReaderView() {
     if (!index || ci < 0 || ci >= index.chapters.length) return;
     if (playStateRef.current !== 'idle') releasePlayer();
     setSelectionPlay(null);
+    // A chapter jump is not a change of mind about the picked sentences: the
+    // selection bar belongs to the chapter it was made in.
+    clearSelection();
     flushBookPos();
     setCursor({ chapterIndex: ci, index: 0 });
   }
@@ -1030,6 +1227,78 @@ export default function ReaderView() {
     }
   }, [playState]);
 
+  // -- native media service (Android foreground service) --------------------
+
+  // While playing, the service keeps synthesis alive with the screen locked and
+  // puts the book and chapter on the notification and lock screen. It is
+  // refreshed when the chapter changes mid-playback (auto-advance, a chapter
+  // tap). Outside the Android app every call is a resolved no-op.
+  useEffect(() => {
+    if (playState === 'playing') {
+      void nativePlayback.start({ title: book?.title ?? 'PharmaReader', subtitle: chapter?.title });
+      return;
+    }
+    if (playState === 'paused') {
+      void nativePlayback.setState('paused');
+      return;
+    }
+    void nativePlayback.stop();
+  }, [playState, book?.title, chapter?.title]);
+
+  // One subscription for the notification, lock screen and headset buttons,
+  // mapped onto the same actions the browser's mediaSession uses.
+  useEffect(
+    () =>
+      nativePlayback.onAction((action) => {
+        if (action === 'play') actions.current.play();
+        else if (action === 'pause') actions.current.pause();
+        else if (action === 'next') actions.current.step(1);
+        else if (action === 'previous') actions.current.step(-1);
+        else actions.current.stop();
+      }),
+    []
+  );
+
+  // "Continue listening": the library opens the book with ?play=1. Wait until
+  // the saved position is restored and the engine is resolved, start once, and
+  // drop the parameter so a reload does not start talking on its own.
+  useEffect(() => {
+    if (!wantsAutoPlay || autoPlayed.current) return;
+    if (!book || !index || !cursor || !engineInfo) return;
+    autoPlayed.current = true;
+    setSearchParams({}, { replace: true });
+    beginPlayback(engineInfo, cursor.chapterIndex, cursor.index);
+    // beginPlayback only touches refs and state setters; re-running it on its
+    // own identity would restart playback on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantsAutoPlay, book, index, cursor, engineInfo, setSearchParams]);
+
+  // The Android back key unwinds this screen one layer at a time: the AI sheet,
+  // the type sheet, the drawer, then the selection. Only when nothing is open
+  // does the press fall through to the library (the bridge in App.tsx).
+  useEffect(() => {
+    if (aiText === null && !typeOpen && drawer === 'none' && !selection) return;
+    return pushBackHandler(() => {
+      if (aiText !== null) {
+        setAiText(null);
+        return true;
+      }
+      if (typeOpen) {
+        setTypeOpen(false);
+        return true;
+      }
+      if (drawer !== 'none') {
+        setDrawer('none');
+        return true;
+      }
+      if (selection) {
+        setSelection(null);
+        return true;
+      }
+      return false;
+    });
+  }, [aiText, typeOpen, drawer, selection]);
+
   // -- sheets: Escape + focus ----------------------------------------------
 
   useEffect(() => {
@@ -1050,17 +1319,25 @@ export default function ReaderView() {
 
   useEffect(() => {
     const flush = () => flushBookPos();
+    // Going away writes the heavy `books.lastPos`; coming back must not: the position
+    // has not moved, and the record carries the whole file blob.
+    const flushIfHidden = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
     window.addEventListener('pagehide', flush);
-    document.addEventListener('visibilitychange', flush);
+    document.addEventListener('visibilitychange', flushIfHidden);
     return () => {
       window.removeEventListener('pagehide', flush);
-      document.removeEventListener('visibilitychange', flush);
+      document.removeEventListener('visibilitychange', flushIfHidden);
       flushBookPos();
       if (rateTimer.current !== null) window.clearTimeout(rateTimer.current);
       generation.current += 1;
       abortRef.current?.abort();
       playerRef.current?.stop();
       playerRef.current = null;
+      // Nothing is playing after the reader closes: take the notification and
+      // the foreground service down with it.
+      void nativePlayback.stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1105,6 +1382,13 @@ export default function ReaderView() {
   }
 
   const showPage = isPdf && mode === 'page';
+  // Full screen starts clean (no bar, dock or chapter nav) until the reader asks
+  // for them with a tap on blank space.
+  const showChrome = !fullscreen || chromeVisible;
+  // The floating way out is for the chromeless screen only: once the bar is back it
+  // has its own exit button, and two on top of each other would put the text-size
+  // button next to it out of reach.
+  const pillShown = fullscreen && exitHint && !chromeVisible;
 
   // F1: which sentence is being synthesized right now (and its chapter number).
   // Plain computation, not a hook: this sits below the loading return.
@@ -1131,54 +1415,69 @@ export default function ReaderView() {
     : { label: `${screen.at} / ${screen.total}`, onPrev: () => turnPage(-1), onNext: () => turnPage(1) };
 
   return (
-    <section className="page rd-page" ref={pageRef}>
-      <header className="rd-bar">
-        <Link to="/" className="rd-bar-btn" aria-label="Back to library">
-          <Glyph>{icons.back}</Glyph>
-        </Link>
-        <h1 className="rd-bar-title" title={book.title}>
-          {book.title}
-        </h1>
-        {isPdf ? (
-          <div className="rd-seg" role="group" aria-label="View mode">
-            <button
-              type="button"
-              className="rd-seg-btn"
-              aria-pressed={!showPage}
-              onClick={() => setMode('text')}
-            >
-              Text
-            </button>
-            <button type="button" className="rd-seg-btn" aria-pressed={showPage} onClick={() => setMode('page')}>
-              Page
-            </button>
-          </div>
-        ) : null}
-        <button
-          type="button"
-          className="rd-bar-btn"
-          aria-label="Contents"
-          aria-expanded={drawer !== 'none'}
-          onClick={() => {
-            setTypeOpen(false);
-            setDrawer(drawer === 'none' ? 'toc' : 'none');
-          }}
-        >
-          <Glyph>{icons.chapters}</Glyph>
-        </button>
-        <button
-          type="button"
-          className="rd-bar-text"
-          aria-label="Text size and spacing"
-          aria-expanded={typeOpen}
-          onClick={() => {
-            setDrawer('none');
-            setTypeOpen(!typeOpen);
-          }}
-        >
-          Aa
-        </button>
-      </header>
+    <section
+      className={`page rd-page${showPage ? ' rd-page--page' : ''}${fullscreen ? ' rd-page--fullscreen' : ''}`}
+      ref={pageRef}
+      onClick={onImmersiveClick}
+    >
+      {showChrome ? (
+        <header className="rd-bar">
+          <Link to="/" className="rd-bar-btn" aria-label="Back to library">
+            <Glyph>{icons.back}</Glyph>
+          </Link>
+          <h1 className="rd-bar-title" title={book.title}>
+            {book.title}
+          </h1>
+          {isPdf ? (
+            <div className="rd-seg" role="group" aria-label="View mode">
+              <button
+                type="button"
+                className="rd-seg-btn"
+                aria-pressed={!showPage}
+                onClick={() => setMode('text')}
+              >
+                Text
+              </button>
+              <button type="button" className="rd-seg-btn" aria-pressed={showPage} onClick={() => setMode('page')}>
+                Page
+              </button>
+            </div>
+          ) : null}
+          <button
+            type="button"
+            className="rd-bar-btn"
+            aria-label="Contents"
+            aria-expanded={drawer !== 'none'}
+            onClick={() => {
+              setTypeOpen(false);
+              setDrawer(drawer === 'none' ? 'toc' : 'none');
+            }}
+          >
+            <Glyph>{icons.chapters}</Glyph>
+          </button>
+          <button
+            type="button"
+            className="rd-bar-text"
+            aria-label="Text size and spacing"
+            aria-expanded={typeOpen}
+            onClick={() => {
+              setDrawer('none');
+              setTypeOpen(!typeOpen);
+            }}
+          >
+            Aa
+          </button>
+          <button
+            type="button"
+            className="rd-bar-btn"
+            aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}
+            aria-pressed={fullscreen}
+            onClick={toggleFullscreen}
+          >
+            <Glyph>{icons.fit}</Glyph>
+          </button>
+        </header>
+      ) : null}
 
       <ModelStatusBanner context="reader" />
 
@@ -1213,6 +1512,7 @@ export default function ReaderView() {
             file={book.fileBlob}
             page={pdfPage}
             rects={reading?.pdfRects ?? []}
+            fullscreen={fullscreen}
             onPageChange={(page) => {
               const next = Math.max(1, page);
               setPdfPage(next);
@@ -1260,61 +1560,85 @@ export default function ReaderView() {
         <p className="muted">This book has no readable text.</p>
       )}
 
-      <nav className="rd-chapter-nav" aria-label="Chapter navigation">
-        <button
-          type="button"
-          className="btn btn-secondary"
-          disabled={chapterIndex <= 0}
-          onClick={() => goToChapter(chapterIndex - 1)}
-        >
-          <Glyph>{icons.back}</Glyph>
-          <span>Previous chapter</span>
-        </button>
-        <button
-          type="button"
-          className="btn btn-secondary"
-          disabled={chapterIndex >= index.chapters.length - 1}
-          onClick={() => goToChapter(chapterIndex + 1)}
-        >
-          <span>Next chapter</span>
-          <Glyph>{icons.forward}</Glyph>
-        </button>
-      </nav>
+      {showChrome ? (
+        <nav className="rd-chapter-nav" aria-label="Chapter navigation">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={chapterIndex <= 0}
+            onClick={() => goToChapter(chapterIndex - 1)}
+          >
+            <Glyph>{icons.back}</Glyph>
+            <span>Previous chapter</span>
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={chapterIndex >= index.chapters.length - 1}
+            onClick={() => goToChapter(chapterIndex + 1)}
+          >
+            <span>Next chapter</span>
+            <Glyph>{icons.forward}</Glyph>
+          </button>
+        </nav>
+      ) : null}
 
-      <PlayerBar
-        state={playState}
-        engineName={engineName(engineInfo)}
-        fallback={Boolean(engineInfo && !engineInfo.preferred && engineChoice !== 'auto')} // auto on the phone voice is expected, not a failure
-        rate={rate}
-        canPrerender={Boolean(engineInfo?.engine.capabilities.prerender)}
-        progress={progress}
-        cached={Boolean(cachedChapter && cachedChapter === chapter?.id)}
-        sentenceNumber={reading ? reading.index + 1 : 0}
-        sentenceTotal={index.chapters[chapterIndex]?.length ?? 0}
-        generating={generatingNumber}
-        readyAhead={readyAhead}
-        pages={showPage ? null : pageNav}
-        fromHere={mode === 'text' && !cursorOnScreen && playState !== 'playing'}
-        selection={
-          selectionPlay
-            ? {
-                at: selectionPlay.at,
-                total: selectionPlay.total,
-                done: selectionPlay.done,
-                onContinue: continueAfterSelection,
-                onReplay: replaySelection,
-              }
-            : null
-        }
-        onToggle={togglePlay}
-        onStop={stopPlayback}
-        onPrev={() => step(-1)}
-        onNext={() => step(1)}
-        onRate={changeRate}
-        onPrerender={() => void preRender()}
-        onCancelPrerender={() => abortRef.current?.abort()}
-        onPlayFromHere={playFromHere}
-      />
+      {showChrome ? (
+        <PlayerBar
+          state={playState}
+          engineName={engineName(engineInfo)}
+          fallback={Boolean(engineInfo && !engineInfo.preferred && engineChoice !== 'auto')} // auto on the phone voice is expected, not a failure
+          rate={rate}
+          canPrerender={Boolean(engineInfo?.engine.capabilities.prerender)}
+          progress={progress}
+          cached={Boolean(cachedChapter && cachedChapter === chapter?.id)}
+          sentenceNumber={reading ? reading.index + 1 : 0}
+          sentenceTotal={index.chapters[chapterIndex]?.length ?? 0}
+          generating={generatingNumber}
+          readyAhead={readyAhead}
+          pages={showPage ? null : pageNav}
+          fromHere={mode === 'text' && !cursorOnScreen && playState !== 'playing'}
+          selection={
+            selectionPlay
+              ? {
+                  at: selectionPlay.at,
+                  total: selectionPlay.total,
+                  done: selectionPlay.done,
+                  onContinue: continueAfterSelection,
+                  onReplay: replaySelection,
+                }
+              : null
+          }
+          onToggle={togglePlay}
+          onStop={stopPlayback}
+          onPrev={() => step(-1)}
+          onNext={() => step(1)}
+          onRate={changeRate}
+          onPrerender={() => void preRender()}
+          onCancelPrerender={() => abortRef.current?.abort()}
+          onPlayFromHere={playFromHere}
+          onSleepEnd={pauseOnly}
+          onSleepAtChapterEndChange={(atEnd) => {
+            sleepAtChapterEnd.current = atEnd;
+          }}
+        />
+      ) : null}
+
+      {/* The way out stays reachable even while the bars are hidden: it fades
+          but keeps its place in the tab order (focus brings it back). Top
+          corner, so it never sits on the page controls at the bottom. */}
+      {fullscreen ? (
+        <button
+          type="button"
+          className={`btn btn-primary rd-immersive-exit${pillShown ? ' is-shown' : ''}`}
+          aria-label="Exit full screen"
+          title="Exit full screen"
+          onClick={exitFullscreen}
+        >
+          <Glyph>{icons.close}</Glyph>
+          <span>Exit</span>
+        </button>
+      ) : null}
 
       {selection ? (
         <SelectionBar

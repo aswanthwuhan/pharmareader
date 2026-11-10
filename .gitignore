@@ -14,3 +14,8 @@ src-tauri/target/
 src-tauri/gen/schemas/
 # third-party PDFs used only by local real-file tests (tests skip when absent)
 src/import/__fixtures__/*.pdf
+
+# Release signing (never commit)
+android/keystore.properties
+*.jks
+*.keystore

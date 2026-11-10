@@ -1,13 +1,45 @@
-/* Backup panel: one export card and one import card. Tokens from src/styles.css. */
+/* Backup panel: one flat block out, one flat block back in. The Settings page
+   already draws the surface, so the blocks only stack their rows and a hairline
+   separates them. Tokens from src/styles.css. */
 
 .backup-panel {
   display: grid;
   gap: var(--space-4);
 }
 
-.backup-card {
+.backup-block {
   display: grid;
   gap: var(--space-3);
+}
+
+.backup-block + .backup-block {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+/* One line under each heading, the reason before the button. */
+.backup-line {
+  margin: 0;
+  max-width: var(--measure-ui);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  text-wrap: pretty;
+}
+
+/* What the opened half says: three short paragraphs, one per question. */
+.backup-explain {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.backup-explain p {
+  margin: 0;
+  max-width: var(--measure-ui);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  text-wrap: pretty;
 }
 
 .backup-actions {
@@ -25,7 +57,7 @@
 .backup-file {
   width: 100%;
   max-width: 100%;
-  min-height: var(--tap);
+  min-height: var(--tap-comfort);
   padding: var(--space-1) var(--space-2);
   border: 1px solid var(--border-control);
   border-radius: var(--radius-md);
@@ -36,7 +68,7 @@
 }
 
 .backup-file::file-selector-button {
-  min-height: 32px;
+  min-height: 48px;
   margin-right: var(--space-3);
   padding: 0 var(--space-3);
   border: 1px solid var(--border-control);
@@ -47,6 +79,11 @@
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
   cursor: pointer;
+}
+
+/* "Last backup: N days ago" — a quiet line under the export buttons. */
+.backup-last {
+  margin: 0;
 }
 
 .backup-mode {
@@ -65,8 +102,9 @@
 
 .backup-radio {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-2);
+  min-height: var(--tap-comfort);
   color: var(--text);
   font-size: var(--fs-sm);
   line-height: var(--lh-snug);
@@ -77,7 +115,7 @@
   flex: none;
   width: 20px;
   height: 20px;
-  margin: 1px 0 0;
+  margin: 0;
   accent-color: var(--accent);
 }
 
@@ -85,7 +123,7 @@
   font-weight: var(--fw-semibold);
 }
 
-.backup-card .banner p {
+.backup-panel .banner p {
   margin: 0;
   font-size: var(--fs-sm);
   line-height: var(--lh-base);

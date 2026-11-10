@@ -7,14 +7,28 @@
 
 .settings-main {
   display: grid;
-  gap: var(--space-8);
+  gap: var(--space-6);
   min-width: 0;
 }
 
-.settings-section {
+/* A group is a quiet sentence-case label above one card of disclosure rows. */
+.settings-group {
   display: grid;
   gap: var(--space-2);
-  scroll-margin-top: var(--space-4);
+}
+
+.settings-group-label {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+}
+
+/* The card around the rows carries no padding: each row supplies its own. */
+.settings-group > .settings-group-card {
+  padding: 0;
+  overflow: hidden;
 }
 
 .settings-h2 {
@@ -31,10 +45,6 @@
   color: var(--muted);
   font-size: var(--fs-sm);
   line-height: var(--lh-base);
-}
-
-.settings-section > .card {
-  margin-top: var(--space-1);
 }
 
 .settings-toc {
@@ -130,13 +140,6 @@
 .about-copy {
   max-width: var(--measure-ui);
   margin: 0;
-}
-
-.about-h3 {
-  margin: 0;
-  color: var(--text);
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-semibold);
 }
 
 .about-credits {

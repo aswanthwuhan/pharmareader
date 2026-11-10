@@ -4,6 +4,20 @@ import type { SpeakEvents, TtsCapabilities, TtsEngine } from '../core/types';
 import { invalidate } from './lexicon';
 import { createPlayer } from './player';
 
+// Word alignment is a Whisper request on a phone; the player must skip it for a
+// clip whose duration is unknown. Recorded here, the real one still runs.
+const wordTimingsSpy = vi.hoisted(() => vi.fn());
+vi.mock('./align', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./align')>();
+  return {
+    ...actual,
+    wordTimings: (audio: Blob, text: string, durationMs: number) => {
+      wordTimingsSpy(text, durationMs);
+      return actual.wordTimings(audio, text, durationMs);
+    },
+  };
+});
+
 // ---------------------------------------------------------------------------
 // Test doubles: jsdom has neither object URLs nor a working audio element.
 // ---------------------------------------------------------------------------
@@ -474,7 +488,7 @@ describe('synthesising engines', () => {
     const engine = new FakeEngine(true);
     const many = Array.from({ length: 8 }, (_, i) => ({ id: `s${i}`, text: `Sentence ${i}.` }));
     let done = 0;
-    const player = createPlayer({ ...baseOptions, items: many, engine, onDone: () => (done += 1) });
+    const player = createPlayer({ ...baseOptions, items: many, engine, prefetchAhead: 2, onDone: () => (done += 1) });
 
     player.play();
     const el = FakeAudio.instances[0]!;
@@ -489,6 +503,88 @@ describe('synthesising engines', () => {
     // 8 rendered, 6 kept.
     expect(revoked).toHaveLength(2);
     player.stop();
+  });
+
+  it('retries a clip the engine cancelled once before playing it', async () => {
+    // Kokoro native shares one cancel epoch with pre-rendering, so a cancel can
+    // belong to the other caller; the sentence the reader waits on gets one retry.
+    const engine = new FakeEngine(true);
+    let cancels = 1;
+    engine.synthesize = async (text: string) => {
+      engine.synthTexts.push(text);
+      if (cancels > 0) {
+        cancels--;
+        throw new Error('Job was cancelled');
+      }
+      return wavBlob(8000, 1600);
+    };
+    const errors: Error[] = [];
+    let done = 0;
+    const player = createPlayer({
+      ...baseOptions,
+      items: [items[0]!],
+      engine,
+      onError: (e) => errors.push(e),
+      onDone: () => (done += 1),
+    });
+
+    player.play();
+    const el = FakeAudio.instances[0]!;
+    await until(() => el.src.startsWith('blob:'));
+    expect(engine.synthTexts).toHaveLength(2);
+
+    el.finish();
+    await until(() => done === 1);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('reports a cancel that happens twice instead of retrying forever', async () => {
+    const engine = new FakeEngine(true);
+    engine.synthError = new Error('cancelled');
+    const errors: Error[] = [];
+    const player = createPlayer({ ...baseOptions, items: [items[0]!], engine, onError: (e) => errors.push(e) });
+
+    player.play();
+    await until(() => errors.length === 1);
+    expect(errors[0]?.message).toBe('cancelled');
+    expect(engine.synthTexts).toHaveLength(2); // the cancel and exactly one retry
+  });
+
+  it('does not retry a cancel that arrived after the reader stopped', async () => {
+    const { engine, gates } = gatedEngine();
+    const errors: Error[] = [];
+    const player = createPlayer({ ...baseOptions, items: [items[0]!], engine, onError: (e) => errors.push(e) });
+
+    player.play();
+    await until(() => gates.length === 1);
+    player.stop();
+    gates[0]!.fail(new Error('cancelled')); // the stop killed the render
+    await delay(30);
+
+    expect(engine.synthTexts).toHaveLength(1);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('leaves no object URL behind when a prefetch finishes after stop()', async () => {
+    const { engine, gates } = gatedEngine();
+    const player = createPlayer({ ...baseOptions, engine });
+
+    player.play();
+    await until(() => gates.length === 1);
+    gates[0]!.release();
+    // Sentence 1 is playing; the chain renders sentence 2, then sentence 3.
+    await until(() => gates.length === 2);
+    gates[1]!.release();
+    await until(() => gates.length === 3);
+    player.stop();
+    const afterStop = created.length;
+    for (const gate of gates.slice(2)) gate.release(wavBlob(8000, 1600));
+    await delay(30);
+
+    // stop() revoked every URL; a clip that rendered afterwards must not mint
+    // a new one (it is in the cache, so the next play reads it from there).
+    expect(created.slice(afterStop)).toEqual([]);
+    expect(created.every((url) => revoked.includes(url))).toBe(true);
   });
 
   it('reports a synthesis failure without loading a clip', async () => {
@@ -888,6 +984,47 @@ describe('word highlighting', () => {
     player.stop();
   });
 
+  it('keeps the blob and duration of a prefetched clip so the next sentence still follows the clock', async () => {
+    const engine = new FakeEngine(true);
+    engine.synthesize = async (text: string) => {
+      engine.synthTexts.push(text);
+      return wavBlob(8000, 16000); // exactly 2 s
+    };
+    const words: { id: string; at: number }[] = [];
+    const player = createPlayer({
+      ...baseOptions,
+      items: [
+        { id: 'w1', text: 'Alpha beta gamma.' },
+        { id: 'w2', text: 'Delta epsilon zeta.' },
+      ],
+      engine,
+      onWord: (id, at) => words.push({ id, at }),
+    });
+
+    player.play();
+    const el = FakeAudio.instances[0]!;
+    await until(() => el.src.startsWith('blob:'));
+    // Sentence 2 is rendered ahead of sentence 1 ending, so it plays from the
+    // in-memory clip: the whole clip has to be kept, not just its URL.
+    await until(() => engine.synthTexts.length === 2);
+    el.finish();
+
+    await until(() => words.some((w) => w.id === 'w2'));
+    expect(words.find((w) => w.id === 'w2')?.at).toBe(0);
+
+    // Half way through a 2 s clip is "epsilon" (offset 6), not the last word:
+    // a 0 ms duration collapses every estimate onto word 0 and the mark then
+    // jumps straight to "zeta".
+    el.currentTime = 1;
+    await delay(150);
+    const heard = words.filter((w) => w.id === 'w2').map((w) => w.at);
+    expect(heard).toContain(6);
+    expect(heard[heard.length - 1]).toBe(6);
+    // An empty blob would have forced the sentence to be rendered again.
+    expect(engine.synthTexts.filter((text) => text.startsWith('Delta'))).toHaveLength(1);
+    player.stop();
+  });
+
   it('follows boundary events from the web voice', async () => {
     const engine = new FakeEngine(false);
     const words: number[] = [];
@@ -924,6 +1061,126 @@ describe('word highlighting', () => {
     expect(engine.spoken[0]!.text).not.toContain('[12]');
     engine.boundary(8); // "works"
     await until(() => words.includes(8));
+    player.stop();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Prefetch ahead: one clip at a time, so a seek never queues behind a burst.
+// ---------------------------------------------------------------------------
+
+function manyItems(count: number): { id: string; text: string }[] {
+  return Array.from({ length: count }, (_, i) => ({ id: `s${i}`, text: `Sentence ${i}.` }));
+}
+
+describe('prefetch ahead', () => {
+  it('renders ahead one clip at a time, up to the chosen count', async () => {
+    const { engine, gates } = gatedEngine();
+    // Count what is actually in flight: the engine is single-threaded, so two
+    // renders at once is the bug this guards.
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const gated = engine.synthesize!;
+    engine.synthesize = async (text: string, opts: { voiceId?: string; rate: number }) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      try {
+        return await gated(text, opts);
+      } finally {
+        inFlight -= 1;
+      }
+    };
+
+    const player = createPlayer({
+      ...baseOptions,
+      items: manyItems(20),
+      engine,
+      prefetchAhead: 5,
+    });
+
+    player.play();
+    await until(() => gates.length === 1);
+    gates[0]!.release();
+    await until(() => gates.length === 2);
+
+    // Release one render at a time: the next may only start after it.
+    for (let ready = 1; ready <= 5; ready += 1) {
+      await until(() => gates.length === 1 + ready);
+      await delay(20);
+      expect(gates).toHaveLength(1 + ready);
+      gates[ready]!.release();
+    }
+
+    await until(() => player.bufferAhead === 5);
+    await delay(40);
+    // Five is the target: a sixth render would be work done for no reader.
+    expect(gates).toHaveLength(6);
+    expect(maxInFlight).toBe(1);
+    expect(player.bufferAhead).toBe(5);
+    player.stop();
+  });
+
+  it('drops the chain when the reader seeks', async () => {
+    const { engine, gates } = gatedEngine();
+    const player = createPlayer({
+      ...baseOptions,
+      items: manyItems(20),
+      engine,
+      prefetchAhead: 5,
+    });
+
+    player.play();
+    await until(() => gates.length === 1);
+    gates[0]!.release();
+    await until(() => gates.length === 2);
+    expect(gates[1]!.text).toBe('Sentence 1.');
+
+    player.seek(10);
+    await until(() => gates.length === 3);
+    expect(gates[2]!.text).toBe('Sentence 10.');
+
+    // The abandoned render finishes after the seek; the chain must not resume.
+    gates[1]!.release();
+    await delay(40);
+    expect(gates).toHaveLength(3);
+    expect(engine.synthTexts).not.toContain('Sentence 2.');
+
+    gates[2]!.release();
+    await until(() => gates.length === 4);
+    expect(gates[3]!.text).toBe('Sentence 11.');
+    player.stop();
+  });
+
+  it('does not ask for word alignment when the clip length is unknown', async () => {
+    // The default fake engine returns a 4-byte blob: no WAV header, so
+    // wavDurationMs answers 0 and the timings are estimated instead.
+    const engine = new FakeEngine(true);
+    wordTimingsSpy.mockClear();
+    let started = 0;
+    const player = createPlayer({
+      ...baseOptions,
+      items: [items[0]!],
+      engine,
+      onSentence: () => (started += 1),
+    });
+
+    player.play();
+    const el = FakeAudio.instances[0]!;
+    await until(() => el.src.startsWith('blob:'));
+    expect(started).toBe(1);
+    expect(wordTimingsSpy).not.toHaveBeenCalled();
+    player.stop();
+  });
+
+  it('still aligns a clip whose length is known', async () => {
+    const engine = new FakeEngine(true);
+    engine.synthesize = async () => wavBlob(8000, 16000);
+    wordTimingsSpy.mockClear();
+    const player = createPlayer({ ...baseOptions, items: [items[0]!], engine, onWord: () => {} });
+
+    player.play();
+    await until(() => wordTimingsSpy.mock.calls.length === 1);
+    expect(wordTimingsSpy.mock.calls[0]?.[1]).toBe(2000);
     player.stop();
   });
 });

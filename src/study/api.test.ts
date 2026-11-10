@@ -8,6 +8,7 @@ import {
   cardFromHighlight,
   createCard,
   deleteBookmark,
+  deleteCard,
   deleteHighlight,
   dueCards,
   exportCardsCsv,
@@ -18,7 +19,10 @@ import {
   listHighlights,
   rangeHighlightPatch,
   reviewCard,
+  reviewNow,
   toFsrs,
+  undoReview,
+  updateCard,
   updateHighlight,
 } from './api';
 import { createEmptyCard } from 'ts-fsrs';
@@ -221,6 +225,148 @@ describe('reviewCard', () => {
     await expect(reviewCard(card.id, 5 as unknown as 1)).rejects.toThrow(/Invalid rating/);
     expect(await db.reviewLogs.count()).toBe(0);
     expect((await db.cards.get(card.id))?.fsrs).toMatchObject({ reps: 0 });
+  });
+
+  it('clamps a review dated before the card’s own last_review', async () => {
+    const card = await createCard({ front: 'Q', back: 'A', kind: 'qa' });
+    const first = await reviewCard(card.id, 3);
+    const lastReview = new Date((first.card.fsrs as { last_review: string }).last_review).getTime();
+
+    // A clock moved backwards would otherwise hand ts-fsrs a negative delta_t,
+    // which it rejects outright.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(lastReview - 24 * 60 * 60 * 1000);
+      const second = await reviewCard(card.id, 3);
+      const fsrs = second.card.fsrs as { due: string; last_review: string; reps: number };
+
+      expect(fsrs.reps).toBe(2);
+      // The new review is dated at, not before, the last one.
+      expect(new Date(fsrs.last_review).getTime()).toBe(lastReview);
+      expect(second.log.reviewedAt).toBe(lastReview);
+      expect(Number.isNaN(new Date(fsrs.due).getTime())).toBe(false);
+      expect(await db.reviewLogs.where('cardId').equals(card.id).count()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('reviewNow', () => {
+  const lastReview = new Date('2026-01-10T09:00:00Z');
+
+  it('holds a clock that went backwards at the card’s last review', () => {
+    const behind = new Date('2026-01-09T21:00:00Z');
+    expect(reviewNow(lastReview, behind).getTime()).toBe(lastReview.getTime());
+  });
+
+  it('leaves a clock at or ahead of the last review alone', () => {
+    const ahead = new Date('2026-01-11T09:00:00Z');
+    expect(reviewNow(lastReview, ahead).getTime()).toBe(ahead.getTime());
+    expect(reviewNow(lastReview, new Date(lastReview)).getTime()).toBe(lastReview.getTime());
+    // A card that has never been reviewed has nothing to be held at.
+    expect(reviewNow(undefined, ahead).getTime()).toBe(ahead.getTime());
+  });
+});
+
+describe('undoReview', () => {
+  it('restores the card row and deletes exactly the log the rating wrote', async () => {
+    const card = await createCard({ front: 'Q', back: 'A', kind: 'qa' });
+    const otherCard = await createCard({ front: 'Q2', back: 'A2', kind: 'qa' });
+    const otherReview = await reviewCard(otherCard.id, 3);
+    const before = await db.cards.get(card.id);
+
+    const result = await reviewCard(card.id, 4);
+    expect((await db.cards.get(card.id))?.fsrs).not.toEqual(before?.fsrs);
+
+    await undoReview(result, before!);
+
+    // Byte-for-byte the pre-rating row, and the card is due again.
+    expect(await db.cards.get(card.id)).toEqual(before);
+    expect(await db.reviewLogs.get(result.log.id)).toBeUndefined();
+    expect(await db.reviewLogs.where('cardId').equals(card.id).count()).toBe(0);
+    // The other card's history is not collateral damage.
+    expect(await db.reviewLogs.get(otherReview.log.id)).toEqual(otherReview.log);
+    expect(await db.reviewLogs.count()).toBe(1);
+  });
+
+  it('refuses a previous card that is not the card the rating touched', async () => {
+    const card = await createCard({ front: 'Q', back: 'A', kind: 'qa' });
+    const otherCard = await createCard({ front: 'Q2', back: 'A2', kind: 'qa' });
+    const result = await reviewCard(card.id, 3);
+    const otherBefore = await db.cards.get(otherCard.id);
+
+    // Restoring another card's row here would overwrite that card.
+    await expect(undoReview(result, otherBefore!)).rejects.toThrow(/does not match/);
+    expect((await db.cards.get(card.id))?.fsrs).toEqual(result.card.fsrs);
+    expect(await db.cards.get(otherCard.id)).toEqual(otherBefore);
+    expect(await db.reviewLogs.get(result.log.id)).toBeDefined();
+  });
+
+  it('refuses to undo a card that was deleted since, and does not resurrect it', async () => {
+    const card = await createCard({ front: 'Q', back: 'A', kind: 'qa' });
+    const before = await db.cards.get(card.id);
+    const result = await reviewCard(card.id, 3);
+    // Deleted from the Cards tab or another window while the session was open.
+    await deleteCard(card.id);
+
+    // Putting the whole old row back would bring a deleted card back to life.
+    await expect(undoReview(result, before!)).rejects.toThrow(/deleted/);
+    expect(await db.cards.get(card.id)).toBeUndefined();
+    expect(await db.reviewLogs.count()).toBe(0);
+  });
+
+  it('refuses to undo once the card has been rated again, keeping the newer rating', async () => {
+    const card = await createCard({ front: 'Q', back: 'A', kind: 'qa' });
+    const before = await db.cards.get(card.id);
+    const first = await reviewCard(card.id, 1);
+    const second = await reviewCard(card.id, 4);
+
+    await expect(undoReview(first, before!)).rejects.toThrow(/changed/);
+    expect((await db.cards.get(card.id))?.fsrs).toEqual(second.card.fsrs);
+    expect(await db.reviewLogs.where('cardId').equals(card.id).count()).toBe(2);
+    expect(await db.reviewLogs.get(first.log.id)).toEqual(first.log);
+  });
+
+  it('cannot be applied twice to the same rating', async () => {
+    const card = await createCard({ front: 'Q', back: 'A', kind: 'qa' });
+    const before = await db.cards.get(card.id);
+    const result = await reviewCard(card.id, 2);
+
+    await undoReview(result, before!);
+    // A second undo would put the same schedule back and delete a log that is gone.
+    await expect(undoReview(result, before!)).rejects.toThrow(/changed/);
+    expect((await db.cards.get(card.id))?.fsrs).toEqual(before!.fsrs);
+    expect(await db.reviewLogs.count()).toBe(0);
+  });
+
+  it('restores only the schedule, so an edit made after the rating survives', async () => {
+    const card = await createCard({ front: 'Q', back: 'A', kind: 'qa' });
+    const before = await db.cards.get(card.id);
+    const result = await reviewCard(card.id, 3);
+    await updateCard(card.id, { front: 'Q edited' });
+
+    await undoReview(result, before!);
+
+    const restored = await db.cards.get(card.id);
+    expect(restored?.fsrs).toEqual(before!.fsrs);
+    expect(restored?.front).toBe('Q edited');
+  });
+
+  it('gives a new card back to the daily allowance', async () => {
+    for (let i = 0; i < 3; i += 1) await createCard({ front: `Q${i}`, back: `A${i}`, kind: 'qa' });
+    await setSetting('study.newPerDay', 2);
+    expect(await dueCards(100)).toHaveLength(2);
+
+    const [firstDue] = await dueCards(100);
+    const before = await db.cards.get(firstDue!.id);
+    const result = await reviewCard(firstDue!.id, 3);
+    expect(await dueCards(100)).toHaveLength(1);
+
+    await undoReview(result, before!);
+    // The log that counted against today's allowance went with it.
+    expect(await db.reviewLogs.count()).toBe(0);
+    expect(await dueCards(100)).toHaveLength(2);
   });
 });
 

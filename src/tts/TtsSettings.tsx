@@ -49,7 +49,6 @@ const ENGINE_OPTIONS: { value: EngineChoice; label: string; hint: string }[] = [
 const RATE_MIN = 0.5;
 const RATE_MAX = 2;
 const RATE_STEP = 0.05;
-const INITIAL_RULES = 8;
 
 interface Draft {
   id?: string;
@@ -173,7 +172,7 @@ export function VoicePanel() {
     ? voices.length > 0
       ? `${voices.length} system ${voices.length === 1 ? 'voice' : 'voices'} reported by this device.`
       : 'Voices are provided by the device; none were reported yet.'
-    : 'Used when the system engine speaks. The on-device model brings its own voices.';
+    : 'The on-device model brings its own voices.';
 
   return (
     <div className="tts-panel">
@@ -198,8 +197,7 @@ export function VoicePanel() {
           ))}
         </select>
         <p className="field-hint" id="tts-engine-hint">
-          {engineHint(engineValue)}{' '}
-          <a href="#voice-models">Manage on-device models</a>.
+          <a href="#voice-models">Manage on-device models</a>
         </p>
       </div>
 
@@ -266,28 +264,24 @@ export function VoicePanel() {
           {status ?? ''}
         </p>
       </div>
-      <p className="field-hint tts-test-sentence">Speaks: “{TEST_SENTENCE}”</p>
 
-      <div className="banner banner-info">
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          aria-hidden="true"
-          focusable="false"
-        >
-          <circle cx="12" cy="12" r="9" />
-          <path d="M12 11v5.5M12 7.5h.01" />
-        </svg>
-        <div className="banner-body">
-          <p className="banner-title">A more natural system voice</p>
-          <p>{VOICE_TIP}</p>
+      <details className="disc-sub">
+        <summary>How this works</summary>
+        <div className="disc-sub-body">
+          <div className="tts-notes">
+            <dl className="tts-note-list">
+              {ENGINE_OPTIONS.map((o) => (
+                <div key={o.value}>
+                  <dt>{o.label}</dt>
+                  <dd>{engineHint(o.value)}</dd>
+                </div>
+              ))}
+            </dl>
+            <p className="tts-note">{VOICE_TIP}</p>
+            <p className="tts-note">Speaks: “{TEST_SENTENCE}”</p>
+          </div>
         </div>
-      </div>
+      </details>
 
       <ErrorBanner message={error} />
     </div>
@@ -301,7 +295,7 @@ export function LexiconPanel() {
   const [query, setQuery] = useState('');
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [adding, setAdding] = useState(false);
-  const [showAll, setShowAll] = useState(false);
+  const [builtinOpen, setBuiltinOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previewText, setPreviewText] = useState('');
   const [previewResult, setPreviewResult] = useState('');
@@ -338,17 +332,11 @@ export function LexiconPanel() {
     };
   }, [previewText, entries]);
 
-  // The reader's own rules come first: they are the ones being curated, while
-  // the built-in list runs to a few hundred rows.
-  const visible = useMemo(() => {
-    const rows = [...filterEntries(entries, query)];
-    return rows.sort((a, b) => Number(b.source === 'user') - Number(a.source === 'user'));
-  }, [entries, query]);
-
-  // A few hundred built-in rows would bury the rest of the page, so the list
-  // starts with the first few and grows on request.
-  const shown = showAll ? visible : visible.slice(0, INITIAL_RULES);
-  const hiddenCount = visible.length - shown.length;
+  // The split is a rendering choice only: the reader's own rules stay visible,
+  // while the built-in list (a few hundred rows) waits inside a disclosure.
+  const ownEntries = useMemo(() => entries.filter((e) => e.source === 'user'), [entries]);
+  const builtinEntries = useMemo(() => entries.filter((e) => e.source !== 'user'), [entries]);
+  const builtinVisible = useMemo(() => filterEntries(builtinEntries, query), [builtinEntries, query]);
 
   const closeEditor = () => {
     setDraft(EMPTY_DRAFT);
@@ -448,33 +436,63 @@ export function LexiconPanel() {
     </fieldset>
   );
 
-  const editingVisible = draft.id !== undefined && shown.some((e) => e.id === draft.id);
+  const editingVisible = draft.id !== undefined && ownEntries.some((e) => e.id === draft.id);
+
+  const ruleRow = (entry: LexiconEntry) => (
+    <Fragment key={entry.id}>
+      <li className={entry.enabled ? 'tts-rule' : 'tts-rule is-off'}>
+        <label className="tts-rule-toggle">
+          <input
+            type="checkbox"
+            checked={entry.enabled}
+            aria-label={`${entry.enabled ? 'Disable' : 'Enable'} rule ${entry.pattern}`}
+            onChange={() => void toggle(entry)}
+          />
+          <span className="tts-rule-text">
+            <span className="tts-rule-pattern" title={entry.pattern}>
+              {entry.pattern}
+            </span>
+            <span className="tts-rule-replacement" title={entry.replacement}>
+              {entry.replacement || '—'}
+            </span>
+          </span>
+        </label>
+        <span className="tts-rule-meta">
+          {entry.source === 'user' ? <span className="badge badge-accent">yours</span> : null}
+          {entry.source === 'user' ? (
+            <span className="tts-rule-actions">
+              <button
+                type="button"
+                className="tts-rule-action"
+                aria-label={`Edit rule ${entry.pattern}`}
+                onClick={() => startEdit(entry)}
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                className="tts-rule-action danger"
+                aria-label={`Delete rule ${entry.pattern}`}
+                onClick={() => void remove(entry)}
+              >
+                Delete
+              </button>
+            </span>
+          ) : null}
+        </span>
+      </li>
+      {draft.id === entry.id ? <li className="tts-editor-row">{editor}</li> : null}
+    </Fragment>
+  );
 
   return (
     <div className="tts-panel">
-      <div className="field">
-        <label className="field-label" htmlFor="tts-lexicon-search">
-          Search rules
-        </label>
-        <input
-          id="tts-lexicon-search"
-          className="input"
-          type="search"
-          value={query}
-          placeholder="CYP, half-life, mg/kg…"
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setShowAll(false);
-          }}
-        />
-        <p className="field-hint tts-lexicon-count" aria-live="polite">
-          {loading
-            ? 'Loading rules…'
-            : hiddenCount > 0
-              ? `Showing ${shown.length} of ${visible.length} rules`
-              : `${visible.length} of ${entries.length} rules`}
-        </p>
-      </div>
+      {loading ? null : (
+        <ul className="tts-rules tts-rules-own">
+          {ownEntries.map(ruleRow)}
+          {ownEntries.length === 0 ? <li className="tts-empty">No rules of your own yet.</li> : null}
+        </ul>
+      )}
 
       {adding ? (
         <div className="tts-editor-row">{editor}</div>
@@ -486,90 +504,66 @@ export function LexiconPanel() {
         </div>
       ) : null}
 
-      <ul className="tts-rules" aria-busy={loading}>
-        {shown.map((entry) => (
-          <Fragment key={entry.id}>
-            <li className={entry.enabled ? 'tts-rule' : 'tts-rule is-off'}>
-              <label className="tts-rule-toggle">
-                <input
-                  type="checkbox"
-                  checked={entry.enabled}
-                  aria-label={`${entry.enabled ? 'Disable' : 'Enable'} rule ${entry.pattern}`}
-                  onChange={() => void toggle(entry)}
-                />
-                <span className="tts-rule-text">
-                  <span className="tts-rule-pattern" title={entry.pattern}>
-                    {entry.pattern}
-                  </span>
-                  <span className="tts-rule-replacement" title={entry.replacement}>
-                    {entry.replacement || '—'}
-                  </span>
-                </span>
-              </label>
-              <span className="tts-rule-meta">
-                {entry.source === 'user' ? <span className="badge badge-accent">yours</span> : null}
-                {entry.source === 'user' ? (
-                  <span className="tts-rule-actions">
-                    <button
-                      type="button"
-                      className="tts-rule-action"
-                      aria-label={`Edit rule ${entry.pattern}`}
-                      onClick={() => startEdit(entry)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      className="tts-rule-action danger"
-                      aria-label={`Delete rule ${entry.pattern}`}
-                      onClick={() => void remove(entry)}
-                    >
-                      Delete
-                    </button>
-                  </span>
-                ) : null}
-              </span>
-            </li>
-            {draft.id === entry.id ? <li className="tts-editor-row">{editor}</li> : null}
-          </Fragment>
-        ))}
-        {!loading && visible.length === 0 ? (
-          <li className="tts-empty">{query ? `No rules match “${query}”.` : 'No rules yet.'}</li>
-        ) : null}
-      </ul>
-
-      {hiddenCount > 0 ? (
-        <div className="tts-add">
-          <button type="button" className="btn btn-secondary" onClick={() => setShowAll(true)}>
-            Show all {visible.length} rules
-          </button>
-        </div>
-      ) : showAll && visible.length > INITIAL_RULES ? (
-        <div className="tts-add">
-          <button type="button" className="btn btn-ghost" onClick={() => setShowAll(false)}>
-            Show fewer
-          </button>
-        </div>
-      ) : null}
-
       {draft.id !== undefined && !editingVisible ? <div className="tts-editor-row">{editor}</div> : null}
 
-      <div className="field">
-        <label className="field-label" htmlFor="tts-lexicon-preview">
-          Preview
-        </label>
-        <input
-          id="tts-lexicon-preview"
-          className="input"
-          type="text"
-          value={previewText}
-          placeholder="CYP3A4 inhibitors at 5 mg/kg…"
-          onChange={(e) => setPreviewText(e.target.value)}
-        />
-        <output className="tts-preview" htmlFor="tts-lexicon-preview" aria-live="polite">
-          {previewResult || 'Type a phrase to see the spoken form.'}
-        </output>
-      </div>
+      <details className="disc-sub" onToggle={(event) => setBuiltinOpen(event.currentTarget.open)}>
+        <summary>Built-in rules ({builtinEntries.length})</summary>
+        <div className="disc-sub-body">
+          <div className="field">
+            <label className="field-label" htmlFor="tts-lexicon-search">
+              Search rules
+            </label>
+            <input
+              id="tts-lexicon-search"
+              className="input"
+              type="search"
+              value={query}
+              placeholder="CYP, half-life, mg/kg…"
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <p className="field-hint tts-lexicon-count" aria-live="polite">
+              {loading
+                ? 'Loading rules…'
+                : query.trim()
+                  ? `Showing ${builtinVisible.length} of ${builtinEntries.length} rules`
+                  : ''}
+            </p>
+          </div>
+
+          {/* A few hundred rows are only built while the disclosure is open;
+              nothing in here runs in the background. */}
+          {builtinOpen ? (
+            <ul className="tts-rules tts-rules-builtin" aria-busy={loading}>
+              {builtinVisible.map(ruleRow)}
+              {!loading && builtinVisible.length === 0 ? (
+                <li className="tts-empty">{query ? `No rules match “${query}”.` : 'No built-in rules yet.'}</li>
+              ) : null}
+            </ul>
+          ) : null}
+        </div>
+      </details>
+
+      <details className="disc-sub">
+        <summary>Advanced</summary>
+        <div className="disc-sub-body">
+          <div className="field">
+            <label className="field-label" htmlFor="tts-lexicon-preview">
+              Preview
+            </label>
+            <input
+              id="tts-lexicon-preview"
+              className="input"
+              type="text"
+              value={previewText}
+              placeholder="CYP3A4 inhibitors at 5 mg/kg…"
+              onChange={(e) => setPreviewText(e.target.value)}
+            />
+            <output className="tts-preview" htmlFor="tts-lexicon-preview" aria-live="polite">
+              {previewResult || 'Type a phrase to see the spoken form.'}
+            </output>
+          </div>
+        </div>
+      </details>
 
       <ErrorBanner message={error} />
     </div>
@@ -612,15 +606,9 @@ export function CachePanel() {
   return (
     <div className="tts-panel">
       <div className="tts-cache-row">
-        <div>
-          <p className="tts-cache-size tnum" data-testid="tts-cache-size">
-            {cacheBytes === null ? 'Measuring…' : formatBytes(cacheBytes)}
-          </p>
-          <p className="field-hint">
-            Sentences already read by an on-device model. Stored on this device; removing them only costs a moment to
-            rebuild.
-          </p>
-        </div>
+        <p className="tts-cache-size tnum" data-testid="tts-cache-size">
+          {cacheBytes === null ? 'Measuring…' : formatBytes(cacheBytes)}
+        </p>
         <button type="button" className="btn btn-secondary" disabled={clearing} onClick={() => void clearCache()}>
           {clearing ? 'Clearing…' : 'Clear cache'}
         </button>
@@ -628,6 +616,19 @@ export function CachePanel() {
       <p className="tts-status" role="status">
         {status ?? ''}
       </p>
+
+      <details className="disc-sub">
+        <summary>How this works</summary>
+        <div className="disc-sub-body">
+          <div className="tts-notes">
+            <p className="tts-note">
+              Sentences already read by an on-device model. Stored on this device; removing them only costs a moment to
+              rebuild.
+            </p>
+          </div>
+        </div>
+      </details>
+
       <ErrorBanner message={error} />
     </div>
   );

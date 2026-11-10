@@ -6,8 +6,9 @@
  * text on the page keeps every table, figure and footnote, dimmed with a note
  * that the voice passes over it.
  *
- * Self-contained: it renders its own settings section, so the settings page
- * mounts it with one line and nothing else has to know its shape.
+ * The Settings page supplies this panel's section, its id and its h2, so the
+ * panel is a plain block. What the page does not show until asked (the notes
+ * behind each skipped kind) sits in a nested disclosure.
  */
 import { useSetting, setSetting } from '../core/settings';
 import {
@@ -15,9 +16,12 @@ import {
   DEFAULT_PAUSE_MS,
   DEFAULT_SKIP,
   PAUSE_KEY,
+  PREFETCH_AHEAD_KEY,
+  PREFETCH_CHOICES,
   SKIP_KEY,
   WORD_HIGHLIGHT_KEY,
   useBracketMode,
+  usePrefetchAhead,
   type SkipOptions,
 } from './reading';
 import type { BracketMode } from './spoken';
@@ -26,7 +30,7 @@ import './reader.css';
 /** Keys that are a plain on/off switch. */
 type SwitchKey = Exclude<keyof SkipOptions, 'brackets'>;
 
-/** The order the switches appear in: prose structure first, then notation. */
+/** The order the chips appear in: prose structure first, then notation. */
 const SKIP_ROWS: { key: SwitchKey; label: string; hint?: string }[] = [
   { key: 'tables', label: 'Tables', hint: 'Dose tables stay on the page, unread.' },
   { key: 'figures', label: 'Figures & charts', hint: 'Their captions are a separate switch.' },
@@ -38,11 +42,16 @@ const SKIP_ROWS: { key: SwitchKey; label: string; hint?: string }[] = [
   { key: 'citations', label: 'Citations', hint: '“[12]” and “(Smith et al., 2019)” are not spoken.' },
 ];
 
-/** Three ways to speak "(ANS)", "(see Fig. 2)" — words in brackets carry meaning. */
+/** Ways to speak "(ANS)", "(see Fig. 2)" — words in brackets carry meaning. */
 const BRACKET_ROWS: { value: BracketMode; label: string; hint: string }[] = [
   {
+    value: 'pause',
+    label: 'Pause around them (recommended)',
+    hint: '“Autonomic nervous system (ANS) controls” → “autonomic nervous system, ANS, controls”, with a short pause each side.',
+  },
+  {
     value: 'announce',
-    label: 'Say “in brackets” (recommended)',
+    label: 'Say “in brackets”',
     hint: '“Autonomic nervous system (ANS)” → “autonomic nervous system, ANS in brackets”.',
   },
   {
@@ -74,6 +83,7 @@ export default function ReadingOptions() {
   const citations = useSetting<boolean>(SKIP_KEY.citations, DEFAULT_SKIP.citations);
   const brackets = useBracketMode();
   const pauseMs = useSetting<number>(PAUSE_KEY, DEFAULT_PAUSE_MS);
+  const prefetchAhead = usePrefetchAhead();
   const wordHighlight = useSetting<boolean>(WORD_HIGHLIGHT_KEY, true);
 
   const values: Record<SwitchKey, boolean> = {
@@ -87,102 +97,131 @@ export default function ReadingOptions() {
     citations,
   };
 
+  const notes = SKIP_ROWS.filter((row) => row.hint);
+
   return (
-    <section id="reading" className="settings-section rd-options" aria-labelledby="reading-h2">
-      <h2 id="reading-h2" className="settings-h2">
-        Reading aloud
-      </h2>
-      <p className="settings-sub">
+    <div className="rd-options">
+      <p className="rd-opt-intro">
         What the voice reads, and how it pauses between paragraphs. Skipped text stays on the page.
       </p>
 
-      <div className="card">
-        <fieldset className="rd-opt-group">
-          <legend className="rd-opt-legend">Skip while reading</legend>
-          <p className="rd-opt-hint">
-            Switched-off kinds stay visible in the text, dimmed, with a note that the voice passes over
-            them.
-          </p>
-
+      <fieldset className="rd-opt-group">
+        <legend className="rd-opt-legend">Skip while reading</legend>
+        {/* One chip per kind: the whole decision is the label, so eight switches
+            do not need eight rows. */}
+        <div className="rd-opt-chips">
           {SKIP_ROWS.map((row) => (
-            <label className="rd-opt-row" key={row.key}>
-              <span className="rd-opt-text">
-                <span className="rd-opt-name">{row.label}</span>
-                {row.hint ? <span className="rd-opt-note">{row.hint}</span> : null}
-              </span>
-              <input
-                className="rd-opt-check"
-                type="checkbox"
-                checked={values[row.key]}
-                aria-label={row.label}
-                onChange={(event) => void setSetting(SKIP_KEY[row.key], event.target.checked)}
-              />
-            </label>
+            <button
+              key={row.key}
+              type="button"
+              className="chip chip-tap"
+              aria-pressed={values[row.key]}
+              onClick={() => void setSetting(SKIP_KEY[row.key], !values[row.key])}
+            >
+              {row.label}
+            </button>
           ))}
-        </fieldset>
-
-        <fieldset className="rd-opt-group rd-opt-brackets">
-          <legend className="rd-opt-legend">Text in brackets</legend>
-          <p className="rd-opt-hint" id="rd-brackets-hint">
-            Text in brackets is part of the sentence, so the voice can say so instead of leaving a gap:
-            “(ANS)” becomes “ANS in brackets”.
-          </p>
-          {BRACKET_ROWS.map((row) => (
-            <label className="rd-opt-row" key={row.value}>
-              <span className="rd-opt-text">
-                <span className="rd-opt-name">{row.label}</span>
-                <span className="rd-opt-note">{row.hint}</span>
-              </span>
-              <input
-                className="rd-opt-check rd-opt-radio"
-                type="radio"
-                name="rd-brackets"
-                value={row.value}
-                checked={brackets === row.value}
-                aria-label={row.label}
-                onChange={() => void setSetting(BRACKET_KEY, row.value)}
-              />
-            </label>
-          ))}
-        </fieldset>
-
-        <div className="field rd-opt-field">
-          <label className="field-label" htmlFor="rd-pause">
-            Paragraph pause
-          </label>
-          <input
-            id="rd-pause"
-            className="rd-opt-range"
-            type="range"
-            min={0}
-            max={1500}
-            step={50}
-            value={pauseMs}
-            aria-describedby="rd-pause-hint"
-            onChange={(event) => void setSetting(PAUSE_KEY, Number(event.target.value))}
-          />
-          <p className="field-hint" id="rd-pause-hint">
-            {pauseLabel(pauseMs)}
-          </p>
         </div>
+      </fieldset>
 
-        <label className="rd-opt-row rd-opt-last">
-          <span className="rd-opt-text">
-            <span className="rd-opt-name">Highlight the word being spoken</span>
-            <span className="rd-opt-note">
-              Follows the voice word by word. The phone&apos;s own voice reports timing less precisely,
-              so the highlight there is estimated.
+      <fieldset className="rd-opt-group rd-opt-brackets">
+        <legend className="rd-opt-legend">Text in brackets</legend>
+        <p className="rd-opt-hint" id="rd-brackets-hint">
+          Text in brackets is part of the sentence, so the voice can say so instead of leaving a gap:
+          “(ANS)” becomes “ANS in brackets”.
+        </p>
+        {BRACKET_ROWS.map((row) => (
+          <label className="rd-opt-row" key={row.value}>
+            <span className="rd-opt-text">
+              <span className="rd-opt-name">{row.label}</span>
+              <span className="rd-opt-note">{row.hint}</span>
             </span>
-          </span>
-          <input
-            className="rd-opt-check"
-            type="checkbox"
-            checked={wordHighlight}
-            aria-label="Highlight the word being spoken"
-            onChange={(event) => void setSetting(WORD_HIGHLIGHT_KEY, event.target.checked)}
-          />
+            <input
+              className="rd-opt-check rd-opt-radio"
+              type="radio"
+              name="rd-brackets"
+              value={row.value}
+              checked={brackets === row.value}
+              aria-label={row.label}
+              onChange={() => void setSetting(BRACKET_KEY, row.value)}
+            />
+          </label>
+        ))}
+      </fieldset>
+
+      <div className="field rd-opt-field">
+        <label className="field-label" htmlFor="rd-pause">
+          Paragraph pause
         </label>
+        <input
+          id="rd-pause"
+          className="rd-opt-range"
+          type="range"
+          min={0}
+          max={1500}
+          step={50}
+          value={pauseMs}
+          aria-describedby="rd-pause-hint"
+          onChange={(event) => void setSetting(PAUSE_KEY, Number(event.target.value))}
+        />
+        <p className="field-hint" id="rd-pause-hint">
+          {pauseLabel(pauseMs)}
+        </p>
       </div>
-    </section>
+
+      <div className="field rd-opt-field">
+        <label className="field-label" htmlFor="rd-prefetch">
+          Prepare ahead
+        </label>
+        <select
+          id="rd-prefetch"
+          className="rd-opt-select"
+          value={prefetchAhead}
+          aria-describedby="rd-prefetch-hint"
+          onChange={(event) => void setSetting(PREFETCH_AHEAD_KEY, Number(event.target.value))}
+        >
+          {PREFETCH_CHOICES.map((choice) => (
+            <option key={choice} value={choice}>
+              {choice} sentences
+            </option>
+          ))}
+        </select>
+        <p className="field-hint" id="rd-prefetch-hint">
+          How many sentences to have ready before the voice reaches them. More avoids waiting, but uses more
+          battery and storage.
+        </p>
+      </div>
+
+      <label className="rd-opt-row rd-opt-last">
+        <span className="rd-opt-text">
+          <span className="rd-opt-name">Highlight the word being spoken</span>
+          <span className="rd-opt-note">
+            Follows the voice word by word. The phone&apos;s own voice reports timing less precisely, so the
+            highlight there is estimated.
+          </span>
+        </span>
+        <input
+          className="rd-opt-check"
+          type="checkbox"
+          checked={wordHighlight}
+          aria-label="Highlight the word being spoken"
+          onChange={(event) => void setSetting(WORD_HIGHLIGHT_KEY, event.target.checked)}
+        />
+      </label>
+
+      <details className="disc-sub">
+        <summary>How this works</summary>
+        <div className="disc-sub-body">
+          <p>A switched-off kind is skipped by the voice and stays on the page, dimmed.</p>
+          <ul className="rd-opt-notes">
+            {notes.map((row) => (
+              <li key={row.key}>
+                <span className="rd-opt-note-name">{row.label}</span> — {row.hint}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </details>
+    </div>
   );
 }

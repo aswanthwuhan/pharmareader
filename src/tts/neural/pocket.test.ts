@@ -134,6 +134,31 @@ describe('PocketEngine', () => {
     expect(ORT_BASE_URL).toBe('/ort/');
   });
 
+  it('shows download progress to a caller that joins an in-flight download', async () => {
+    const first: number[] = [];
+    const second: number[] = [];
+    const a = pocketEngine.prepare((fraction) => first.push(fraction));
+    const b = pocketEngine.prepare((fraction) => second.push(fraction));
+    await Promise.all([a, b]);
+
+    expect(first.length).toBeGreaterThan(0);
+    expect(second.length).toBeGreaterThan(0);
+    expect(first.at(-1)).toBe(1);
+    expect(second.at(-1)).toBe(1);
+  });
+
+  it('drops the progress watchers once the model has loaded', async () => {
+    const watcher = vi.fn();
+    await pocketEngine.prepare(watcher);
+
+    expect(watcher).toHaveBeenCalled();
+    // A finished download must not keep the panels' callbacks (and the report
+    // function they close over) alive for the rest of the session.
+    const listeners = (pocketEngine as unknown as { progressListeners: Set<unknown> })
+      .progressListeners;
+    expect(listeners.size).toBe(0);
+  });
+
   it('bakes the clamped rate into the synthesised WAV', async () => {
     const blob = await pocketEngine.synthesize!('metformin', { rate: 2 }); // clamped to 1.25
     const bytes = new Uint8Array(await blob.arrayBuffer());

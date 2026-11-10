@@ -4,7 +4,7 @@
  * in `prerenderCore.ts` so it stays unit-testable without a model.
  */
 import { cacheKey, getAudio, putAudio } from '../cache';
-import { expand, lexiconVersion } from '../lexicon';
+import { expand } from '../lexicon';
 import type { TtsEngine } from '../../core/types';
 import { audioDurationMs } from './wav';
 import {
@@ -29,7 +29,6 @@ export async function prerenderChapter(
 ): Promise<PrerenderReport> {
   return runPrerender(engine, items, opts, onProgress, {
     expand,
-    lexiconVersion,
     cacheKey,
     getAudio,
     putAudio,

@@ -109,7 +109,8 @@
 }
 
 /* A view switch, not a form control: a sunken track with the active half
-   raised onto the surface. 32px tall keeps the bar at 56px. */
+   raised onto the surface. The 48px target still fits the 56px bar; the track
+   grows with its buttons. */
 .rd-seg {
   display: inline-flex;
   flex: none;
@@ -121,7 +122,9 @@
 }
 
 .rd-seg-btn {
-  min-height: 28px;
+  /* Two small words are the easiest things to mis-tap in the bar: give the
+     toggle the same 48px box every other control answers to. */
+  min-height: var(--tap-comfort);
   padding: 0 var(--space-2);
   border: 0;
   border-radius: var(--radius-full);
@@ -627,7 +630,9 @@
   gap: var(--space-2);
   flex: 0 1 auto;
   min-width: 0;
-  min-height: 32px;
+  /* It reads as a label, but it is a link to the voice settings: give it the
+     same target as the controls beside it. */
+  min-height: var(--tap-comfort);
   margin-left: auto;
   padding: 0 var(--space-2);
   border: 1px solid var(--border);
@@ -1189,6 +1194,21 @@
 
 /* -- settings: reading aloud ---------------------------------------------- */
 
+/* The panel body: the Settings page supplies the section and its heading, so
+   this is just the stack of the three questions. */
+.rd-options {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.rd-opt-intro {
+  max-width: var(--measure-ui);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+}
+
 /* A switch row is the label: the whole line is the target, so a thumb never
    has to find a 20px box. Rules between rows read as one list, not a form. */
 .rd-opt-group {
@@ -1210,6 +1230,15 @@
   line-height: var(--lh-snug);
   color: var(--muted);
   text-wrap: pretty;
+}
+
+/* The kinds to skip are pills, not a column of switches: eight switches made a
+   tall list for a question most people answer once. */
+.rd-opt-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
 }
 
 .rd-opt-row {
@@ -1284,6 +1313,24 @@
   border-radius: 50%;
 }
 
+/* One line per kind, in the order of the chips above. */
+.rd-opt-notes {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+.rd-opt-note-name {
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+}
+
 /* -- selection playback ---------------------------------------------------- */
 
 /* Two small ways back into the text once a selection has been read out. */
@@ -1299,3 +1346,91 @@
   color: var(--accent);
 }
 
+
+/* -- touch targets ---------------------------------------------------------
+   Audit 16: controls in this screen were 28-44px. Raising --tap to the comfort
+   size for the reader alone gives every one of them a 48px box - bar buttons,
+   dock icons, popover presets, sheet tabs and the buttons inside the sheets -
+   while the app-wide 44px default elsewhere is untouched. */
+.rd-page {
+  --tap: var(--tap-comfort);
+}
+
+/* "End of chapter" is a one-shot: it sits in the same wrap row as the
+   durations and points at the chapter, not at a clock. */
+.rd-sleep-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* -- full screen ----------------------------------------------------------
+   The reader's own chrome is not rendered in full screen (see ReaderView), so
+   the page becomes the window. In Page view the PDF box is then the flexible
+   middle row: the old fixed 52dvh cap left half a phone screen empty no matter
+   how wide the page was fitted. */
+.page.rd-page--page {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+
+/* The page already ends at the window; the app frame's own bottom padding would
+   add a strip of blank scroll under it. */
+.app--reading:has(.rd-page--page) .app-main {
+  padding-bottom: 0;
+}
+
+.page.rd-page--page .rd-pdf {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.page.rd-page--page .rd-pdf-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+/* No player dock to clear, so the page controls sit just above the bottom edge;
+   the page itself is the full window height. Text mode keeps scrolling as a
+   document (the text is taller than the window); only its insets change. The
+   top inset is the display cutout: the status bar is hidden, the notch is not. */
+.page.rd-page--fullscreen {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+}
+
+.page.rd-page--page.rd-page--fullscreen {
+  height: 100dvh;
+}
+
+/* A way out that keyboard and screen-reader users can always reach: the pill
+   fades after a few seconds but stays in the tab order, and focus shows it. */
+.rd-immersive-exit {
+  position: fixed;
+  top: calc(var(--space-2) + env(safe-area-inset-top, 0px));
+  right: var(--space-3);
+  z-index: 7;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-2) ease;
+}
+
+.rd-immersive-exit.is-shown,
+.rd-immersive-exit:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.rd-opt-select {
+  width: 100%;
+  min-height: var(--tap-comfort);
+  margin-top: var(--space-2);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}

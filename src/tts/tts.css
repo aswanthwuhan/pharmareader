@@ -66,8 +66,44 @@
   line-height: var(--lh-snug);
 }
 
-.tts-test-sentence {
-  margin: calc(-1 * var(--space-3)) 0 0;
+/* Explanatory copy lives inside a `disc-sub` disclosure; it is plain muted
+   prose, never a callout box. */
+.tts-notes {
+  display: grid;
+  gap: var(--space-3);
+  max-width: 68ch;
+}
+
+.tts-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+}
+
+.tts-note-list {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.tts-note-list > div {
+  display: grid;
+  gap: 2px;
+}
+
+.tts-note-list dt {
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+}
+
+.tts-note-list dd {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
 }
 
 .tts-actions {
@@ -107,6 +143,17 @@
 
 .tts-lexicon-count {
   margin-top: var(--space-2);
+}
+
+.tts-lexicon-count:empty {
+  display: none;
+}
+
+/* The reader's own rules are usually empty at first; keep that line compact so
+   the panel opens short. */
+.tts-rules-own .tts-empty {
+  padding-block: var(--space-3);
+  border-bottom: 0;
 }
 
 .tts-rules {
@@ -309,7 +356,7 @@
 }
 
 .tts-cache-size {
-  margin: 0 0 var(--space-1);
+  margin: 0;
   color: var(--text);
   font-size: var(--fs-xl);
   font-weight: var(--fw-semibold);

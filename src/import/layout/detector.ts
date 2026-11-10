@@ -56,7 +56,7 @@ export async function createLayoutDetector(): Promise<PageLayoutDetector | null>
     pending.clear();
   });
 
-  await new Promise<void>((resolve, reject) => {
+  const loaded = new Promise<void>((resolve, reject) => {
     const onReply = (event: MessageEvent<LayoutReply>) => {
       const reply = event.data;
       if (reply.type === 'loaded') {
@@ -74,6 +74,13 @@ export async function createLayoutDetector(): Promise<PageLayoutDetector | null>
       [bytes],
     );
   });
+  try {
+    await loaded;
+  } catch (error) {
+    // The caller gets no handle to dispose, so the worker has to go here.
+    worker.terminate();
+    throw error;
+  }
 
   return {
     async detect(pixels, pageWidth, pageHeight) {

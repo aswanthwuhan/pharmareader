@@ -97,10 +97,10 @@ describe('planChapter', () => {
     expect(skippedLabel('footnote')).toBe('Footnote');
   });
 
-  it('announces brackets with the default mode', () => {
+  it('sets brackets off with pauses, not words, in the default mode', () => {
     const plan = planChapter(chapter([block('b1', 'p', ['The system (ANS) acts.'])]), DEFAULT_SKIP, 0);
     expect(plan.items[0]?.text).toBe('The system (ANS) acts.');
-    expect(plan.items[0]?.spoken).toBe('The system, ANS in brackets, acts.');
+    expect(plan.items[0]?.spoken).toBe('The system, ANS, acts.');
     expect(plan.items[0]?.charMap).not.toBeNull();
   });
 
@@ -163,9 +163,9 @@ describe('planSelection', () => {
     expect(planSelection(text, [], SKIP_NONE, 0)).toEqual([]);
   });
 
-  it('still strips citations and announces brackets', () => {
+  it('still strips citations and pauses around brackets', () => {
     const items = planSelection(text, ['b3-0'], DEFAULT_SKIP, 0);
-    expect(items[0]?.spoken).toBe('Three, in brackets, I think, close bracket.');
+    expect(items[0]?.spoken).toBe('Three, I think.');
   });
 
   it('keeps the block pause off selected sentences', () => {
@@ -175,7 +175,8 @@ describe('planSelection', () => {
 });
 
 describe('bracket setting', () => {
-  it('accepts the three modes only', () => {
+  it('accepts the four modes only', () => {
+    expect(isBracketMode('pause')).toBe(true);
     expect(isBracketMode('announce')).toBe(true);
     expect(isBracketMode('read')).toBe(true);
     expect(isBracketMode('skip')).toBe(true);
@@ -186,8 +187,8 @@ describe('bracket setting', () => {
 
   it('migrates the old on/off switch to a mode', () => {
     expect(resolveBracketMode(undefined, true)).toBe('skip');
-    expect(resolveBracketMode(undefined, false)).toBe('announce');
-    expect(resolveBracketMode(undefined, undefined)).toBe('announce');
+    expect(resolveBracketMode(undefined, false)).toBe('pause');
+    expect(resolveBracketMode(undefined, undefined)).toBe('pause');
   });
 
   it('lets the stored mode win over the old switch', () => {

@@ -80,7 +80,7 @@ export default function AiSettings() {
         </svg>
         <div className="banner-body">
           <p className="banner-title">Your key stays on this device</p>
-          <p>Selected text is sent to the provider you choose. Your key is stored only on this device.</p>
+          <p>Selected text is sent to the provider you choose.</p>
         </div>
       </div>
 
@@ -99,112 +99,136 @@ export default function AiSettings() {
         </span>
       </label>
 
-      <div className="field">
-        <label className="field-label" htmlFor="ai-preset">
-          Provider
-        </label>
-        <select id="ai-preset" className="input" value={picked} onChange={(e) => void onPresetChange(e.target.value)}>
-          {AI_PRESETS.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-            </option>
-          ))}
-        </select>
-        <p className="field-hint">Presets fill in a base URL and model. Choose Custom to point at another server.</p>
-      </div>
+      {enabled ? (
+        <>
+          <div className="field">
+            <label className="field-label" htmlFor="ai-preset">
+              Provider
+            </label>
+            <select id="ai-preset" className="input" value={picked} onChange={(e) => void onPresetChange(e.target.value)}>
+              {AI_PRESETS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </div>
 
-      <div className="field">
-        <label className="field-label" htmlFor="ai-key">
-          API key
-        </label>
-        <div className="ai-key-row">
-          <input
-            id="ai-key"
-            className="input"
-            type={showKey ? 'text' : 'password'}
-            value={apiKey}
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="sk-…"
-            onChange={(e) => setApiKey(e.target.value)}
-            onBlur={() => void persist()}
-          />
-          <button
-            type="button"
-            className="btn btn-secondary btn-icon"
-            aria-label={showKey ? 'Hide API key' : 'Show API key'}
-            aria-pressed={showKey}
-            title={showKey ? 'Hide API key' : 'Show API key'}
-            onClick={() => setShowKey((v) => !v)}
-          >
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-              focusable="false"
-            >
-              <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
-              <circle cx="12" cy="12" r="2.6" />
-              {showKey ? <path d="m4 4 16 16" /> : null}
-            </svg>
-          </button>
-        </div>
-        <p className="field-hint">Sent as a bearer token to the base URL below. Never written into a backup.</p>
-      </div>
+          <div className="field">
+            <label className="field-label" htmlFor="ai-key">
+              API key
+            </label>
+            <div className="ai-key-row">
+              <input
+                id="ai-key"
+                className="input"
+                type={showKey ? 'text' : 'password'}
+                value={apiKey}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="sk-…"
+                onChange={(e) => setApiKey(e.target.value)}
+                onBlur={() => void persist()}
+              />
+              <button
+                type="button"
+                className="btn btn-secondary btn-icon"
+                aria-label={showKey ? 'Hide API key' : 'Show API key'}
+                aria-pressed={showKey}
+                title={showKey ? 'Hide API key' : 'Show API key'}
+                onClick={() => setShowKey((v) => !v)}
+              >
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                  focusable="false"
+                >
+                  <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+                  <circle cx="12" cy="12" r="2.6" />
+                  {showKey ? <path d="m4 4 16 16" /> : null}
+                </svg>
+              </button>
+            </div>
+          </div>
 
-      <div className="ai-endpoints">
-        <div className="field">
-          <label className="field-label" htmlFor="ai-base-url">
-            Base URL
-          </label>
-          <input
-            id="ai-base-url"
-            className="input"
-            type="text"
-            inputMode="url"
-            value={baseUrl}
-            spellCheck={false}
-            placeholder="https://api.openai.com/v1"
-            onChange={(e) => setBaseUrl(e.target.value)}
-            onBlur={() => void persist()}
-          />
-        </div>
-
-        <div className="field">
-          <label className="field-label" htmlFor="ai-model">
-            Model
-          </label>
-          <input
-            id="ai-model"
-            className="input"
-            type="text"
-            value={model}
-            spellCheck={false}
-            placeholder="gpt-4.1-mini"
-            onChange={(e) => setModel(e.target.value)}
-            onBlur={() => void persist()}
-          />
-        </div>
-      </div>
-
-      <div className="ai-test-row">
-        <button type="button" className="btn btn-secondary" onClick={() => void test()} disabled={testing}>
-          {testing ? 'Testing…' : 'Test'}
-        </button>
-        <p className="field-hint ai-test-hint">Sends one tiny message to check the key and model.</p>
-      </div>
+          <div className="ai-test-row">
+            <button type="button" className="btn btn-secondary" onClick={() => void test()} disabled={testing}>
+              {testing ? 'Testing…' : 'Test'}
+            </button>
+            <p className="field-hint ai-test-hint">Sends one tiny message to check the key and model.</p>
+          </div>
+        </>
+      ) : (
+        <p className="field-hint ai-off-hint">Turn AI on to choose a provider and enter a key.</p>
+      )}
 
       {result ? (
         <div className={result.ok ? 'banner banner-success' : 'banner banner-error'} role={result.ok ? 'status' : 'alert'}>
           <p>{result.message}</p>
         </div>
       ) : null}
+
+      <details className="disc-sub">
+        <summary>Advanced</summary>
+        <div className="disc-sub-body">
+          <div className="ai-endpoints">
+            <div className="field">
+              <label className="field-label" htmlFor="ai-base-url">
+                Base URL
+              </label>
+              <input
+                id="ai-base-url"
+                className="input"
+                type="text"
+                inputMode="url"
+                value={baseUrl}
+                spellCheck={false}
+                placeholder="https://api.openai.com/v1"
+                onChange={(e) => setBaseUrl(e.target.value)}
+                onBlur={() => void persist()}
+              />
+            </div>
+
+            <div className="field">
+              <label className="field-label" htmlFor="ai-model">
+                Model
+              </label>
+              <input
+                id="ai-model"
+                className="input"
+                type="text"
+                value={model}
+                spellCheck={false}
+                placeholder="gpt-4.1-mini"
+                onChange={(e) => setModel(e.target.value)}
+                onBlur={() => void persist()}
+              />
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <details className="disc-sub">
+        <summary>How this works</summary>
+        <div className="disc-sub-body">
+          <div className="ai-explain">
+            <p>Your key is stored only on this device, in this app's own database.</p>
+            <p>
+              It is sent as a bearer token to the base URL, and nowhere else. A backup never contains the key or your AI
+              settings.
+            </p>
+            <p>Presets fill in a base URL and model. Choose Custom to point at another server.</p>
+            <p>Test sends one tiny message, so a wrong key or model name shows up before you use AI on a page.</p>
+          </div>
+        </div>
+      </details>
     </div>
   );
 }

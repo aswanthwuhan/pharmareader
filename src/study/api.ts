@@ -303,6 +303,16 @@ export interface ReviewResult {
   log: ReviewLogRecord;
 }
 
+/**
+ * `now`, held at the card's own `last_review` when the device clock is behind it.
+ * ts-fsrs 6 rejects a negative elapsed time (`Invalid delta_t`) from `next` and
+ * `repeat` alike, so a clock moved back would otherwise throw away the rating —
+ * or, from a preview, the whole session.
+ */
+export function reviewNow(lastReview: Date | undefined, now: Date = new Date()): Date {
+  return lastReview && now.getTime() < lastReview.getTime() ? lastReview : now;
+}
+
 /** Apply one FSRS rating and persist both the updated card and the review log. */
 export async function reviewCard(cardId: string, rating: 1 | 2 | 3 | 4): Promise<ReviewResult> {
   // Rating.Manual (0) and out-of-range grades corrupt the scheduling state.
@@ -312,8 +322,12 @@ export async function reviewCard(cardId: string, rating: 1 | 2 | 3 | 4): Promise
   const record = await db.cards.get(cardId);
   if (!record) throw new Error(`Card ${cardId} not found`);
 
-  const now = new Date();
-  const { card: nextCard, log } = fsrs().next(fromFsrs(record.fsrs), now, rating);
+  const previous = fromFsrs(record.fsrs);
+  // A clock moved backwards dates this review before the card's own last_review,
+  // which ts-fsrs refuses; reviewing at last_review keeps the schedule monotonic
+  // instead of losing the rating.
+  const now = reviewNow(previous.last_review);
+  const { card: nextCard, log } = fsrs().next(previous, now, rating);
 
   const updated: CardRecord = { ...record, fsrs: toFsrs(nextCard) };
   const reviewLog: ReviewLogRecord = {
@@ -329,6 +343,55 @@ export async function reviewCard(cardId: string, rating: 1 | 2 | 3 | 4): Promise
     await db.reviewLogs.add(reviewLog);
   });
   return { card: updated, log: reviewLog };
+}
+
+/** Do two stored schedules describe the same review state? */
+function sameSchedule(a: unknown, b: unknown): boolean {
+  const x = fromFsrs(a);
+  const y = fromFsrs(b);
+  return (
+    x.due.getTime() === y.due.getTime() &&
+    x.last_review?.getTime() === y.last_review?.getTime() &&
+    x.state === y.state &&
+    x.reps === y.reps &&
+    x.lapses === y.lapses &&
+    x.stability === y.stability &&
+    x.difficulty === y.difficulty &&
+    x.scheduled_days === y.scheduled_days &&
+    x.learning_steps === y.learning_steps
+  );
+}
+
+/**
+ * Take back the last rating: one transaction restores the card's schedule and
+ * removes the log row that rating wrote, so the card is due again. Every other
+ * log is left alone.
+ *
+ * The card can move under us between the rating and the undo — deleted from the
+ * Cards tab or another window, edited, even rated again. Restoring the whole old
+ * row would resurrect a deleted card and undo a newer rating, so the transaction
+ * refuses unless the row still carries the schedule the rating wrote, and then
+ * puts back only `fsrs`, leaving any text edit in place.
+ */
+export async function undoReview(result: ReviewResult, previous: CardRecord): Promise<void> {
+  const cardId = result.card.id;
+  if (previous.id !== cardId) {
+    throw new Error(`Undo card ${previous.id} does not match reviewed card ${cardId}`);
+  }
+  await db.transaction('rw', [db.cards, db.reviewLogs], async () => {
+    const stored = await db.cards.get(cardId);
+    if (!stored) throw new Error(`Card ${cardId} was deleted; nothing to undo`);
+    // Already undone, or rated again since: the rating is no longer the last word.
+    if (!sameSchedule(stored.fsrs, result.card.fsrs)) {
+      throw new Error(`Card ${cardId} changed since the rating; nothing to undo`);
+    }
+    const log = await db.reviewLogs.get(result.log.id);
+    if (log && log.cardId !== cardId) {
+      throw new Error(`Review log ${log.id} belongs to card ${log.cardId}`);
+    }
+    await db.cards.update(cardId, { fsrs: previous.fsrs });
+    await db.reviewLogs.delete(result.log.id);
+  });
 }
 
 function findChapterTitle(parsed: ParsedDoc | undefined, sentenceIds: string[]): string | undefined {

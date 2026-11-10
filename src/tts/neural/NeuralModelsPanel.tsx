@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { setSetting, useSetting } from '../../core/settings';
 import type { TtsEngine, TtsVoice } from '../../core/types';
+import { resetDownload, startDownload, useDownload, type DownloadState } from '../downloads';
 import { measureRtf, rtfSettingKey } from './benchmark';
 import { copyText } from './clipboard';
 import {
@@ -22,6 +23,9 @@ import styles from './NeuralModelsPanel.module.css';
 
 type ModelId = 'pocket' | 'kokoro';
 
+/** What is on disk, independent of whether a download is running. */
+type Availability = 'loading' | 'absent' | 'ready';
+
 type ModelState =
   | { kind: 'loading' }
   | { kind: 'absent' }
@@ -37,6 +41,34 @@ const DTYPE_LABELS: Record<KokoroDtype, string> = {
 
 const POCKET_ATTRIBUTION = 'Pocket TTS by Kyutai — model weights CC-BY-4.0.';
 const KOKORO_ATTRIBUTION = 'Kokoro-82M by hexgrad — Apache-2.0.';
+
+/**
+ * Derive one card's state from the download store and the disk check.
+ *
+ * Nothing about a download lives in this component's state: that state died with
+ * the panel when the user left Settings, which is why the progress disappeared and
+ * the unfinished cache looked like a failure.
+ */
+function modelState(
+  model: ModelId,
+  download: DownloadState,
+  available: Availability,
+  failure: NeuralErrorInfo | null
+): ModelState {
+  if (download.status === 'downloading' || download.status === 'unpacking') {
+    return { kind: 'downloading', fraction: download.fraction };
+  }
+  if (download.status === 'error') {
+    return {
+      kind: 'error',
+      info: describeNeuralError(model, download.cause ?? download.error ?? 'The download failed.'),
+    };
+  }
+  if (failure) return { kind: 'error', info: failure };
+  if (download.status === 'done' || available === 'ready') return { kind: 'ready' };
+  if (available === 'loading') return { kind: 'loading' };
+  return { kind: 'absent' };
+}
 
 interface EngineCardProps {
   model: ModelId;
@@ -55,7 +87,11 @@ interface EngineCardProps {
   measuring: boolean;
   rtf: number;
   measureError: string | null;
-  children?: ReactNode;
+  /** A download-size decision or a technical readout: sits behind Advanced. */
+  advanced?: ReactNode;
+  /** More than a line of explanation: sits behind How this works. */
+  howItWorks?: ReactNode;
+  attribution?: string;
 }
 
 function EngineCard(props: EngineCardProps) {
@@ -65,12 +101,14 @@ function EngineCard(props: EngineCardProps) {
   const speed = speedLine(props.rtf);
 
   return (
-    <section className={styles.card} aria-labelledby={`tts-${props.model}-title`}>
+    <section className={styles.block} aria-labelledby={`tts-${props.model}-title`}>
       <header className={styles.head}>
-        <h3 id={`tts-${props.model}-title`} className={styles.title}>
-          {props.title}
-        </h3>
-        <span className={styles.qualifier}>· {props.qualifier}</span>
+        <div className={styles.name}>
+          <h3 id={`tts-${props.model}-title`} className={styles.title}>
+            {props.title}
+          </h3>
+          <span className={styles.qualifier}>· {props.qualifier}</span>
+        </div>
         <div className={styles.actions}>
           {state.kind !== 'ready' && (
             <button type="button" className="btn btn-primary" onClick={props.onDownload} disabled={busy || state.kind === 'loading'}>
@@ -110,7 +148,13 @@ function EngineCard(props: EngineCardProps) {
 
       {state.kind === 'error' && <ErrorDetails info={state.info} />}
 
-      {props.children}
+      {/* Measuring lives under Advanced, but if it failed the failure is the
+          user's answer: it stays in the open next to the model it belongs to. */}
+      {props.measureError && (
+        <p className={styles.measureError} role="alert">
+          {props.measureError}
+        </p>
+      )}
 
       {/* A voice list belongs to a model that is here; before that it is a
           disabled control explaining nothing. */}
@@ -131,36 +175,50 @@ function EngineCard(props: EngineCardProps) {
         </label>
       )}
 
-      <div className={styles.speed}>
-        <p className={styles.speedResult}>
-          {props.measureError ? (
-            <span className={styles.measureError}>{props.measureError}</span>
-          ) : speed.value ? (
-            <>
-              <span className={styles.speedValue}>{speed.value}</span>{' '}
-              <span className={speed.ok ? styles.speedOk : styles.speedSlow}>{speed.verdict}</span>
-            </>
-          ) : (
-            <span>Speed not measured yet</span>
-          )}
-        </p>
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={props.onMeasure}
-          // Measuring synthesises with the real model, so it must already be here;
-          // otherwise the click would silently start a 90–150 MB download.
-          disabled={busy || state.kind !== 'ready'}
-        >
-          {props.measuring ? 'Measuring…' : 'Measure speed'}
-        </button>
-      </div>
+      <details className="disc-sub">
+        <summary>Advanced</summary>
+        <div className="disc-sub-body">
+          {props.advanced}
 
-      <p className={styles.hint}>
-        {engine.capabilities.prerender
-          ? 'Can pre-render a chapter to audio for offline listening.'
-          : 'Streams from the network; no pre-render.'}
-      </p>
+          <div className={styles.speed}>
+            <p className={styles.speedResult}>
+              {speed.value ? (
+                <>
+                  <span className={styles.speedValue}>{speed.value}</span>{' '}
+                  <span className={speed.ok ? styles.speedOk : styles.speedSlow}>{speed.verdict}</span>
+                </>
+              ) : (
+                <span>Speed not measured yet</span>
+              )}
+            </p>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={props.onMeasure}
+              // Measuring synthesises with the real model, so it must already be here;
+              // otherwise the click would silently start a 90–150 MB download.
+              disabled={busy || state.kind !== 'ready'}
+            >
+              {props.measuring ? 'Measuring…' : 'Measure speed'}
+            </button>
+          </div>
+
+          <p className={styles.hint}>
+            {engine.capabilities.prerender
+              ? 'Can pre-render a chapter to audio for offline listening.'
+              : 'Streams from the network; no pre-render.'}
+          </p>
+
+          {props.attribution && <p className={styles.attribution}>{props.attribution}</p>}
+        </div>
+      </details>
+
+      {props.howItWorks && (
+        <details className="disc-sub">
+          <summary>How this works</summary>
+          <div className="disc-sub-body">{props.howItWorks}</div>
+        </details>
+      )}
     </section>
   );
 }
@@ -214,7 +272,7 @@ function ErrorDetails({ info }: { info: NeuralErrorInfo }) {
       <div className={styles.errorBlock} ref={blockRef}>
         <p className={styles.errorStage}>Failed while {info.stage}</p>
         <p className={styles.errorMessage}>{info.message}</p>
-        <details className={styles.errorDetails} open={copyState === 'failed'}>
+        <details className={`disc-sub ${styles.errorDetails}`} open={copyState === 'failed'}>
           <summary>Technical details</summary>
           <pre ref={detailsRef}>{info.details}</pre>
         </details>
@@ -240,8 +298,12 @@ function selectDetails(block: HTMLDivElement | null, pre: HTMLPreElement | null)
 }
 
 export default function NeuralModelsPanel() {
-  const [pocketState, setPocketState] = useState<ModelState>({ kind: 'loading' });
-  const [kokoroState, setKokoroState] = useState<ModelState>({ kind: 'loading' });
+  const pocketDownload = useDownload('pocket');
+  const kokoroDownload = useDownload('kokoro');
+  const [pocketAvailable, setPocketAvailable] = useState<Availability>('loading');
+  const [kokoroAvailable, setKokoroAvailable] = useState<Availability>('loading');
+  const [pocketFailure, setPocketFailure] = useState<NeuralErrorInfo | null>(null);
+  const [kokoroFailure, setKokoroFailure] = useState<NeuralErrorInfo | null>(null);
   const [pocketVoices, setPocketVoices] = useState<TtsVoice[]>([]);
   const [kokoroVoices, setKokoroVoices] = useState<TtsVoice[]>([]);
   const [measuring, setMeasuring] = useState<ModelId | null>(null);
@@ -266,7 +328,7 @@ export default function NeuralModelsPanel() {
         isModelReadyFlag('pocket'),
       ]);
       if (!alive) return;
-      setPocketState(pocketDownloaded ? { kind: 'ready' } : { kind: 'absent' });
+      setPocketAvailable(pocketDownloaded ? 'ready' : 'absent');
       if (pocketDownloaded && pocketLoaded) {
         void loadVoices(pocketEngine, (voices) => {
           if (alive) setPocketVoices(voices);
@@ -275,7 +337,7 @@ export default function NeuralModelsPanel() {
       if (native) return;
       const kokoroDownloaded = await isModelDownloaded('kokoro');
       if (!alive) return;
-      setKokoroState(kokoroDownloaded ? { kind: 'ready' } : { kind: 'absent' });
+      setKokoroAvailable(kokoroDownloaded ? 'ready' : 'absent');
       // Kokoro's voice list is static, so it is available without loading the model.
       void loadVoices(kokoroEngine, (voices) => {
         if (alive) setKokoroVoices(voices);
@@ -286,38 +348,54 @@ export default function NeuralModelsPanel() {
     };
   }, [native]);
 
+  // A download may finish while the panel is unmounted (that is the point of the
+  // store). The next mount's disk check is asynchronous, so react to the store
+  // directly to light up "Ready" and the voice list.
+  useEffect(() => {
+    if (pocketDownload.status !== 'done') return;
+    setPocketAvailable('ready');
+    void loadVoices(pocketEngine, setPocketVoices);
+  }, [pocketDownload.status]);
+
+  useEffect(() => {
+    if (native || kokoroDownload.status !== 'done') return;
+    setKokoroAvailable('ready');
+    void loadVoices(kokoroEngine, setKokoroVoices);
+  }, [kokoroDownload.status, native]);
+
   const download = useCallback(
-    async (
-      model: ModelId,
-      engine: TtsEngine,
-      setState: (state: ModelState) => void,
-      setVoices: (voices: TtsVoice[]) => void
-    ) => {
-      setState({ kind: 'downloading', fraction: 0 });
-      try {
-        await engine.prepare((fraction) => setState({ kind: 'downloading', fraction }));
-        setVoices(await engine.listVoices());
-        setState({ kind: 'ready' });
+    (model: ModelId, engine: TtsEngine, setFailure: (info: NeuralErrorInfo | null) => void) => {
+      setFailure(null);
+      // The store keeps this running when the panel unmounts, and a second call
+      // (a remount, another screen) joins the same download instead of restarting it.
+      void startDownload(model, async (report) => {
+        await engine.prepare((fraction) => report({ fraction }));
         // 'auto' engine choice only picks a model with a stored RTF, so measure right away.
         void measureRtf(engine).catch(() => undefined);
-      } catch (err) {
-        setState({ kind: 'error', info: describeNeuralError(model, err) });
-      }
+      });
     },
     []
   );
 
   const remove = useCallback(
-    async (model: ModelId, reset: () => void, setState: (state: ModelState) => void, setVoices: (voices: TtsVoice[]) => void) => {
+    async (
+      model: ModelId,
+      reset: () => void,
+      setAvailable: (availability: Availability) => void,
+      setVoices: (voices: TtsVoice[]) => void,
+      setFailure: (info: NeuralErrorInfo | null) => void
+    ) => {
       try {
         // Unload before deleting: an open worker keeps the Cache Storage entries
         // (and the model memory) reachable and some browsers refuse the delete.
         reset();
         await deleteModel(model);
         setVoices([]);
-        setState({ kind: 'absent' });
+        setFailure(null);
+        setAvailable('absent');
+        resetDownload(model);
       } catch (err) {
-        setState({ kind: 'error', info: describeNeuralError(model, err) });
+        setFailure(describeNeuralError(model, err));
       }
     },
     []
@@ -347,11 +425,18 @@ export default function NeuralModelsPanel() {
 
   return (
     <div className={styles.panel}>
-      <p className={styles.intro}>
-        Neural voices run entirely on this device. Nothing is uploaded; the model files are downloaded once and
-        cached for offline use. Pre-rendering a chapter with a faster-than-real-time engine gives the smoothest
-        reading experience.
-      </p>
+      {/* The row body is a list of models; the paragraph that explains what
+          "neural" means here belongs to all of them, so it opens once at the top. */}
+      <details className="disc-sub">
+        <summary>How this works</summary>
+        <div className="disc-sub-body">
+          <p className={styles.intro}>
+            Neural voices run entirely on this device. Nothing is uploaded; the model files are downloaded once and
+            cached for offline use. Pre-rendering a chapter with a faster-than-real-time engine gives the smoothest
+            reading experience.
+          </p>
+        </div>
+      </details>
 
       <EngineCard
         model="pocket"
@@ -359,22 +444,26 @@ export default function NeuralModelsPanel() {
         title="Pocket TTS"
         qualifier="faster"
         sizeMb={POCKET_SIZE_MB}
-        state={pocketState}
+        state={modelState('pocket', pocketDownload, pocketAvailable, pocketFailure)}
         voices={pocketVoices}
         voiceId={pocketVoice}
         onVoiceChange={(voiceId) => void setSetting('tts.pocket.voice', voiceId)}
-        onDownload={() => void download('pocket', pocketEngine, setPocketState, setPocketVoices)}
-        onDelete={() => void remove('pocket', resetPocketEngine, setPocketState, setPocketVoices)}
+        onDownload={() => download('pocket', pocketEngine, setPocketFailure)}
+        onDelete={() =>
+          void remove('pocket', resetPocketEngine, setPocketAvailable, setPocketVoices, setPocketFailure)
+        }
         onMeasure={() => void measure('pocket', pocketEngine, pocketVoice, setPocketError)}
         measuring={measuring === 'pocket'}
         rtf={pocketRtf}
         measureError={pocketError}
-      >
-        <p className={styles.hint}>
-          Pocket changes speed by resampling, which also changes the pitch, so its reading speed is limited to{' '}
-          {POCKET_RATE_MIN.toFixed(2)}×–{POCKET_RATE_MAX.toFixed(2)}×. Use Kokoro or the system voice for a wider range.
-        </p>
-      </EngineCard>
+        attribution={POCKET_ATTRIBUTION}
+        howItWorks={
+          <p className={styles.intro}>
+            Pocket changes speed by resampling, which also changes the pitch, so its reading speed is limited to{' '}
+            {POCKET_RATE_MIN.toFixed(2)}×–{POCKET_RATE_MAX.toFixed(2)}×. Use Kokoro or the system voice for a wider range.
+          </p>
+        }
+      />
 
       {native ? (
         <KokoroNativePanel />
@@ -385,22 +474,27 @@ export default function NeuralModelsPanel() {
           title="Kokoro-82M"
           qualifier="best quality"
           sizeMb={kokoroSizeMb(dtype)}
-          state={kokoroState}
+          state={modelState('kokoro', kokoroDownload, kokoroAvailable, kokoroFailure)}
           voices={kokoroVoices}
           voiceId={kokoroVoice}
           onVoiceChange={(voiceId) => void setKokoroVoice(voiceId)}
-          onDownload={() => void download('kokoro', kokoroEngine, setKokoroState, setKokoroVoices)}
-          onDelete={() => void remove('kokoro', resetKokoroEngine, setKokoroState, setKokoroVoices)}
+          onDownload={() => download('kokoro', kokoroEngine, setKokoroFailure)}
+          onDelete={() =>
+            void remove('kokoro', resetKokoroEngine, setKokoroAvailable, setKokoroVoices, setKokoroFailure)
+          }
           onMeasure={() => void measure('kokoro', kokoroEngine, kokoroVoice, setKokoroError)}
           measuring={measuring === 'kokoro'}
           rtf={kokoroRtf}
           measureError={kokoroError}
-        >
-          {/* A download-size decision, not a daily one: it stays folded away. */}
-          <details className={styles.disclosure}>
-            <summary>Precision</summary>
-            <div className={styles.disclosureBody}>
+          attribution={KOKORO_ATTRIBUTION}
+          advanced={
+            // A download-size decision, not a daily one: it stays folded away.
+            <div className={styles.field}>
+              <label className="field-label" htmlFor="tts-kokoro-dtype">
+                Precision
+              </label>
               <select
+                id="tts-kokoro-dtype"
                 className="input"
                 aria-label="Precision"
                 value={dtype}
@@ -412,17 +506,16 @@ export default function NeuralModelsPanel() {
                   </option>
                 ))}
               </select>
-              <p className={styles.hint}>
-                {gpuHint}. Changing precision takes effect on the next download or reload. All 28 Kokoro voices are
-                English (af_* and am_* US, bf_* and bm_* UK).
-              </p>
             </div>
-          </details>
-        </EngineCard>
+          }
+          howItWorks={
+            <p className={styles.intro}>
+              {gpuHint}. Changing precision takes effect on the next download or reload. All 28 Kokoro voices are
+              English (af_* and am_* US, bf_* and bm_* UK).
+            </p>
+          }
+        />
       )}
-
-      <p className={styles.attribution}>{POCKET_ATTRIBUTION}</p>
-      {!native && <p className={styles.attribution}>{KOKORO_ATTRIBUTION}</p>}
     </div>
   );
 }

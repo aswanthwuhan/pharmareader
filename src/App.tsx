@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react';
-import { NavLink, Route, Routes, useLocation } from 'react-router-dom';
+import { useEffect, useRef, type ReactNode } from 'react';
+import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { installBackBridge } from './core/backButton';
 import LibraryPage from './pages/LibraryPage';
 import ReaderPage from './pages/ReaderPage';
 import ReviewPage from './pages/ReviewPage';
@@ -69,9 +70,20 @@ function NavIcon({ name }: { name: string }) {
 }
 
 export default function App() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  // The back bridge reads the path at press time, not at install time.
+  const pathRef = useRef(location.pathname);
+  pathRef.current = location.pathname;
+
+  // One listener for the Android back key: an open sheet or panel gets it
+  // first, then any screen falls back to the library, and only the library
+  // itself lets the shell ask about exiting the app.
+  useEffect(() => installBackBridge(navigate, () => pathRef.current), [navigate]);
+
   // Reading is a focused surface: on a wide screen the global rail steps aside
   // so the text column and the player own the full width.
-  const reading = useLocation().pathname.startsWith('/read/');
+  const reading = location.pathname.startsWith('/read/');
 
   return (
     <div className={reading ? 'app app--reading' : 'app'}>

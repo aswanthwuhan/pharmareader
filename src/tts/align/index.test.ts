@@ -5,14 +5,20 @@ import type { TranscriptWord } from './types';
 /** The aligner's worker client, replaced by a scriptable recogniser. */
 const aligner = vi.hoisted(() => ({
   available: false,
+  loaded: false,
   fail: false,
   hang: false,
   calls: 0,
+  resets: 0,
   words: [] as TranscriptWord[],
 }));
 
 vi.mock('./whisper', () => ({
   isWhisperAvailable: () => Promise.resolve(aligner.available),
+  isWhisperLoaded: () => aligner.loaded,
+  resetWhisperWorker: () => {
+    aligner.resets++;
+  },
   transcribe: () => {
     aligner.calls++;
     if (aligner.hang) return new Promise(() => undefined);
@@ -30,9 +36,11 @@ const TEXT = 'Digoxin has a half-life';
 beforeEach(() => {
   clearTimingCache();
   aligner.available = false;
+  aligner.loaded = false;
   aligner.fail = false;
   aligner.hang = false;
   aligner.calls = 0;
+  aligner.resets = 0;
   aligner.words = [];
 });
 
@@ -120,6 +128,154 @@ describe('wordTimings', () => {
     await vi.advanceTimersByTimeAsync(4000);
 
     await expect(pending).resolves.toEqual(estimateTimings(TEXT, 100));
+  });
+
+  it('keeps at most one clip in the model and one waiting', async () => {
+    vi.useFakeTimers();
+    aligner.available = true;
+    aligner.loaded = true;
+    aligner.hang = true;
+
+    const texts = Array.from({ length: 10 }, (_, index) => `sentence ${index}`);
+    const requests = texts.map((text, index) => wordTimings(clip(1000 + index), text, 1000));
+    await vi.advanceTimersByTimeAsync(0);
+
+    // One clip is in the model and one is waiting; the older eight are answered
+    // with their estimate instead of piling up in the worker. Before the queue
+    // was bounded all ten reached the recogniser.
+    expect(aligner.calls).toBe(1);
+    expect(vi.getTimerCount()).toBe(2);
+
+    await vi.advanceTimersByTimeAsync(4000);
+
+    const settled = await Promise.all(requests);
+    expect(settled).toEqual(texts.map((text) => estimateTimings(text, 1000)));
+    // Both timed out: the recogniser is not keeping up, so it is dropped.
+    expect(aligner.resets).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('answers a replaced waiting clip at once, without asking the model for it', async () => {
+    vi.useFakeTimers();
+    aligner.available = true;
+    aligner.hang = true;
+
+    const first = wordTimings(clip(1), 'first sentence', 1000);
+    await vi.advanceTimersByTimeAsync(0);
+    const second = wordTimings(clip(2), 'second sentence', 1000);
+    await vi.advanceTimersByTimeAsync(0);
+    const third = wordTimings(clip(3), 'third sentence', 1000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The replaced clip is no longer being read: it gets its estimate now.
+    await expect(second).resolves.toEqual(estimateTimings('second sentence', 1000));
+    expect(aligner.calls).toBe(1);
+    expect(vi.getTimerCount()).toBe(2);
+
+    await vi.advanceTimersByTimeAsync(4000);
+    await expect(first).resolves.toEqual(estimateTimings('first sentence', 1000));
+    await expect(third).resolves.toEqual(estimateTimings('third sentence', 1000));
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('pauses the recogniser after repeated timeouts, then tries it again a minute later', async () => {
+    vi.useFakeTimers();
+    aligner.available = true;
+    aligner.loaded = true;
+    aligner.hang = true;
+
+    const first = wordTimings(clip(1), 'first sentence', 1000);
+    const second = wordTimings(clip(2), 'second sentence', 1000);
+    await vi.advanceTimersByTimeAsync(4000);
+    await expect(first).resolves.toEqual(estimateTimings('first sentence', 1000));
+    await expect(second).resolves.toEqual(estimateTimings('second sentence', 1000));
+    expect(aligner.resets).toBe(1);
+    expect(aligner.calls).toBe(1);
+
+    // During the pause the worker is left alone: the estimate is the answer.
+    const third = wordTimings(clip(3), 'third sentence', 1000);
+    await expect(third).resolves.toEqual(estimateTimings('third sentence', 1000));
+    expect(aligner.calls).toBe(1);
+    expect(aligner.resets).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    const fourth = wordTimings(clip(4), 'fourth sentence', 1000);
+    await vi.advanceTimersByTimeAsync(4000);
+    await expect(fourth).resolves.toEqual(estimateTimings('fourth sentence', 1000));
+    expect(aligner.calls).toBe(2);
+  });
+
+  it('does not blame the recogniser for a cold model load', async () => {
+    vi.useFakeTimers();
+    aligner.available = true;
+    aligner.hang = true;
+
+    // The first session is still loading its weights: both clips time out, and
+    // neither counts as the model being slow.
+    const first = wordTimings(clip(1), 'first sentence', 1000);
+    const second = wordTimings(clip(2), 'second sentence', 1000);
+    await vi.advanceTimersByTimeAsync(4000);
+    await expect(first).resolves.toEqual(estimateTimings('first sentence', 1000));
+    await expect(second).resolves.toEqual(estimateTimings('second sentence', 1000));
+    expect(aligner.calls).toBe(1);
+    expect(aligner.resets).toBe(0);
+
+    // Once it is loaded, the same behaviour is the model falling behind.
+    aligner.loaded = true;
+    const third = wordTimings(clip(3), 'third sentence', 1000);
+    await vi.advanceTimersByTimeAsync(4000);
+    await expect(third).resolves.toEqual(estimateTimings('third sentence', 1000));
+    expect(aligner.resets).toBe(0);
+
+    const fourth = wordTimings(clip(4), 'fourth sentence', 1000);
+    await vi.advanceTimersByTimeAsync(4000);
+    await expect(fourth).resolves.toEqual(estimateTimings('fourth sentence', 1000));
+    expect(aligner.resets).toBe(1);
+  });
+
+  it('pauses the recogniser after repeated failures, then tries it again a minute later', async () => {
+    vi.useFakeTimers();
+    aligner.available = true;
+    aligner.fail = true;
+
+    const first = await wordTimings(clip(1), 'first sentence', 1000);
+    const second = await wordTimings(clip(2), 'second sentence', 1000);
+    expect(first).toEqual(estimateTimings('first sentence', 1000));
+    expect(second).toEqual(estimateTimings('second sentence', 1000));
+    // Two failures in a row: the worker is dropped (its pipeline is what broke)
+    // and the third clip does not touch it at all.
+    expect(aligner.resets).toBe(1);
+    const third = await wordTimings(clip(3), 'third sentence', 1000);
+    expect(third).toEqual(estimateTimings('third sentence', 1000));
+    expect(aligner.calls).toBe(2);
+
+    aligner.fail = false;
+    aligner.words = [
+      { text: 'fourth', startMs: 0, endMs: 400 },
+      { text: 'sentence', startMs: 400, endMs: 900 },
+    ];
+    await vi.advanceTimersByTimeAsync(60_000);
+    const fourth = await wordTimings(clip(4), 'fourth sentence', 1000);
+    expect(aligner.calls).toBe(3);
+    expect(fourth).not.toEqual(estimateTimings('fourth sentence', 1000));
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('does not leave its budget timer behind when the model answers in time', async () => {
+    vi.useFakeTimers();
+    aligner.available = true;
+    aligner.words = [
+      { text: 'Digoxin', startMs: 0, endMs: 500 },
+      { text: 'has', startMs: 500, endMs: 700 },
+      { text: 'a', startMs: 700, endMs: 780 },
+      { text: 'half', startMs: 780, endMs: 1050 },
+      { text: 'life', startMs: 1050, endMs: 1400 },
+    ];
+
+    const timings = await wordTimings(clip(), TEXT, 2600);
+
+    expect(timings).toHaveLength(4);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('forgets the oldest clips before the cache can grow without bound', async () => {

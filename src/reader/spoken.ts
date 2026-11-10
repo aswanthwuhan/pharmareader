@@ -4,8 +4,9 @@
  * A sentence keeps its citations and its parenthetical asides when it is
  * displayed, but a reader listening to a pharmacology chapter does not want to
  * hear "[12]" or "(Smith et al., 2019)" after every claim. Bracketed text is a
- * special case: dropping "(ANS)" loses information, so by default the reader
- * says that the words are in brackets ("… nervous system, ANS in brackets,").
+ * special case: dropping "(ANS)" loses information, so by default the aside is
+ * set off by pauses ("… nervous system, ANS, controls …"): the listener hears it
+ * as an aside without the voice saying "bracket" every few seconds.
  *
  * Whatever is changed, every remaining character is mapped back to its position
  * in the original sentence: word highlighting and selection offsets keep
@@ -13,7 +14,7 @@
  */
 
 /** How bracketed asides are spoken. */
-export type BracketMode = 'announce' | 'read' | 'skip';
+export type BracketMode = 'pause' | 'announce' | 'read' | 'skip';
 
 export interface SpeakPlan {
   /** The text handed to the voice. */
@@ -27,7 +28,8 @@ export interface SpeakOptions {
   citations: boolean;
   /**
    * What to do with bracketed asides, e.g. "(ANS)" or "(a cardiac glycoside)".
-   * `announce` says "in brackets" around them, `read` leaves them as written
+   * `pause` sets them off with commas (a short pause each side, no extra words),
+   * `announce` says "in brackets" once before them, `read` leaves them as written
    * and `skip` drops them.
    */
   brackets: BracketMode;
@@ -211,6 +213,15 @@ export function speakPlan(text: string, options: SpeakOptions): SpeakPlan {
     const comma = !sentenceStart && !',;:.!?—–-('.includes(previous);
     const suffix = next === '' || '.,;:!?)]'.includes(next) ? '' : ',';
 
+    if (mode === 'pause') {
+      // "system (ANS) controls" → "system, ANS, controls": the commas give the
+      // voice a breath on each side, which is what a printed bracket means.
+      if (!sentenceStart) pushText(comma ? ', ' : ' ', group.start);
+      copy(bodyStart, bodyStart + content.length);
+      pushText(suffix, group.end - 1);
+      continue;
+    }
+
     if (!sentenceStart && ACRONYM.test(content) && /[\p{L}\p{N})\]]$/u.test(previous)) {
       // "autonomic nervous system (ANS)" → "… system, ANS in brackets,".
       pushText(comma ? ', ' : ' ', group.start);
@@ -221,13 +232,12 @@ export function speakPlan(text: string, options: SpeakOptions): SpeakPlan {
     }
 
     if (sentenceStart) {
-      // "(See Fig. 2) Capsaicin …" → "In brackets, See Fig. 2, close bracket, …".
+      // "(See Fig. 2) Capsaicin …" → "In brackets, See Fig. 2, …".
       pushText('In brackets, ', group.start);
     } else {
       pushText(comma ? ', in brackets, ' : ' in brackets, ', group.start);
     }
     copy(bodyStart, bodyStart + content.length);
-    pushText(', close bracket', group.end - 1);
     pushText(suffix, group.end - 1);
   }
   copy(at, text.length);
