@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.0 — 2026-11-10
+Release-gated on an Android 16 emulator with the factory WebView 134 (clean install, upgrade from 0.1.1, offline, 5 cold starts).
+
+**Fixed**
+- Tapping a sentence then pressing Next skipped the tapped sentence (the cursor moved before audio existed).
+- PDF import crashed on Android WebView < 137 (`toHex is not a function`); now pdf.js legacy build + polyfill. Minimum WebView 110.
+- Imported files could read back as 0 bytes after an app update; the app now stores its own copy.
+- Upgrades could keep running the previous version's code (stale service worker); cleared on launch.
+- Cold-start freeze (ANR) and Page view opening tiny.
+
+**New**
+- On-device PDF layout detection (PP-DocLayout-L int8, 32 MB, optional): tables, figures, captions, formulas, headers/footers, footnotes, references. Re-analyse older books.
+- Settings → Reading aloud: skip tables / figures & charts / captions / formulas / headers & footers / footnotes / references / citations; brackets "Say 'in brackets'" (default), read, or skip; paragraph pause.
+- Word-by-word highlighting; optional on-device Whisper aligner (42 MB) makes it precise.
+- Play a selected chunk (Continue / Replay after), Prev/Next page buttons, Play starts from the page you are on, "Generating sentence N…" progress.
+- First audio much sooner (long sentences split at clauses): Kokoro ~1.7 s, Pocket ~3–5 s on the emulator.
+- Pronunciation: "Ch 39" → "Chapter 39"; 32 medical respellings (hypo/hyperglycaemia family…); 166 drug/term respellings from a 6,000-term MeSH + WHO-EML screen checked with Kokoro + Whisper.
+
+**Known limits**
+- JPEG2000/JBIG2 images in some PDFs show blank in Page view (text unaffected).
+- GPU acceleration is not available on Android today (see docs/PERFORMANCE.md).
+
 ## 0.1.2 — 2026-11-09
 - Medical pronunciation: 32 new rules (`med-` group) for words every TTS engine mangled — hypo/hyperglycaemia, -kalaemia, -natraemia, -calcaemia, hepatomegaly, pyelonephritis, gynaecomastia, empyema, epididymitis, hemiplegia and more. Each was checked by speaking it through Kokoro and Windows voices and transcribing with Whisper; respellings that made any engine worse were dropped.
 
