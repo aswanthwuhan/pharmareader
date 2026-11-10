@@ -244,7 +244,7 @@ export async function importBackup(file: Blob, mode: ImportMode): Promise<Import
   for (const [name, rows] of payload) {
     prepared.set(
       name,
-      name === 'books' ? await attachBookFiles(bookRows, files, mode, missingFile) : rows,
+      name === 'books' ? await attachBookFiles(bookRows, files, missingFile) : rows,
     );
   }
 
@@ -277,7 +277,6 @@ function stripFileBlob(book: unknown): unknown {
 async function attachBookFiles(
   rows: Omit<BookRecord, 'fileBlob'>[],
   files: Unzipped,
-  mode: ImportMode,
   missing: string[],
 ): Promise<BookRecord[]> {
   const books: BookRecord[] = [];
@@ -287,8 +286,10 @@ async function attachBookFiles(
     if (bytes) {
       fileBlob = new Blob([bytes], { type: MIME[record.format] });
     } else {
-      // A merge onto a device that already has the book keeps the local file.
-      const existing = mode === 'merge' ? await db.books.get(record.id) : undefined;
+      // A device that already has the book keeps its local file, in a replace
+      // too: a notes-only backup must never cost the reader her PDF. This runs
+      // before the replace transaction clears the table.
+      const existing = await db.books.get(record.id);
       if (existing?.fileBlob instanceof Blob) {
         fileBlob = existing.fileBlob;
       } else {

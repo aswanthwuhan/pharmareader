@@ -193,7 +193,11 @@ export async function importFile(file: File): Promise<string> {
 }
 
 export async function importText(title: string, text: string): Promise<string> {
-  const cleanTitle = normaliseText(title) || 'Pasted text';
+  // No title typed: the first line usually is one ("Chapter 1: Pharmacokinetics").
+  const firstLine = normaliseText(text.trim().split(/\r?\n/, 1)[0] ?? '').slice(0, 80);
+  // A one-line paste is the text itself, not a heading.
+  const heading = text.trim().includes('\n') ? firstLine : '';
+  const cleanTitle = normaliseText(title) || heading || 'Pasted text';
   const doc = parseText(text, cleanTitle);
   if (!doc.chapters.length) throw new Error('Nothing to import: the pasted text is empty.');
   return saveRecord(doc, new Blob([text], { type: 'text/plain' }));

@@ -722,3 +722,20 @@ describe('export streams book files', () => {
     expect(files['books/b0.txt']).toHaveLength(0);
   });
 });
+
+describe('a notes-only backup never drops a local book file', () => {
+  it('keeps the file of a book already on the device on a replace import', async () => {
+    const local = new Blob(['%PDF local file']);
+    const zip = await craftZip({
+      'manifest.json': manifest(),
+      'data/books.json': strToU8(JSON.stringify([{ ...book('b1'), fileBlob: undefined }])),
+    });
+    // fake-indexeddb cannot hold a real Blob, so hand the stored record back directly.
+    vi.spyOn(db.books, 'get').mockResolvedValue({ ...book('b1'), fileBlob: local } as never);
+
+    const report = await importBackup(zip, 'replace');
+
+    // Reported missing (and written as an empty Blob) only when the local file was not reused.
+    expect(report.missingFile).toEqual([]);
+  });
+});

@@ -277,3 +277,12 @@ describe('importUrl', () => {
     await pending;
   });
 });
+
+describe('importText title', () => {
+  it('uses the first line when no title is typed', async () => {
+    const { importText } = await import('./index');
+    const { db } = await import('../core/db');
+    const id = await importText('', ['Chapter 1: Pharmacokinetics', 'Drugs are absorbed.'].join(String.fromCharCode(10)));
+    expect((await db.books.get(id))?.title).toBe('Chapter 1: Pharmacokinetics');
+  });
+});

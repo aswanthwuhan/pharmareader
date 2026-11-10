@@ -217,18 +217,20 @@
 
 .tts-rule-pattern {
   overflow: hidden;
-  color: var(--text);
+  color: var(--muted);
   font-family: var(--font-ui);
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-semibold);
+  font-size: var(--fs-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* What is spoken leads the row; the pattern that triggers it is the quiet line below. */
 .tts-rule-replacement {
+  order: -1;
   overflow: hidden;
-  color: var(--muted);
+  color: var(--text);
   font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
