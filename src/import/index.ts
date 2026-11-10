@@ -73,10 +73,11 @@ async function parseFile(
     case 'pdf': {
       // Heavy extractors are loaded only when that file type is imported.
       const { parsePdf } = await import('./pdf');
-      const parsed = await parsePdf(await file.arrayBuffer(), fallback, (done, total) => {
+      const parsed = await parsePdf(await file.arrayBuffer(), fallback, (done, total, phase) => {
         // A 1000-page paper takes a while; a note every 25 pages is enough to
         // prove the app is alive without re-rendering the library 1000 times.
-        if (done === total || done % 25 === 0) onProgress?.(`page ${done} of ${total}`);
+        if (done !== total && done % 25 !== 0) return;
+        onProgress?.(phase === 'layout' ? `Analysing layout: page ${done} of ${total}` : `page ${done} of ${total}`);
       });
       // Under ~50 characters per page there is no real text layer: a scan.
       const warning =
@@ -219,4 +220,176 @@ export async function importUrl(url: string): Promise<string> {
   }
 
   return saveRecord(parsed, new Blob([article.content], { type: 'text/html' }));
+}
+
+export interface ReanalyseResult {
+  /** Which layout path ran, so the UI can say whether the model was used. */
+  layout: 'model' | 'heuristic';
+  sentencesBefore: number;
+  sentencesAfter: number;
+  /** Highlights whose text was found again; the rest are deleted with the text. */
+  highlightsKept: number;
+  highlightsDropped: number;
+  bookmarksKept: number;
+  bookmarksMoved: number;
+  bookmarksDropped: number;
+  /** Whether reading position still points at a sentence that exists. */
+  positionKept: boolean;
+}
+
+interface FlatSentence {
+  id: string;
+  chapterId: string;
+  text: string;
+}
+
+interface SentenceIndex {
+  flat: FlatSentence[];
+  textOf: Map<string, string>;
+  firstOf: Map<string, string>;
+}
+
+/**
+ * Re-read a PDF already in the library with the current layout settings, and
+ * carry the reader's highlights, bookmarks and position across.
+ *
+ * Sentence ids are positional (`chapter-block-sentence`), so re-analysis renumbers
+ * them all. Matching is by text instead: a highlight is kept when the same run of
+ * sentences appears again, and is deleted when its text no longer exists rather
+ * than pointing at whatever now sits at that index.
+ */
+export async function reanalyseBook(bookId: string, onProgress?: (note: string) => void): Promise<ReanalyseResult> {
+  const book = await db.books.get(bookId);
+  if (!book) throw new Error('That book is no longer in the library.');
+  if (book.format !== 'pdf') {
+    throw new Error('Only PDFs have a layout to detect; other formats are read from their own structure.');
+  }
+
+  onProgress?.('Opening the saved file');
+  const { parsePdf } = await import('./pdf');
+  const parsed = await parsePdf(await book.fileBlob.arrayBuffer(), book.title, (done, total, phase) => {
+    if (done !== total && done % 10 !== 0) return;
+    onProgress?.(phase === 'layout' ? `Analysing layout: page ${done} of ${total}` : `Reading text: page ${done} of ${total}`);
+  });
+  if (!parsed.doc.chapters.length) throw new Error('No readable text found in this file.');
+
+  const before = sentenceIndex(book.parsed);
+  const after = sentenceIndex(parsed.doc);
+
+  let highlightsKept = 0;
+  let highlightsDropped = 0;
+  for (const highlight of await db.highlights.where('bookId').equals(bookId).toArray()) {
+    const texts = highlight.sentenceIds
+      .map((id) => before.textOf.get(id))
+      .filter((text): text is string => Boolean(text));
+    const ids = matchRun(texts, after);
+    if (!ids.length) {
+      highlightsDropped += 1;
+      await db.highlights.delete(highlight.id);
+      continue;
+    }
+    highlightsKept += 1;
+    if (ids.join('\u0000') !== highlight.sentenceIds.join('\u0000')) {
+      await db.highlights.update(highlight.id, { sentenceIds: ids });
+    }
+  }
+
+  let bookmarksKept = 0;
+  let bookmarksMoved = 0;
+  let bookmarksDropped = 0;
+  for (const bookmark of await db.bookmarks.where('bookId').equals(bookId).toArray()) {
+    const text = before.textOf.get(bookmark.sentenceId);
+    const same = text ? after.firstOf.get(text) : undefined;
+    if (same) {
+      bookmarksKept += 1;
+      if (same !== bookmark.sentenceId) await db.bookmarks.update(bookmark.id, { sentenceId: same });
+      continue;
+    }
+
+    // The sentence is gone but its chapter may not be: keep the bookmark at the
+    // start of that chapter rather than losing the reader's place entirely.
+    const oldChapter = book.parsed.chapters.find((chapter) => chapter.id === bookmark.chapterId);
+    const newChapter = oldChapter
+      ? parsed.doc.chapters.find((chapter) => chapter.title === oldChapter.title)
+      : undefined;
+    const opening = newChapter?.blocks.flatMap((block) => block.sentences)[0];
+    if (!newChapter || !opening) {
+      bookmarksDropped += 1;
+      await db.bookmarks.delete(bookmark.id);
+      continue;
+    }
+    bookmarksMoved += 1;
+    await db.bookmarks.update(bookmark.id, { chapterId: newChapter.id, sentenceId: opening.id });
+  }
+
+  let positionKept = true;
+  let lastPos = book.lastPos;
+  if (lastPos) {
+    const text = before.textOf.get(lastPos.sentenceId);
+    const same = text ? after.firstOf.get(text) : undefined;
+    const oldChapter = book.parsed.chapters.find((chapter) => chapter.id === lastPos!.chapterId);
+    const newChapter = oldChapter
+      ? parsed.doc.chapters.find((chapter) => chapter.title === oldChapter.title)
+      : undefined;
+    const opening = newChapter?.blocks.flatMap((block) => block.sentences)[0];
+    const target = same ? { chapterId: after.flat.find((s) => s.id === same)?.chapterId, sentenceId: same } : undefined;
+
+    if (target?.chapterId) {
+      lastPos = { chapterId: target.chapterId, sentenceId: target.sentenceId };
+    } else if (newChapter && opening) {
+      lastPos = { chapterId: newChapter.id, sentenceId: opening.id };
+    } else {
+      lastPos = undefined;
+      positionKept = false;
+    }
+  }
+
+  await db.books.update(bookId, { parsed: parsed.doc, lastPos });
+
+  return {
+    layout: parsed.layout,
+    sentencesBefore: before.flat.length,
+    sentencesAfter: after.flat.length,
+    highlightsKept,
+    highlightsDropped,
+    bookmarksKept,
+    bookmarksMoved,
+    bookmarksDropped,
+    positionKept,
+  };
+}
+
+function sentenceIndex(doc: ParsedDoc): SentenceIndex {
+  const flat: FlatSentence[] = [];
+  const textOf = new Map<string, string>();
+  const firstOf = new Map<string, string>();
+
+  for (const chapter of doc.chapters) {
+    for (const block of chapter.blocks) {
+      for (const sentence of block.sentences) {
+        flat.push({ id: sentence.id, chapterId: chapter.id, text: sentence.text });
+        textOf.set(sentence.id, sentence.text);
+        if (!firstOf.has(sentence.text)) firstOf.set(sentence.text, sentence.id);
+      }
+    }
+  }
+
+  return { flat, textOf, firstOf };
+}
+
+/**
+ * The new ids of a run of sentences, matched as a run so a highlight keeps its
+ * extent; failing that, each sentence wherever it now appears.
+ */
+function matchRun(texts: string[], after: SentenceIndex): string[] {
+  if (!texts.length) return [];
+
+  for (let start = 0; start + texts.length <= after.flat.length; start++) {
+    const matches = texts.every((text, offset) => after.flat[start + offset].text === text);
+    if (matches) return after.flat.slice(start, start + texts.length).map((sentence) => sentence.id);
+  }
+
+  return texts
+    .map((text) => after.firstOf.get(text))
+    .filter((id): id is string => Boolean(id));
 }

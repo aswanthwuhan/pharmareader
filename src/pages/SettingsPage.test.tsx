@@ -8,6 +8,7 @@ const SECTION_TITLES = [
   'Voice',
   'Reading aloud',
   'On-device voice models',
+  'PDF layout',
   'Pronunciation',
   'Cached audio',
   'AI (bring your own key)',

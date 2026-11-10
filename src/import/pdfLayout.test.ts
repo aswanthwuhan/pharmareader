@@ -4,6 +4,7 @@ import {
   dropPageFurniture,
   itemsToLines,
   itemsToPageLines,
+  needsModelLayout,
   pagesToParagraphs,
   rectsForRange,
   type PdfLine,
@@ -354,5 +355,56 @@ describe('chaptersFromPages', () => {
     expect(sentences?.map((sentence) => sentence.text)).toEqual(['Alpha beta.', 'Gamma.']);
     expect(sentences?.[0]?.pdfRects?.[0]).toMatchObject({ page: 1, x: 10, y: 100, w: 87 });
     expect(sentences?.[1]?.pdfRects?.[0]).toMatchObject({ page: 1, y: 120 });
+  });
+});
+
+describe('needsModelLayout', () => {
+  /** A page of plain prose: full-width lines, one pitch apart, no furniture. */
+  const proseLines = (rows = 20): PdfLine[] =>
+    Array.from({ length: rows }, (_, row) => line(`A line of ordinary body text number ${row}.`, 100 + row * 14));
+  const prose = (rows = 20): PdfPage => page(proseLines(rows));
+
+  it('leaves a page of prose to the text heuristics', () => {
+    expect(needsModelLayout(prose())).toBe(false);
+  });
+
+  it('asks for the model when the page is a table or a form', () => {
+    const rows = Array.from({ length: 4 }, (_, row) => {
+      const y = 120 + row * 18;
+      return {
+        text: 'Sr. No. | Particulars | Not Satisfactory | Remarks',
+        x: 60,
+        y,
+        w: 460,
+        h: 12,
+        items: [
+          item(`${row + 1}.`, 60, y, 20),
+          item('Particulars of the course', 120, y, 150),
+          item('1 2 3', 300, y, 40),
+          item('' + row, 480, y, 20),
+        ],
+      };
+    });
+    expect(needsModelLayout(page(rows))).toBe(true);
+  });
+
+  it('asks for the model when a figure is printed above the text', () => {
+    const lines = proseLines(12).map((body) => ({ ...body, y: body.y + 200 }));
+    expect(needsModelLayout(page(lines))).toBe(true);
+  });
+
+  it('does not call the model for a line that merely mentions a figure', () => {
+    const lines = proseLines(12);
+    lines[4] = line('Figure 3 shows the effect on the skin of the treated mice.', 156);
+    expect(needsModelLayout(page(lines))).toBe(false);
+  });
+
+  it('asks for the model when a figure leaves a hole in the text', () => {
+    const lines = [
+      ...proseLines(5),
+      line('The rest of the text resumes well below the figure.', 500),
+      line('And a last line under it.', 514),
+    ];
+    expect(needsModelLayout(page(lines))).toBe(true);
   });
 });

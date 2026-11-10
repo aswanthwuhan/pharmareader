@@ -4,6 +4,7 @@ import { CachePanel, LexiconPanel, VoicePanel } from '../tts/TtsSettings';
 import NeuralModelsPanel from '../tts/neural/NeuralModelsPanel';
 import AlignModelPanel from '../tts/align/AlignModelPanel';
 import ReadingOptions from '../reader/ReadingOptions';
+import LayoutModelPanel from '../import/LayoutModelPanel';
 import AiSettings from '../ai/AiSettings';
 import BackupPanel from '../backup/BackupPanel';
 import './settings.css';
@@ -14,6 +15,7 @@ const SECTIONS = [
   { id: 'voice', label: 'Voice' },
   { id: 'reading', label: 'Reading aloud' },
   { id: 'voice-models', label: 'On-device models' },
+  { id: 'pdf-layout', label: 'PDF layout' },
   { id: 'pronunciation', label: 'Pronunciation' },
   { id: 'cached-audio', label: 'Cached audio' },
   { id: 'ai', label: 'AI' },
@@ -86,6 +88,13 @@ export default function SettingsPage() {
             </h2>
             <NeuralModelsPanel />
             <AlignModelPanel />
+          </section>
+
+          <section id="pdf-layout" className="settings-section" aria-labelledby="pdf-layout-h2">
+            <h2 id="pdf-layout-h2" className="settings-h2">
+              PDF layout
+            </h2>
+            <LayoutModelPanel />
           </section>
 
           <Section

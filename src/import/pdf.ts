@@ -1,31 +1,51 @@
 import { GlobalWorkerOptions, Util, getDocument } from 'pdfjs-dist';
-import type { PDFDocumentProxy } from 'pdfjs-dist';
+import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type { ParsedDoc } from '../core/types';
+import { getSetting } from '../core/settings';
 import { normaliseText } from './blocks';
+import { layoutParagraphs } from './layout/assign';
+import { createLayoutDetector, type PageLayoutDetector } from './layout/detector';
+import { LAYOUT_MODEL } from './layout/model';
+import type { LayoutBox } from './layout/engine';
 import {
   chaptersFromPages,
+  classifyParagraphs,
   dropPageFurniture,
   itemsToPageLines,
-  pagesToParagraphs,
+  lineMetrics,
+  linesToParagraphs,
+  needsModelLayout,
+  stitchPages,
+  typicalPitch,
   type ChapterStart,
   type PdfPage,
+  type PdfParagraph,
   type PdfTextItem,
 } from './pdfLayout';
 
 GlobalWorkerOptions.workerSrc ||= workerUrl;
+
+/**
+ * How a book's layout is worked out. `auto` uses the model when it is downloaded
+ * and the text heuristics otherwise; `heuristic` never touches the model, for a
+ * book where the text layout reads better.
+ */
+export type LayoutMode = 'auto' | 'heuristic';
 
 export interface PdfParseResult {
   doc: ParsedDoc;
   /** Text extracted per page — under ~50 means the PDF is probably a scan. */
   charsPerPage: number;
   pageCount: number;
+  /** How the layout was decided, so the importer can tell the user what ran. */
+  layout: 'model' | 'heuristic';
 }
 
 export async function parsePdf(
   data: ArrayBuffer,
   fallbackTitle: string,
-  onProgress?: (done: number, total: number) => void,
+  onProgress?: (done: number, total: number, phase?: 'text' | 'layout') => void,
 ): Promise<PdfParseResult> {
   const loadingTask = getDocument({ data: new Uint8Array(data) });
 
@@ -33,6 +53,9 @@ export async function parsePdf(
     const pdf = await loadingTask.promise;
     const { title, author } = await metadata(pdf, fallbackTitle);
     const pages: PdfPage[] = [];
+    const pageItems: PdfTextItem[][] = [];
+    const pageBoxes: LayoutBox[][] = [];
+    let detector = await layoutDetector();
 
     for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
       const page = await pdf.getPage(pageNumber);
@@ -51,27 +74,120 @@ export async function parsePdf(
           y: matrix[5] - height,
           w: raw.width ?? 0,
           h: height,
+          page: pageNumber,
         });
       }
 
-      pages.push({ width: viewport.width, height: viewport.height, lines: itemsToPageLines(items, viewport.width) });
+      const pageLines = itemsToPageLines(items, viewport.width);
+      const sheet: PdfPage = { width: viewport.width, height: viewport.height, lines: pageLines };
+
+      if (detector && needsModelLayout(sheet)) {
+        // The page has to be rasterised before `cleanup` drops its operators.
+        const boxes = await detectBoxes(detector, page, viewport, pageNumber);
+        if (!boxes) detector = null;
+        pageBoxes.push(boxes ?? []);
+      } else {
+        pageBoxes.push([]);
+      }
+
+      pages.push(sheet);
+      pageItems.push(items);
       page.cleanup();
       // One page at a time, so a long paper never blocks the caller for the whole
       // run and the UI can show where it has got to.
-      onProgress?.(pageNumber, pdf.numPages);
+      onProgress?.(pageNumber, pdf.numPages, detector ? 'layout' : 'text');
     }
 
-    const paragraphs = pagesToParagraphs(dropPageFurniture(pages));
-    const charCount = paragraphs.reduce((sum, paragraph) => sum + paragraph.text.length, 0);
-    const chapters = chaptersFromPages(paragraphs, await outlineStarts(pdf), pdf.numPages);
+    detector?.dispose();
+
+    const clean = dropPageFurniture(pages);
+    const metrics = clean.map((page) => lineMetrics(page.lines));
+    const documentPitch = typicalPitch(clean);
+
+    const paragraphs: PdfParagraph[] = [];
+    clean.forEach((page, index) => {
+      const pageNumber = index + 1;
+      const pitch = metrics[index].pitch || documentPitch;
+      const measure = metrics[index].measure || page.width;
+      const boxes = pageBoxes[index];
+
+      // Running heads that repeat on most pages are already gone; what the model
+      // calls a header or a footer is a one-off, and it becomes a skippable block.
+      const kept = new Set(page.lines.flatMap((line) => line.items));
+      const items = pageItems[index].filter((item) => kept.has(item));
+
+      const laidOut = boxes.length
+        ? layoutParagraphs(pageNumber, page.width, page.height, items, boxes, { pitch, measure })
+        : [];
+
+      paragraphs.push(
+        ...(laidOut.length ? laidOut : linesToParagraphs(pageNumber, page.lines, page.width, pitch, measure)),
+      );
+    });
+
+    const finalParagraphs = stitchPages(classifyParagraphs(paragraphs, clean));
+    const charCount = finalParagraphs.reduce((sum, paragraph) => sum + paragraph.text.length, 0);
+    const chapters = chaptersFromPages(finalParagraphs, await outlineStarts(pdf), pdf.numPages);
+    const usedModel = pageBoxes.some((boxes) => boxes.length > 0);
 
     return {
       doc: { title, author, format: 'pdf', chapters },
       charsPerPage: pdf.numPages ? charCount / pdf.numPages : 0,
       pageCount: pdf.numPages,
+      layout: usedModel ? 'model' : 'heuristic',
     };
   } finally {
     await loadingTask.destroy();
+  }
+}
+
+/** The detector, when the setting allows it and the model is installed. */
+async function layoutDetector(): Promise<PageLayoutDetector | null> {
+  const mode = await getSetting<LayoutMode>('import.layout', 'auto');
+  if (mode === 'heuristic') return null;
+  try {
+    return await createLayoutDetector();
+  } catch {
+    // A machine without WebAssembly, or a corrupt download: read the text as
+    // before rather than failing the whole import.
+    return null;
+  }
+}
+
+/**
+ * Render one page into the model's square input and read its regions.
+ * Returns null when rendering is impossible, so the caller can stop trying.
+ */
+async function detectBoxes(
+  detector: PageLayoutDetector,
+  page: PDFPageProxy,
+  viewport: ReturnType<PDFPageProxy['getViewport']>,
+  pageNumber: number,
+): Promise<LayoutBox[] | null> {
+  const size = LAYOUT_MODEL.inputSize;
+  const canvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+  if (!canvas) return null;
+
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return null;
+
+  try {
+    // The model was trained on pages stretched to a square, so the page is
+    // squashed into it; scale_factor stays 1 and the boxes are mapped back by
+    // dividing by the input size.
+    await page.render({
+      canvas,
+      canvasContext: context,
+      viewport,
+      transform: [size / viewport.width, 0, 0, size / viewport.height, 0, 0],
+    }).promise;
+    const pixels = context.getImageData(0, 0, size, size).data;
+    return await detector.detect(pixels, viewport.width, viewport.height);
+  } catch (error) {
+    console.warn(`Layout detection failed on page ${pageNumber}; using text heuristics.`, error);
+    return null;
   }
 }
 

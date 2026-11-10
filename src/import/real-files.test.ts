@@ -2,10 +2,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
+import { getDocument, Util } from 'pdfjs-dist';
 import type { Chapter, ParsedDoc } from '../core/types';
+import { layoutParagraphs } from './layout/assign';
+import type { LayoutBox } from './layout/engine';
 import { parseDocx } from './docx';
 import { parseEpub } from './epub';
 import { parsePdf, type PdfParseResult } from './pdf';
+import { type PdfParagraph, type PdfTextItem } from './pdfLayout';
 
 // The default pdfjs build needs a browser crypto/DOM stack; the legacy build is
 // the one pdf.js documents for Node. Production keeps using the normal build.
@@ -276,5 +280,128 @@ describe.skipIf(!existsSync(NMC_PDF))('real PDF: NMC MD Pharmacology guidelines 
     expect(blocks.find((text) => text.startsWith('GUIDELINES FOR COMPETENCY BASED'))).toBe(
       'GUIDELINES FOR COMPETENCY BASED POSTGRADUATE TRAINING PROGRAMME FOR MD IN PHARMACOLOGY',
     );
+  });
+});
+
+/**
+ * The regions below were recorded from PP-DocLayout-L int8 (640×640, threshold
+ * 0.5) on the same pages, so these cases check that real detections become the
+ * right blocks without needing a browser, WebAssembly or the 33 MB model.
+ */
+const RECORDED = resolve(HERE, 'layout/__fixtures__');
+
+/** Text items of one page, exactly as `parsePdf` builds them. */
+async function pageText(path: string, pageNumber: number) {
+  const task = getDocument({ data: new Uint8Array(read(path)) });
+  const pdf = await task.promise;
+  const page = await pdf.getPage(pageNumber);
+  const viewport = page.getViewport({ scale: 1 });
+  const content = await page.getTextContent();
+  const items: PdfTextItem[] = [];
+
+  for (const raw of content.items) {
+    if (!('str' in raw) || !raw.str.trim()) continue;
+    const matrix = Util.transform(viewport.transform, raw.transform) as number[];
+    const height = Math.hypot(matrix[2], matrix[3]) || raw.height || 10;
+    items.push({ str: raw.str, x: matrix[4], y: matrix[5] - height, w: raw.width ?? 0, h: height, page: pageNumber });
+  }
+
+  await task.destroy();
+  return { width: viewport.width, height: viewport.height, items };
+}
+
+function recorded(name: string, width: number, height: number): LayoutBox[] {
+  const data = JSON.parse(readFileSync(resolve(RECORDED, name), 'utf8')) as {
+    boxes: { label: string; score: number; x: number; y: number; w: number; h: number }[];
+  };
+  return data.boxes.map((box) => ({
+    label: box.label,
+    score: box.score,
+    x: box.x * width,
+    y: box.y * height,
+    w: box.w * width,
+    h: box.h * height,
+  }));
+}
+
+async function withLayout(path: string, pageNumber: number, fixtureName: string): Promise<PdfParagraph[]> {
+  const { width, height, items } = await pageText(path, pageNumber);
+  const boxes = recorded(fixtureName, width, height);
+  return layoutParagraphs(pageNumber, width, height, items, boxes, { pitch: 12, measure: width });
+}
+
+describe.skipIf(!existsSync(NMC_PDF))('layout model output: the NMC feedback form table', () => {
+  it('keeps a five-row form as one table block instead of reading it as prose', { timeout: 120_000 }, async () => {
+    const paragraphs = await withLayout(NMC_PDF, 12, 'nmc-p12.json');
+
+    const tables = paragraphs.filter((paragraph) => paragraph.kind === 'table');
+    expect(tables).toHaveLength(1);
+
+    // Every cell of every row stays in the one block, in row order.
+    expect(tables[0].text).toMatch(/Journal based \/ recent/);
+    expect(tables[0].text).toContain('7. Log Book Maintenance');
+
+    // And the text around the table is not swallowed by it.
+    const prose = paragraphs.filter((paragraph) => paragraph.kind !== 'table');
+    expect(prose.some((paragraph) => paragraph.text.includes('SIGNATURE OF CONSULTANT'))).toBe(true);
+  });
+});
+
+describe.skipIf(!existsSync(REAL_PDF))('layout model output: BJP chart page', () => {
+  it('marks the chart caption, leaving the body in reading order', { timeout: 120_000 }, async () => {
+    const paragraphs = await withLayout(REAL_PDF, 7, 'bjp-p7.json');
+    const kinds = paragraphs.map((paragraph) => paragraph.kind);
+
+    // "Figure 2" and the legend under it arrive as two boxes; they are one caption.
+    const captions = paragraphs.filter((paragraph) => paragraph.kind === 'caption');
+    expect(captions).toHaveLength(1);
+    expect(captions[0].text).toMatch(/^Figure 2 Effects of melittin/);
+
+    // The two bar charts hold no text, so they add no block — but nothing from
+    // them may be spoken as prose either.
+    expect(kinds).not.toContain('figure');
+    for (const paragraph of paragraphs.filter((part) => part.kind === 'p')) {
+      expect(paragraph.text).not.toMatch(/^Fig(?:ure)?\s*\d/);
+    }
+
+    // The section heading across two boxes is one heading, and it stays ahead of
+    // the paragraph it introduces.
+    const heading = paragraphs.findIndex((paragraph) => paragraph.kind === 'h' && /^Effects of bee venom/.test(paragraph.text));
+    expect(heading).toBeGreaterThanOrEqual(0);
+    expect(paragraphs[heading + 1].text).toMatch(/^To investigate the cytotoxicity/);
+  });
+});
+
+describe.skipIf(!existsSync(SINGLE_COLUMN_PDF))('layout model output: PIEZO1 figure page', () => {
+  it('keeps the figure, its legend and the page furniture apart', { timeout: 120_000 }, async () => {
+    const paragraphs = await withLayout(SINGLE_COLUMN_PDF, 28, 'piezo-p28.json');
+    const kinds = paragraphs.map((paragraph) => paragraph.kind);
+
+    // The watermark lettering sits inside the image region, so it is part of the
+    // figure rather than a sentence of the paper.
+    expect(kinds).toContain('figure');
+
+    // The whole legend is one caption block, from "Figure 1." to its last line.
+    const captions = paragraphs.filter((paragraph) => paragraph.kind === 'caption');
+    expect(captions).toHaveLength(1);
+    expect(captions[0].text).toMatch(/^Figure 1\. Structures of Yoda series compounds/);
+    expect(captions[0].text.length).toBeGreaterThan(600);
+
+    expect(kinds).toContain('header');
+    expect(kinds).toContain('footer');
+  });
+});
+
+describe.skipIf(!existsSync(REAL_PDF))('heuristic layout (no model installed)', () => {
+  it('does not pretend to have run the model, and names figure captions', { timeout: 120_000 }, async () => {
+    const parsed = await parsePdf(read(REAL_PDF), 'bee venom');
+
+    // No canvas in Node, so the model path cannot run: the report must say so.
+    expect(parsed.layout).toBe('heuristic');
+
+    const kinds = parsed.doc.chapters.flatMap((chapter) => chapter.blocks.map((block) => block.kind));
+    expect(kinds.filter((kind) => kind === 'caption').length).toBeGreaterThan(3);
+    // Body text must not be mistaken for a table.
+    expect(kinds.filter((kind) => kind === 'table')).toHaveLength(0);
   });
 });
