@@ -92,6 +92,15 @@ describe('NeuralModelsPanel', () => {
     );
     expect(measure).toHaveLength(2);
     expect(measure.every((button) => button.disabled)).toBe(true);
+
+    // One disclosure per model, plus the panel-level intro: each model's controls
+    // and its explanation share a single row instead of stacking two.
+    const summaries = [...container.querySelectorAll('details.disc-sub > summary')].map(
+      (summary) => summary.textContent
+    );
+    expect(summaries).toEqual(['How this works', 'Details', 'Details']);
+    // Teal belongs to the row's one primary action, not to three download buttons.
+    expect(container.querySelectorAll('.btn-primary')).toHaveLength(0);
   });
 
   it('replaces the web Kokoro card with the native panel on a device', async () => {

@@ -24,6 +24,8 @@ From a full audit of 0.2.0 (data safety first). Installs over 0.2.0 without losi
 **New**
 - Full-screen reading (hides the system bars on Android) and a PDF Page view that fills the screen, with Fit page in full screen.
 - "Prepare ahead": choose how many sentences are rendered ahead (2–50, default 10).
+- "What's new" after each update (offline). Optional update check (off by default; asks GitHub once a day when you turn it on in Settings → About).
+- Settings reorganised into collapsible groups; Library book actions sheet.
 - Continue listening from the Library, sleep timer (10/20/30 min or end of chapter), backup reminder, Storage panel.
 - Pronunciation: rows the Android Kokoro model already says right are no longer respelled there (70 words); plurals and possessives follow their word's respelling.
 - Larger touch targets (48 px) in the reader, review and backup screens.

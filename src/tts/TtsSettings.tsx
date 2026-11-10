@@ -49,6 +49,7 @@ const ENGINE_OPTIONS: { value: EngineChoice; label: string; hint: string }[] = [
 const RATE_MIN = 0.5;
 const RATE_MAX = 2;
 const RATE_STEP = 0.05;
+const INITIAL_RULES = 8;
 
 interface Draft {
   id?: string;
@@ -172,7 +173,7 @@ export function VoicePanel() {
     ? voices.length > 0
       ? `${voices.length} system ${voices.length === 1 ? 'voice' : 'voices'} reported by this device.`
       : 'Voices are provided by the device; none were reported yet.'
-    : 'The on-device model brings its own voices.';
+    : 'Used when the system engine speaks. The on-device model brings its own voices.';
 
   return (
     <div className="tts-panel">
@@ -197,7 +198,8 @@ export function VoicePanel() {
           ))}
         </select>
         <p className="field-hint" id="tts-engine-hint">
-          <a href="#voice-models">Manage on-device models</a>
+          {engineHint(engineValue)}{' '}
+          <a href="#voice-models">Manage on-device models</a>.
         </p>
       </div>
 
@@ -264,6 +266,7 @@ export function VoicePanel() {
           {status ?? ''}
         </p>
       </div>
+      <p className="field-hint tts-test-sentence">Speaks: “{TEST_SENTENCE}”</p>
 
       <details className="disc-sub">
         <summary>How this works</summary>
@@ -277,8 +280,10 @@ export function VoicePanel() {
                 </div>
               ))}
             </dl>
-            <p className="tts-note">{VOICE_TIP}</p>
-            <p className="tts-note">Speaks: “{TEST_SENTENCE}”</p>
+            <div className="tts-note-block">
+              <p className="tts-note-title">A more natural system voice</p>
+              <p className="tts-note">{VOICE_TIP}</p>
+            </div>
           </div>
         </div>
       </details>
@@ -295,10 +300,11 @@ export function LexiconPanel() {
   const [query, setQuery] = useState('');
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [adding, setAdding] = useState(false);
-  const [builtinOpen, setBuiltinOpen] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previewText, setPreviewText] = useState('');
   const [previewResult, setPreviewResult] = useState('');
+  const builtinRef = useRef<HTMLDetailsElement>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -332,11 +338,29 @@ export function LexiconPanel() {
     };
   }, [previewText, entries]);
 
-  // The split is a rendering choice only: the reader's own rules stay visible,
-  // while the built-in list (a few hundred rows) waits inside a disclosure.
-  const ownEntries = useMemo(() => entries.filter((e) => e.source === 'user'), [entries]);
-  const builtinEntries = useMemo(() => entries.filter((e) => e.source !== 'user'), [entries]);
-  const builtinVisible = useMemo(() => filterEntries(builtinEntries, query), [builtinEntries, query]);
+  // One search covers both lists, as it always did: the reader's own rules
+  // first (they are the ones being curated), then the built-in rules, which sit
+  // inside their disclosure and render only their first few matches until the
+  // reader asks for all of them.
+  const visible = useMemo(() => {
+    const rows = [...filterEntries(entries, query)];
+    return rows.sort((a, b) => Number(b.source === 'user') - Number(a.source === 'user'));
+  }, [entries, query]);
+  const ownVisible = useMemo(() => visible.filter((e) => e.source === 'user'), [visible]);
+  const builtinVisible = useMemo(() => visible.filter((e) => e.source !== 'user'), [visible]);
+  const builtinTotal = useMemo(() => entries.filter((e) => e.source !== 'user').length, [entries]);
+  const builtinShown = showAll ? builtinVisible : builtinVisible.slice(0, INITIAL_RULES);
+  const hiddenCount = builtinVisible.length - builtinShown.length;
+  // A search that finds a built-in rule has to show it, so the disclosure is
+  // held open while the query matches something in it.
+  const forcedOpen = query.trim().length > 0 && builtinVisible.length > 0;
+
+  // Opening the disclosure is what makes the matches visible; the toggle guard
+  // below keeps it open for as long as the query still matches something.
+  useEffect(() => {
+    const el = builtinRef.current;
+    if (el && forcedOpen && !el.open) el.open = true;
+  }, [forcedOpen, builtinVisible.length]);
 
   const closeEditor = () => {
     setDraft(EMPTY_DRAFT);
@@ -436,7 +460,7 @@ export function LexiconPanel() {
     </fieldset>
   );
 
-  const editingVisible = draft.id !== undefined && ownEntries.some((e) => e.id === draft.id);
+  const editingVisible = draft.id !== undefined && visible.some((e) => e.id === draft.id);
 
   const ruleRow = (entry: LexiconEntry) => (
     <Fragment key={entry.id}>
@@ -487,12 +511,42 @@ export function LexiconPanel() {
 
   return (
     <div className="tts-panel">
-      {loading ? null : (
-        <ul className="tts-rules tts-rules-own">
-          {ownEntries.map(ruleRow)}
-          {ownEntries.length === 0 ? <li className="tts-empty">No rules of your own yet.</li> : null}
+      <div className="field">
+        <label className="field-label" htmlFor="tts-lexicon-search">
+          Search rules
+        </label>
+        <input
+          id="tts-lexicon-search"
+          className="input"
+          type="search"
+          value={query}
+          placeholder="CYP, half-life, mg/kg…"
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setShowAll(false);
+          }}
+        />
+        <p className="field-hint tts-lexicon-count" aria-live="polite">
+          {loading
+            ? 'Loading rules…'
+            : query.trim()
+              ? `Showing ${visible.length} of ${entries.length} rules`
+              : `${entries.length} of ${entries.length} rules`}
+        </p>
+      </div>
+
+      {!loading && query.trim() && visible.length === 0 ? (
+        <ul className="tts-rules">
+          <li className="tts-empty">No rules match “{query}”.</li>
         </ul>
-      )}
+      ) : null}
+
+      {!loading && (ownVisible.length > 0 || !query.trim()) ? (
+        <ul className="tts-rules tts-rules-own">
+          {ownVisible.map(ruleRow)}
+          {ownVisible.length === 0 ? <li className="tts-empty">No rules of your own yet.</li> : null}
+        </ul>
+      ) : null}
 
       {adding ? (
         <div className="tts-editor-row">{editor}</div>
@@ -506,39 +560,38 @@ export function LexiconPanel() {
 
       {draft.id !== undefined && !editingVisible ? <div className="tts-editor-row">{editor}</div> : null}
 
-      <details className="disc-sub" onToggle={(event) => setBuiltinOpen(event.currentTarget.open)}>
-        <summary>Built-in rules ({builtinEntries.length})</summary>
+      <details
+        className="disc-sub"
+        ref={builtinRef}
+        onToggle={(event) => {
+          // While a search matches built-in rules the list stays open, so its
+          // results cannot end up hidden behind a closed disclosure.
+          if (forcedOpen && !event.currentTarget.open) event.currentTarget.open = true;
+        }}
+      >
+        <summary>Built-in rules ({builtinTotal})</summary>
         <div className="disc-sub-body">
-          <div className="field">
-            <label className="field-label" htmlFor="tts-lexicon-search">
-              Search rules
-            </label>
-            <input
-              id="tts-lexicon-search"
-              className="input"
-              type="search"
-              value={query}
-              placeholder="CYP, half-life, mg/kg…"
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            <p className="field-hint tts-lexicon-count" aria-live="polite">
-              {loading
-                ? 'Loading rules…'
-                : query.trim()
-                  ? `Showing ${builtinVisible.length} of ${builtinEntries.length} rules`
-                  : ''}
-            </p>
-          </div>
+          <ul className="tts-rules tts-rules-builtin" aria-busy={loading}>
+            {builtinShown.map(ruleRow)}
+            {!loading && !query.trim() && builtinVisible.length === 0 ? (
+              <li className="tts-empty">No built-in rules yet.</li>
+            ) : null}
+          </ul>
 
-          {/* A few hundred rows are only built while the disclosure is open;
-              nothing in here runs in the background. */}
-          {builtinOpen ? (
-            <ul className="tts-rules tts-rules-builtin" aria-busy={loading}>
-              {builtinVisible.map(ruleRow)}
-              {!loading && builtinVisible.length === 0 ? (
-                <li className="tts-empty">{query ? `No rules match “${query}”.` : 'No built-in rules yet.'}</li>
-              ) : null}
-            </ul>
+          {/* Pagination inside the disclosure: the first few matches stay in the
+              DOM, the rest wait for "Show all". */}
+          {hiddenCount > 0 ? (
+            <div className="tts-add">
+              <button type="button" className="btn btn-secondary" onClick={() => setShowAll(true)}>
+                Show all {builtinVisible.length} rules
+              </button>
+            </div>
+          ) : showAll && builtinVisible.length > INITIAL_RULES ? (
+            <div className="tts-add">
+              <button type="button" className="btn btn-ghost" onClick={() => setShowAll(false)}>
+                Show fewer
+              </button>
+            </div>
           ) : null}
         </div>
       </details>

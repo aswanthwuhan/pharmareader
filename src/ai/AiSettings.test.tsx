@@ -63,9 +63,47 @@ describe('AI settings', () => {
     const preset = container.querySelector<HTMLSelectElement>('#ai-preset')!;
     expect(preset.value).toBe('openai');
     expect(container.querySelectorAll('#ai-preset option')).toHaveLength(5);
+    const options = [...container.querySelectorAll<HTMLOptionElement>('#ai-preset option')].map(
+      (option) => option.textContent,
+    );
+    expect(options).toContain('Custom');
     expect(container.querySelector('#ai-key')?.getAttribute('type')).toBe('password');
     expect(
       Array.from(container.querySelectorAll('button')).some((b) => b.textContent === 'Test'),
     ).toBe(true);
+
+    // Base URL and Model live inside the Advanced disclosure, which only exists
+    // while AI is on.
+    const advanced = [...container.querySelectorAll<HTMLDetailsElement>('details.disc-sub')].find(
+      (details) => details.querySelector('summary')?.textContent === 'Advanced',
+    );
+    expect(advanced).toBeDefined();
+    expect(advanced?.querySelector('#ai-base-url')).not.toBeNull();
+    expect(advanced?.querySelector('#ai-model')).not.toBeNull();
+  });
+
+  it('keeps the stored key, base URL and model when AI is switched off and on', async () => {
+    await db.settings.put({ key: 'ai.enabled', value: true });
+    await db.settings.put({ key: 'ai.apiKey', value: 'sk-test-123' });
+    await db.settings.put({ key: 'ai.baseUrl', value: 'https://example.test/v1' });
+    await db.settings.put({ key: 'ai.model', value: 'test-model' });
+    await render();
+    await waitFor(() => container.querySelector('#ai-key') !== null, 'key field');
+
+    await act(async () => {
+      container.querySelector<HTMLInputElement>('#ai-enabled')?.click();
+    });
+    await waitFor(() => container.querySelector('#ai-key') === null, 'fields hidden');
+    expect(container.querySelector('.ai-off-hint')).not.toBeNull();
+
+    await act(async () => {
+      container.querySelector<HTMLInputElement>('#ai-enabled')?.click();
+    });
+    await waitFor(() => container.querySelector('#ai-key') !== null, 'fields back');
+    expect(container.querySelector<HTMLInputElement>('#ai-key')?.value).toBe('sk-test-123');
+    expect(container.querySelector<HTMLInputElement>('#ai-base-url')?.value).toBe(
+      'https://example.test/v1',
+    );
+    expect(container.querySelector<HTMLInputElement>('#ai-model')?.value).toBe('test-model');
   });
 });

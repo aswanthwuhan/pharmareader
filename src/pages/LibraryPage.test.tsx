@@ -131,6 +131,7 @@ afterEach(async () => {
   }
   container.remove();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   await db.delete();
   await db.open();
 });
@@ -228,6 +229,11 @@ describe('library: row actions', () => {
     expect(dialog?.getAttribute('role')).toBe('dialog');
     expect(dialog?.getAttribute('aria-modal')).toBe('true');
     expect(dialog?.querySelector('.sheet-title')?.textContent).toBe('Pharmacology Notes');
+    const describedBy = dialog?.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    expect(dialog?.querySelector(`#${describedBy}`)?.textContent).toBe(
+      'Its highlights, bookmarks and cards go with it.',
+    );
     expect(sheetAction('Cancel')?.className).toContain('btn-secondary');
     expect(sheetAction('Delete book')?.className).toContain('btn-danger');
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
@@ -239,6 +245,51 @@ describe('library: row actions', () => {
     expect(authors?.getAttribute('title')).toBe(elevenAuthors);
     expect(authors?.textContent).toBe(elevenAuthors);
     expect(container.querySelector('.lib-facts')?.textContent).toContain('1 chapter');
+  });
+
+  it('keeps Tab and Shift+Tab inside the sheet', async () => {
+    await db.books.put(makeBook());
+    await renderLibrary();
+    await openMenu();
+
+    const cancel = sheetAction('Cancel')!;
+    const remove = sheetAction('Delete book')!;
+
+    // Tab from the last button wraps to the first instead of leaving the dialog.
+    remove.focus();
+    const forward = new KeyboardEvent('keydown', { key: 'Tab', cancelable: true, bubbles: true });
+    await act(async () => {
+      document.dispatchEvent(forward);
+    });
+    expect(forward.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(cancel);
+
+    // Shift+Tab from the first button wraps back to the last.
+    const backward = new KeyboardEvent('keydown', {
+      key: 'Tab',
+      shiftKey: true,
+      cancelable: true,
+      bubbles: true,
+    });
+    await act(async () => {
+      document.dispatchEvent(backward);
+    });
+    expect(backward.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(remove);
+  });
+
+  it('moves focus to the page heading after the row is deleted', async () => {
+    await db.books.put(makeBook());
+    await renderLibrary();
+    await openMenu();
+
+    await act(async () => {
+      sheetAction('Delete book')?.click();
+    });
+    await waitFor(() => sheet() === null, 'sheet closed');
+    const heading = container.querySelector('h1');
+    expect(heading?.getAttribute('tabindex')).toBe('-1');
+    await waitFor(() => document.activeElement === heading, 'focus on the page heading');
   });
 
   it('closes on Escape and returns focus to the button that opened it', async () => {
@@ -351,5 +402,83 @@ describe('library: the Android back key', () => {
     } finally {
       dispose();
     }
+  });
+});
+
+describe('library: update banner', () => {
+  function updateBanner(): HTMLElement | null {
+    return container.querySelector<HTMLElement>('.lib-update');
+  }
+
+  function releaseResponse(tag: string): Response {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => [
+        {
+          tag_name: tag,
+          html_url: `https://github.com/aswanthwuhan/pharmareader/releases/tag/${tag}`,
+          draft: false,
+          prerelease: true,
+        },
+      ],
+    } as unknown as Response;
+  }
+
+  async function optIn(): Promise<void> {
+    await db.settings.put({ key: 'app.updateCheck', value: true });
+  }
+
+  it('shows the banner for a newer release the reader opted in to check', async () => {
+    await db.books.put(makeBook());
+    await optIn();
+    const fetchMock = vi.fn(async () => releaseResponse('v0.4.0'));
+    vi.stubGlobal('fetch', fetchMock);
+    await renderLibrary();
+
+    await waitFor(() => updateBanner() !== null, 'update banner');
+    expect(updateBanner()?.textContent).toContain('PharmaReader 0.4.0 is available');
+    // The banner carries the design's leading icon, decorative and hidden.
+    expect(updateBanner()?.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+
+    const download = updateBanner()?.querySelector<HTMLAnchorElement>('a');
+    expect(download?.textContent).toBe('Download');
+    expect(download?.getAttribute('href')).toBe(
+      'https://github.com/aswanthwuhan/pharmareader/releases/tag/v0.4.0',
+    );
+    expect(download?.getAttribute('target')).toBe('_blank');
+    expect(download?.getAttribute('rel')).toContain('noopener');
+  });
+
+  it('stays quiet when the update check is off, even with a newer release', async () => {
+    await db.books.put(makeBook());
+    const fetchMock = vi.fn(async () => releaseResponse('v0.4.0'));
+    vi.stubGlobal('fetch', fetchMock);
+    await renderLibrary();
+
+    await waitFor(() => container.querySelector('.lib-list .lib-row') !== null, 'shelf');
+    await staysHidden(updateBanner, 'update banner');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('hides the banner and remembers the version on "Not now"', async () => {
+    await db.books.put(makeBook());
+    await optIn();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => releaseResponse('v0.4.0')),
+    );
+    await renderLibrary();
+    await waitFor(() => updateBanner() !== null, 'update banner');
+
+    const notNow = [...(updateBanner()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(
+      (button) => button.textContent === 'Not now',
+    );
+    await act(async () => {
+      notNow?.click();
+    });
+    await waitFor(() => updateBanner() === null, 'banner dismissed');
+    const row = await db.settings.get('app.updateDismissed');
+    expect(row?.value).toBe('0.4.0');
   });
 });

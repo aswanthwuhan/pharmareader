@@ -164,56 +164,56 @@ export default function AiSettings() {
             </button>
             <p className="field-hint ai-test-hint">Sends one tiny message to check the key and model.</p>
           </div>
+
+          {result ? (
+            <div className={result.ok ? 'banner banner-success' : 'banner banner-error'} role={result.ok ? 'status' : 'alert'}>
+              <p>{result.message}</p>
+            </div>
+          ) : null}
+
+          <details className="disc-sub">
+            <summary>Advanced</summary>
+            <div className="disc-sub-body">
+              <div className="ai-endpoints">
+                <div className="field">
+                  <label className="field-label" htmlFor="ai-base-url">
+                    Base URL
+                  </label>
+                  <input
+                    id="ai-base-url"
+                    className="input"
+                    type="text"
+                    inputMode="url"
+                    value={baseUrl}
+                    spellCheck={false}
+                    placeholder="https://api.openai.com/v1"
+                    onChange={(e) => setBaseUrl(e.target.value)}
+                    onBlur={() => void persist()}
+                  />
+                </div>
+
+                <div className="field">
+                  <label className="field-label" htmlFor="ai-model">
+                    Model
+                  </label>
+                  <input
+                    id="ai-model"
+                    className="input"
+                    type="text"
+                    value={model}
+                    spellCheck={false}
+                    placeholder="gpt-4.1-mini"
+                    onChange={(e) => setModel(e.target.value)}
+                    onBlur={() => void persist()}
+                  />
+                </div>
+              </div>
+            </div>
+          </details>
         </>
       ) : (
         <p className="field-hint ai-off-hint">Turn AI on to choose a provider and enter a key.</p>
       )}
-
-      {result ? (
-        <div className={result.ok ? 'banner banner-success' : 'banner banner-error'} role={result.ok ? 'status' : 'alert'}>
-          <p>{result.message}</p>
-        </div>
-      ) : null}
-
-      <details className="disc-sub">
-        <summary>Advanced</summary>
-        <div className="disc-sub-body">
-          <div className="ai-endpoints">
-            <div className="field">
-              <label className="field-label" htmlFor="ai-base-url">
-                Base URL
-              </label>
-              <input
-                id="ai-base-url"
-                className="input"
-                type="text"
-                inputMode="url"
-                value={baseUrl}
-                spellCheck={false}
-                placeholder="https://api.openai.com/v1"
-                onChange={(e) => setBaseUrl(e.target.value)}
-                onBlur={() => void persist()}
-              />
-            </div>
-
-            <div className="field">
-              <label className="field-label" htmlFor="ai-model">
-                Model
-              </label>
-              <input
-                id="ai-model"
-                className="input"
-                type="text"
-                value={model}
-                spellCheck={false}
-                placeholder="gpt-4.1-mini"
-                onChange={(e) => setModel(e.target.value)}
-                onBlur={() => void persist()}
-              />
-            </div>
-          </div>
-        </div>
-      </details>
 
       <details className="disc-sub">
         <summary>How this works</summary>
@@ -225,7 +225,6 @@ export default function AiSettings() {
               settings.
             </p>
             <p>Presets fill in a base URL and model. Choose Custom to point at another server.</p>
-            <p>Test sends one tiny message, so a wrong key or model name shows up before you use AI on a page.</p>
           </div>
         </div>
       </details>

@@ -292,5 +292,14 @@ describe('KokoroNativePanel', () => {
     expect(shown).toContain('Resume download (334 MB)');
     expect(shown).toContain('A partial download is saved (50% of 334 MB)');
     expect(shown).not.toContain('Error');
+
+    // One disclosure for the whole panel: the controls and the explanation
+    // share a row, and the download is not the row's primary action.
+    const summaries = [...container.querySelectorAll('details.disc-sub > summary')].map(
+      (summary) => summary.textContent
+    );
+    expect(summaries).toEqual(['Details']);
+    expect(button('Resume download (334 MB)')?.classList.contains('btn-secondary')).toBe(true);
+    expect(container.querySelectorAll('.btn-primary')).toHaveLength(0);
   });
 });

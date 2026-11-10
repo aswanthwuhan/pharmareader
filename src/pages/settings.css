@@ -31,6 +31,13 @@
   overflow: hidden;
 }
 
+/* That clipping also eats the outer half of the focus ring a summary draws at
+   the card edge, so inside this page the second-level summary draws it inset. */
+.settings-page details.disc-sub > summary:focus-visible {
+  outline: var(--focus-width) solid var(--focus-color);
+  outline-offset: -2px;
+}
+
 .settings-h2 {
   margin: 0;
   color: var(--text);
@@ -73,8 +80,6 @@
     color: var(--muted);
     font-size: var(--fs-xs);
     font-weight: var(--fw-semibold);
-    letter-spacing: var(--ls-wide);
-    text-transform: uppercase;
   }
 
   .settings-toc ul {
@@ -125,8 +130,6 @@
   color: var(--muted);
   font-size: var(--fs-xs);
   font-weight: var(--fw-semibold);
-  letter-spacing: var(--ls-wide);
-  text-transform: uppercase;
 }
 
 .about-facts dd {

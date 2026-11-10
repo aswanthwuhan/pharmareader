@@ -5,6 +5,8 @@ import { db } from '../core/db';
 import { pushBackHandler } from '../core/backButton';
 import { setSetting, useSetting } from '../core/settings';
 import type { BookRecord } from '../core/types';
+import { checkForUpdate, dismissUpdate, type UpdateRelease } from '../core/updateCheck';
+import { APP_VERSION } from '../core/version';
 import { deleteBook, importFileDetailed, importText, importUrl } from '../import';
 import '../import/library.css';
 import { LAST_BOOK_KEY, type LastBook } from '../reader/lastBook';
@@ -140,7 +142,9 @@ function BookActionsSheet({
   onDelete: () => void;
 }) {
   const titleId = useId();
+  const descId = useId();
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const deleteRef = useRef<HTMLButtonElement>(null);
   // Mount-only effect: the latest callbacks, without re-running focus on every render.
   const cancelRefFn = useRef(onCancel);
   cancelRefFn.current = onCancel;
@@ -148,7 +152,23 @@ function BookActionsSheet({
   useEffect(() => {
     cancelRef.current?.focus();
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') cancelRefFn.current();
+      if (event.key === 'Escape') {
+        cancelRefFn.current();
+        return;
+      }
+      // Two buttons: Tab and Shift+Tab wrap inside the sheet instead of walking
+      // into the page behind it.
+      if (event.key !== 'Tab') return;
+      const first = cancelRef.current;
+      const last = deleteRef.current;
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     }
     document.addEventListener('keydown', onKeyDown);
     // Same one-line hook as the import panels: Android back closes the sheet
@@ -166,16 +186,18 @@ function BookActionsSheet({
   return (
     <>
       <div className="sheet-backdrop" onClick={onCancel} />
-      <div className="sheet" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+      <div className="sheet" role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descId}>
         <h2 id={titleId} className="sheet-title lib-sheet-title">
           {book.title}
         </h2>
-        <p className="muted">Its highlights, bookmarks and cards go with it.</p>
+        <p className="muted" id={descId}>
+          Its highlights, bookmarks and cards go with it.
+        </p>
         <div className="sheet-actions">
           <button ref={cancelRef} type="button" className="btn btn-secondary" onClick={onCancel}>
             Cancel
           </button>
-          <button type="button" className="btn btn-danger" onClick={onDelete}>
+          <button ref={deleteRef} type="button" className="btn btn-danger" onClick={onDelete}>
             Delete book
           </button>
         </div>
@@ -200,6 +222,7 @@ export default function LibraryPage() {
   }, [books]);
 
   const fileInput = useRef<HTMLInputElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<Warning[]>([]);
@@ -243,6 +266,30 @@ export default function LibraryPage() {
 
   function dismissBackupReminder(): void {
     void setSetting(BACKUP_DISMISS_KEY, Date.now()).catch(() => {});
+  }
+
+  // New version, if the reader asked for update checks. Deferred so it can never
+  // hold up the shelf, and silent on every failure: checkForUpdate resolves null.
+  const [update, setUpdate] = useState<UpdateRelease | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void checkForUpdate()
+        .then((release) => {
+          if (!cancelled && release) setUpdate(release);
+        })
+        .catch(() => undefined);
+    }, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, []);
+
+  function notNow(): void {
+    if (!update) return;
+    void dismissUpdate(update.version).catch(() => {});
+    setUpdate(null);
   }
 
   async function handleFiles(list: FileList | null) {
@@ -313,6 +360,9 @@ export default function LibraryPage() {
   async function handleDelete(book: BookRecord) {
     try {
       await deleteBook(book.id);
+      // The row and its More button are gone, so returning focus there would
+      // land on <body>. Start again from the page heading instead.
+      titleRef.current?.focus();
     } catch (error) {
       setErrors([`Could not delete “${book.title}”: ${errorMessage(error)}`]);
     }
@@ -338,7 +388,9 @@ export default function LibraryPage() {
     <section className="page library">
       <header className="app-bar">
         <div>
-          <h1>Library</h1>
+          <h1 ref={titleRef} tabIndex={-1}>
+            Library
+          </h1>
           <p className="app-bar-sub">{countSub}</p>
         </div>
         <div className="app-bar-actions">
@@ -357,6 +409,37 @@ export default function LibraryPage() {
         </div>
       </header>
       <ModelStatusBanner context="library" />
+
+      {update ? (
+        <div className="banner banner-info lib-update">
+          <svg
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            focusable="false"
+          >
+            <path d="M12 4.5v10" />
+            <path d="M8 10.8 12 15l4-4.2" />
+            <path d="M5 19.5h14" />
+          </svg>
+          <div className="lib-update-body">
+            <p className="banner-title">PharmaReader {update.version} is available</p>
+            <p>You are on {APP_VERSION}. The new version installs over this one and keeps your books.</p>
+          </div>
+          <div className="lib-update-actions">
+            <a className="btn btn-secondary" href={update.url} target="_blank" rel="noopener noreferrer">
+              Download
+            </a>
+            <button type="button" className="btn btn-ghost" onClick={notNow}>
+              Not now
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="toolbar lib-actions">
         <button

@@ -14,17 +14,20 @@ describe('AI panels', () => {
     expect(html).toContain('Selected text is sent to the provider you choose.');
     expect(html).toContain('Enable AI');
     expect(html).toContain('Turn AI on to choose a provider and enter a key.');
-    // With AI off there is nothing to fill in yet, so the key field is not there.
+    // With AI off there is nothing to fill in yet, so none of the form is there.
     expect(html).not.toContain('type="password"');
+    expect(html).not.toContain('id="ai-preset"');
+    expect(html).not.toContain('>Test<');
   });
 
-  it('explains where the key goes and keeps the endpoints behind Advanced', () => {
+  it('explains where the key goes and keeps the endpoints in the enabled state', () => {
     const html = renderToStaticMarkup(<AiSettings />);
-    expect(html).toContain('<summary>Advanced</summary>');
     expect(html).toContain('<summary>How this works</summary>');
     expect(html).toContain('stored only on this device');
-    expect(html).toContain('id="ai-base-url"');
-    expect(html).toContain('id="ai-model"');
+    // Off means no Advanced disclosure either: the two states match.
+    expect(html).not.toContain('<summary>Advanced</summary>');
+    expect(html).not.toContain('id="ai-base-url"');
+    expect(html).not.toContain('id="ai-model"');
   });
 
   it('explains that AI is off and disables the actions', () => {

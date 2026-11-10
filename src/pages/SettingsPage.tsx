@@ -1,5 +1,4 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import packageJson from '../../package.json';
 import { CachePanel, LexiconPanel, VoicePanel, TTS_ENGINE_SETTING, TTS_RATE_SETTING } from '../tts/TtsSettings';
 import NeuralModelsPanel from '../tts/neural/NeuralModelsPanel';
 import AlignModelPanel from '../tts/align/AlignModelPanel';
@@ -11,9 +10,12 @@ import { AI_DEFAULTS } from '../ai/client';
 import BackupPanel from '../backup/BackupPanel';
 import { LAST_EXPORT_SETTING, lastBackupLabel } from '../backup/backup';
 import StoragePanel from '../core/StoragePanel';
-import { useSetting } from '../core/settings';
+import { setSetting, useSetting } from '../core/settings';
 import { pushBackHandler } from '../core/backButton';
+import { APP_VERSION } from '../core/version';
+import { UPDATE_CHECK_KEY } from '../core/updateCheck';
 import Disclosure from '../components/Disclosure';
+import WhatsNew from '../components/WhatsNew';
 import './settings.css';
 
 const REPO_URL = 'https://github.com/aswanthwuhan/pharmareader';
@@ -92,12 +94,14 @@ function RowGroup({ label, id, children }: RowGroupProps) {
 
 export default function SettingsPage() {
   const [openId, setOpenId] = useState<string | null>(null);
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false);
 
   const engine = useSetting<string>(TTS_ENGINE_SETTING, 'auto');
   const rate = useSetting<number>(TTS_RATE_SETTING, 1);
   const pauseMs = useSetting<number>(PAUSE_KEY, DEFAULT_PAUSE_MS);
   const aiEnabled = useSetting<boolean>('ai.enabled', AI_DEFAULTS.enabled);
   const lastBackup = useSetting<number>(LAST_EXPORT_SETTING, 0);
+  const updateCheck = useSetting<boolean>(UPDATE_CHECK_KEY, false);
 
   const voiceSummary = `${ENGINE_NAMES[engine] ?? engine} · ${rate.toFixed(1)}×`;
 
@@ -254,71 +258,88 @@ export default function SettingsPage() {
             </Disclosure>
           </RowGroup>
 
-          <div className="settings-group">
-            <div className="card settings-group-card">
-              <Disclosure
-                id="about"
-                title="About"
-                summary={`v${packageJson.version} · GPL-3.0`}
-                open={openId === 'about'}
-                onToggle={() => toggle('about')}
-              >
-                <div className="card about-card">
-                  <dl className="about-facts">
-                    <div>
-                      <dt>Version</dt>
-                      <dd className="tnum">{packageJson.version}</dd>
-                    </div>
-                    <div>
-                      <dt>License</dt>
-                      <dd>GNU GPL-3.0</dd>
-                    </div>
-                  </dl>
-
-                  <p className="card-body about-copy">
-                    PharmaReader is free software under the GNU General Public License v3.0. Everything runs on
-                    this device: no account, no server, and no text leaves the app unless you turn AI on.
-                  </p>
-
-                  <div className="about-links">
-                    <a className="btn btn-secondary" href={REPO_URL} target="_blank" rel="noopener noreferrer">
-                      View source on GitHub
-                    </a>
-                    <a
-                      className="btn btn-ghost"
-                      href={`${REPO_URL}/issues/new`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      Report an issue
-                    </a>
+          <RowGroup label="About this app" id="about-group">
+            <Disclosure
+              id="about"
+              title="About"
+              summary={`v${APP_VERSION} · GPL-3.0`}
+              open={openId === 'about'}
+              onToggle={() => toggle('about')}
+            >
+              <div className="about-card">
+                <dl className="about-facts">
+                  <div>
+                    <dt>Version</dt>
+                    <dd className="tnum">{APP_VERSION}</dd>
                   </div>
+                  <div>
+                    <dt>License</dt>
+                    <dd>GNU GPL-3.0</dd>
+                  </div>
+                </dl>
 
-                  <details className="disc-sub">
-                    <summary>Credits and licences</summary>
-                    <div className="disc-sub-body">
-                      <ul className="about-credits">
-                        <li>
-                          <span className="about-credit-name">Pocket TTS</span> — Kyutai, model weights
-                          CC-BY-4.0
-                        </li>
-                        <li>
-                          <span className="about-credit-name">Kokoro-82M</span> — hexgrad, Apache-2.0
-                        </li>
-                        <li>
-                          <span className="about-credit-name">sherpa-onnx</span> — Apache-2.0, with espeak-ng
-                          under GPL-3.0
-                        </li>
-                        <li>
-                          <span className="about-credit-name">Literata</span> — SIL Open Font License 1.1
-                        </li>
-                      </ul>
-                    </div>
-                  </details>
+                <p className="card-body about-copy">
+                  PharmaReader is free software under the GNU General Public License v3.0. Everything runs on this
+                  device: no account, no server, and no text leaves the app unless you turn AI on or ask it to check
+                  for new versions.
+                </p>
+
+                <label className="update-optin">
+                  <input
+                    id="update-check"
+                    type="checkbox"
+                    checked={updateCheck}
+                    onChange={(event) => void setSetting(UPDATE_CHECK_KEY, event.target.checked)}
+                  />
+                  <span className="update-optin-text">
+                    <span className="update-optin-label">Check for new versions when the app opens</span>
+                    <span className="field-hint">
+                      Asks GitHub (api.github.com) for the latest PharmaReader release once a day. Nothing else is
+                      sent.
+                    </span>
+                  </span>
+                </label>
+
+                <div className="about-links">
+                  <button type="button" className="btn btn-secondary" onClick={() => setWhatsNewOpen(true)}>
+                    What’s new in v{APP_VERSION}
+                  </button>
+                  <a className="btn btn-secondary" href={REPO_URL} target="_blank" rel="noopener noreferrer">
+                    View source on GitHub
+                  </a>
+                  <a
+                    className="btn btn-ghost"
+                    href={`${REPO_URL}/issues/new`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Report an issue
+                  </a>
                 </div>
-              </Disclosure>
-            </div>
-          </div>
+
+                <details className="disc-sub">
+                  <summary>Credits and licences</summary>
+                  <div className="disc-sub-body">
+                    <ul className="about-credits">
+                      <li>
+                        <span className="about-credit-name">Pocket TTS</span> — Kyutai, model weights CC-BY-4.0
+                      </li>
+                      <li>
+                        <span className="about-credit-name">Kokoro-82M</span> — hexgrad, Apache-2.0
+                      </li>
+                      <li>
+                        <span className="about-credit-name">sherpa-onnx</span> — Apache-2.0, with espeak-ng under
+                        GPL-3.0
+                      </li>
+                      <li>
+                        <span className="about-credit-name">Literata</span> — SIL Open Font License 1.1
+                      </li>
+                    </ul>
+                  </div>
+                </details>
+              </div>
+            </Disclosure>
+          </RowGroup>
         </div>
 
         <nav className="settings-toc" aria-label="Settings sections">
@@ -334,6 +355,9 @@ export default function SettingsPage() {
           </ul>
         </nav>
       </div>
+
+      {/* The same sheet App opens on an upgrade, reachable any time from About. */}
+      {whatsNewOpen ? <WhatsNew version={APP_VERSION} onClose={() => setWhatsNewOpen(false)} /> : null}
     </section>
   );
 }

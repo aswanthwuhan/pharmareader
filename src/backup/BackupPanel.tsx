@@ -164,7 +164,7 @@ export default function BackupPanel() {
         <div className="backup-actions">
           <button
             type="button"
-            className="btn btn-primary"
+            className="btn btn-secondary"
             onClick={() => void runImport()}
             disabled={!file || busy !== null}
           >

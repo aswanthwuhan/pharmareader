@@ -15,12 +15,20 @@
   border-top: 1px solid var(--border);
 }
 
-/* Name, what it is for, and the one action that moves it forward. */
+/* Name, its qualifier on a second muted line, and the one action that moves it
+   forward. The block title is long enough to wrap on a phone, so the header is
+   top-aligned: the button sits at the trailing edge, level with the title. */
 .head {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
+}
+
+.name {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
 .title {
@@ -35,6 +43,7 @@
 
 .qualifier {
   font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
   color: var(--muted);
 }
 

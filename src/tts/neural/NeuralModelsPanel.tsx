@@ -87,9 +87,9 @@ interface EngineCardProps {
   measuring: boolean;
   rtf: number;
   measureError: string | null;
-  /** A download-size decision or a technical readout: sits behind Advanced. */
+  /** A download-size decision or a technical readout: sits behind Details. */
   advanced?: ReactNode;
-  /** More than a line of explanation: sits behind How this works. */
+  /** More than a line of explanation: sits behind Details, under the controls. */
   howItWorks?: ReactNode;
   attribution?: string;
 }
@@ -111,7 +111,7 @@ function EngineCard(props: EngineCardProps) {
         </div>
         <div className={styles.actions}>
           {state.kind !== 'ready' && (
-            <button type="button" className="btn btn-primary" onClick={props.onDownload} disabled={busy || state.kind === 'loading'}>
+            <button type="button" className="btn btn-secondary" onClick={props.onDownload} disabled={busy || state.kind === 'loading'}>
               Download
             </button>
           )}
@@ -148,7 +148,7 @@ function EngineCard(props: EngineCardProps) {
 
       {state.kind === 'error' && <ErrorDetails info={state.info} />}
 
-      {/* Measuring lives under Advanced, but if it failed the failure is the
+      {/* Measuring lives under Details, but if it failed the failure is the
           user's answer: it stays in the open next to the model it belongs to. */}
       {props.measureError && (
         <p className={styles.measureError} role="alert">
@@ -175,8 +175,10 @@ function EngineCard(props: EngineCardProps) {
         </label>
       )}
 
+      {/* One disclosure per model: the technical controls first, then the
+          explanation of what the model is doing, under the same label. */}
       <details className="disc-sub">
-        <summary>Advanced</summary>
+        <summary>Details</summary>
         <div className="disc-sub-body">
           {props.advanced}
 
@@ -210,15 +212,10 @@ function EngineCard(props: EngineCardProps) {
           </p>
 
           {props.attribution && <p className={styles.attribution}>{props.attribution}</p>}
+
+          {props.howItWorks}
         </div>
       </details>
-
-      {props.howItWorks && (
-        <details className="disc-sub">
-          <summary>How this works</summary>
-          <div className="disc-sub-body">{props.howItWorks}</div>
-        </details>
-      )}
     </section>
   );
 }
@@ -496,7 +493,6 @@ export default function NeuralModelsPanel() {
               <select
                 id="tts-kokoro-dtype"
                 className="input"
-                aria-label="Precision"
                 value={dtype}
                 onChange={(event) => void setSetting(KOKORO_DTYPE_SETTING, event.target.value as KokoroDtype)}
               >

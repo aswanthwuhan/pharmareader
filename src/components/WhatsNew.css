@@ -1,0 +1,133 @@
+/* What's new sheet: a longer bottom sheet than the library one, so it scrolls
+   inside itself instead of pushing the page. Reading text, not UI chrome: the
+   bullets get the reading line-height, the headings stay quiet. */
+
+.whatsnew {
+  max-height: min(85dvh, 40rem);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.whatsnew .sheet-title {
+  margin: 0;
+}
+
+.whatsnew-body {
+  display: grid;
+  gap: var(--space-3);
+  /* The actions stay visible while the notes scroll. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+}
+
+.whatsnew-intro {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+
+.whatsnew-group {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.whatsnew-group-title {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
+.whatsnew-list {
+  margin: 0;
+  padding-left: 1.15rem;
+  display: grid;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+  color: var(--text);
+}
+
+.whatsnew-list li {
+  /* Long drug names and URLs wrap instead of poking out of the sheet. */
+  overflow-wrap: anywhere;
+}
+
+.whatsnew-actions {
+  margin-top: 0;
+}
+
+/* The reply to "Tell me about updates": the button gives way to a quiet line,
+   so the reader sees the choice took effect before the sheet closes. */
+.whatsnew-note {
+  margin: 0;
+  align-self: center;
+  flex: 1 1 12rem;
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+}
+
+/* Settings → About: the opt-in row for update checks. The checkbox is the
+   control; the whole row is the touch target. */
+.update-optin {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  margin: 0 0 var(--space-4);
+  padding: var(--space-1) 0;
+  min-height: 48px;
+  cursor: pointer;
+}
+
+.update-optin input {
+  flex: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin: 0.15rem 0 0;
+  accent-color: var(--accent);
+}
+
+.update-optin-text {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.update-optin-label {
+  font-size: var(--fs-base);
+  line-height: var(--lh-snug);
+}
+
+.update-optin .field-hint {
+  margin-top: 0;
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+}
+
+/* Library: "PharmaReader x is available". The backup banner beside it has one
+   icon button; this one ends in two text actions, so it gets its own classes
+   rather than borrowing .lib-backup (which tests and the reader both key on). */
+.lib-update {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin: 0 0 var(--space-4);
+}
+
+.lib-update-body {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  flex: 1 1 12rem;
+}
+
+.lib-update .lib-update-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+  flex: none;
+  margin-left: auto;
+}
+

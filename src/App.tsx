@@ -1,6 +1,10 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { installBackBridge } from './core/backButton';
+import { db } from './core/db';
+import { getSetting, setSetting } from './core/settings';
+import { APP_VERSION, changelogSection, LAST_SEEN_VERSION_KEY, shouldShowWhatsNew } from './core/version';
+import WhatsNew from './components/WhatsNew';
 import LibraryPage from './pages/LibraryPage';
 import ReaderPage from './pages/ReaderPage';
 import ReviewPage from './pages/ReviewPage';
@@ -81,6 +85,38 @@ export default function App() {
   // itself lets the shell ask about exiting the app.
   useEffect(() => installBackBridge(navigate, () => pathRef.current), [navigate]);
 
+  // "What's new" on launch: only when the running version is newer than the one
+  // the reader last saw. A fresh install (empty library, no stored version) has
+  // nothing to catch up on, so it is recorded quietly instead of greeted.
+  const [whatsNewVersion, setWhatsNewVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function greetReturningReader() {
+      try {
+        const [lastSeen, bookCount] = await Promise.all([
+          getSetting<string | undefined>(LAST_SEEN_VERSION_KEY, undefined),
+          db.books.count(),
+        ]);
+        if (cancelled) return;
+
+        if (!shouldShowWhatsNew(lastSeen, bookCount) || !changelogSection(APP_VERSION)) {
+          if (lastSeen !== APP_VERSION) await setSetting(LAST_SEEN_VERSION_KEY, APP_VERSION);
+          return;
+        }
+        setWhatsNewVersion(APP_VERSION);
+      } catch {
+        // No IndexedDB, no sheet: an opening greeting is never worth an error.
+      }
+    }
+
+    void greetReturningReader();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Reading is a focused surface: on a wide screen the global rail steps aside
   // so the text column and the player own the full width.
   const reading = location.pathname.startsWith('/read/');
@@ -135,6 +171,8 @@ export default function App() {
           ))}
         </nav>
       )}
+
+      {whatsNewVersion ? <WhatsNew version={whatsNewVersion} onClose={() => setWhatsNewVersion(null)} /> : null}
     </div>
   );
 }

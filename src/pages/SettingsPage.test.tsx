@@ -2,7 +2,9 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import packageJson from '../../package.json';
+import { db } from '../core/db';
+import { getSetting } from '../core/settings';
+import { APP_VERSION } from '../core/version';
 import SettingsPage, { scrollToHash } from './SettingsPage';
 
 declare global {
@@ -109,6 +111,8 @@ afterEach(async () => {
   }
   document.body.innerHTML = '';
   window.history.replaceState(null, '', window.location.pathname);
+  await db.delete();
+  await db.open();
 });
 
 describe('SettingsPage', () => {
@@ -144,8 +148,24 @@ describe('SettingsPage', () => {
     }
   });
 
+  it('labels all five groups, About included', () => {
+    const labels = [...page.querySelectorAll<HTMLElement>('.settings-group-label')].map(
+      (element) => element.textContent,
+    );
+    expect(labels).toEqual(['Listening', 'Models', 'Speech details', 'Your data', 'About this app']);
+
+    const cards = [...page.querySelectorAll<HTMLElement>('.settings-group-card')];
+    expect(cards).toHaveLength(5);
+    for (const card of cards) {
+      expect(card.getAttribute('role')).toBe('group');
+      const labelledBy = card.getAttribute('aria-labelledby');
+      expect(labelledBy).toBeTruthy();
+      expect(page.querySelector(`#${labelledBy}`)).not.toBeNull();
+    }
+  });
+
   it('names the version, licence and credits in About', () => {
-    expect(html).toContain(packageJson.version);
+    expect(html).toContain(APP_VERSION);
     expect(html).toContain('GNU GPL-3.0');
 
     for (const credit of ['Pocket TTS', 'Kyutai', 'Kokoro-82M', 'hexgrad', 'sherpa-onnx', 'espeak-ng', 'Literata']) {
@@ -175,7 +195,7 @@ describe('SettingsPage', () => {
   it('summarises only the rows whose value is cheap to read', () => {
     expect(page.querySelector('#voice .disc-summary')?.textContent).toMatch(/· 1\.0×$/);
     expect(page.querySelector('#ai .disc-summary')?.textContent).toBe('Off');
-    expect(page.querySelector('#about .disc-summary')?.textContent).toContain(`v${packageJson.version}`);
+    expect(page.querySelector('#about .disc-summary')?.textContent).toContain(`v${APP_VERSION}`);
     expect(page.querySelector('#backup .disc-summary')?.textContent).toContain('Last backup');
     expect(page.querySelector('#reading .disc-summary')?.textContent).toContain('Pause');
     // These would need a probe, a walk or a query, so they stay quiet.
@@ -284,5 +304,66 @@ describe('scrollToHash', () => {
       window.history.replaceState(null, '', '#nope');
       scrollToHash();
     }).not.toThrow();
+  });
+});
+
+describe('SettingsPage about: release notes and the opt-in update check', () => {
+  it('links the running version’s notes from About', () => {
+    const button = [...page.querySelectorAll<HTMLButtonElement>('#about .about-links button')].find(
+      (candidate) => candidate.textContent === `What’s new in v${APP_VERSION}`,
+    );
+    expect(button).toBeTruthy();
+    expect(button?.className).toContain('btn-secondary');
+  });
+
+  it('offers the update check, off by default, with the exact network hint', () => {
+    const input = page.querySelector<HTMLInputElement>('#about #update-check');
+    expect(input).not.toBeNull();
+    expect(input!.type).toBe('checkbox');
+    expect(input!.checked).toBe(false);
+
+    const label = input!.closest('label');
+    expect(label?.textContent).toContain('Check for new versions when the app opens');
+    expect(label?.querySelector('.field-hint')?.textContent).toBe(
+      'Asks GitHub (api.github.com) for the latest PharmaReader release once a day. Nothing else is sent.',
+    );
+  });
+
+  it('keeps the privacy promise and names the one exception in the About copy', () => {
+    const copy = page.querySelector('#about .about-copy')?.textContent ?? '';
+    expect(copy).toContain('Everything runs on this device');
+    expect(copy).toContain('check for new versions');
+  });
+
+  it('opens the release notes sheet from the About button', async () => {
+    const { host } = await mountPage();
+    await press(host, 'about');
+
+    const button = [...host.querySelectorAll<HTMLButtonElement>('#about .about-links button')].find(
+      (candidate) => candidate.textContent === `What’s new in v${APP_VERSION}`,
+    );
+    await act(async () => {
+      button?.click();
+    });
+    await settle();
+
+    const dialog = host.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.getAttribute('aria-modal')).toBe('true');
+    expect(dialog?.textContent).toContain(`What’s new in ${APP_VERSION}`);
+  });
+
+  it('remembers the choice when the box is ticked', async () => {
+    const { host } = await mountPage();
+    await press(host, 'about');
+
+    const input = host.querySelector<HTMLInputElement>('#update-check');
+    await act(async () => {
+      input?.click();
+    });
+    await settle();
+
+    expect(await getSetting('app.updateCheck', false)).toBe(true);
+    expect(host.querySelector<HTMLInputElement>('#update-check')?.checked).toBe(true);
   });
 });

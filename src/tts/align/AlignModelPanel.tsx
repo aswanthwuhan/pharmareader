@@ -156,15 +156,17 @@ export default function AlignModelPanel() {
   return (
     <section className={styles.block} aria-labelledby="align-whisper-title">
       <header className={styles.head}>
-        <h3 id="align-whisper-title" className={styles.title}>
-          Word-by-word highlighting
-        </h3>
-        <span className={styles.qualifier}>· on-device Whisper, English</span>
+        <div className={styles.name}>
+          <h3 id="align-whisper-title" className={styles.title}>
+            Word-by-word highlighting
+          </h3>
+          <span className={styles.qualifier}>on-device Whisper, English</span>
+        </div>
         <div className={styles.actions}>
           {state.kind !== 'ready' && state.kind !== 'unsupported' && (
             <button
               type="button"
-              className="btn btn-primary"
+              className="btn btn-secondary"
               onClick={() => startDownloadNow()}
               disabled={busy || state.kind === 'loading'}
             >
@@ -206,7 +208,7 @@ export default function AlignModelPanel() {
 
       {state.kind === 'error' && <ErrorDetails info={state.info} />}
 
-      {/* Measuring lives under Advanced, but a failed measurement is the answer
+      {/* Measuring lives under Details, but a failed measurement is the answer
           to the tap, so it stays in the open next to the model it belongs to. */}
       {measureError && (
         <p className={styles.measureError} role="alert">
@@ -214,8 +216,10 @@ export default function AlignModelPanel() {
         </p>
       )}
 
+      {/* One disclosure per model: the technical controls first, then the
+          explanation of what the model is doing, under the same label. */}
       <details className="disc-sub">
-        <summary>Advanced</summary>
+        <summary>Details</summary>
         <div className="disc-sub-body">
           <div className={styles.speed}>
             <p className={styles.speedResult}>
@@ -236,12 +240,7 @@ export default function AlignModelPanel() {
             Whisper by OpenAI — MIT licence. ONNX export: onnx-community/whisper-tiny.en_timestamped
             (q8).
           </p>
-        </div>
-      </details>
 
-      <details className="disc-sub">
-        <summary>How this works</summary>
-        <div className="disc-sub-body">
           <p className={styles.intro}>
             Words are highlighted as they are spoken. Without this model the timing is an estimate from
             each word&apos;s length, which drifts on long drug names and pauses.

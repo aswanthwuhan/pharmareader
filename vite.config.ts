@@ -1,6 +1,7 @@
 import { configDefaults, defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import packageJson from './package.json' with { type: 'json' };
 
 // GitHub Pages serves the PWA from /pharmareader/; dev, Capacitor and Tauri need '/'.
 // The workflow sets VITE_BASE=/pharmareader/ at build time.
@@ -9,6 +10,9 @@ const base = rawBase.endsWith('/') ? rawBase : `${rawBase}/`;
 
 export default defineConfig(({ mode }) => ({
   base,
+  // The What's new sheet and the update check compare against the version that
+  // is actually running, so it comes from package.json at build time.
+  define: { __APP_VERSION__: JSON.stringify(packageJson.version) },
   plugins: [
     react(),
     VitePWA({

@@ -68,7 +68,7 @@
 }
 
 .backup-file::file-selector-button {
-  min-height: 48px;
+  min-height: var(--tap-comfort);
   margin-right: var(--space-3);
   padding: 0 var(--space-3);
   border: 1px solid var(--border-control);
@@ -86,18 +86,19 @@
   margin: 0;
 }
 
+/* The merge/replace choice is a plain pair of rows on the panel's own surface,
+   not a filled box inside it: no border, background or radius. A hairline above
+   each row separates them. */
 .backup-mode {
   display: grid;
-  gap: var(--space-2);
+  gap: 0;
   margin: 0;
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-sunken);
+  padding: 0;
 }
 
 .backup-mode > .field-label {
   margin: 0;
+  padding-bottom: var(--space-1);
 }
 
 .backup-radio {
@@ -105,6 +106,8 @@
   align-items: center;
   gap: var(--space-2);
   min-height: var(--tap-comfort);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border);
   color: var(--text);
   font-size: var(--fs-sm);
   line-height: var(--lh-snug);

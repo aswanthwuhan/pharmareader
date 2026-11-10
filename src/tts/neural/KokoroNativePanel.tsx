@@ -425,7 +425,7 @@ export default function KokoroNativePanel(): React.JSX.Element {
         {(state === 'absent' || state === 'error') && (
           <button
             type="button"
-            className="btn btn-primary"
+            className="btn btn-secondary"
             onClick={downloadNow}
             disabled={spaceWarning !== null}
           >
@@ -439,7 +439,7 @@ export default function KokoroNativePanel(): React.JSX.Element {
           </button>
         )}
         {busy && (
-          <button type="button" className="btn btn-primary" disabled>
+          <button type="button" className="btn btn-secondary" disabled>
             Downloading…
           </button>
         )}
@@ -456,7 +456,7 @@ export default function KokoroNativePanel(): React.JSX.Element {
       </div>
 
       <details className="disc-sub">
-        <summary>Advanced</summary>
+        <summary>Details</summary>
         <div className="disc-sub-body">
           <div className="tts-field-grid">
             <div className="field">
@@ -521,12 +521,7 @@ export default function KokoroNativePanel(): React.JSX.Element {
           )}
 
           <p className="field-hint">{status?.attribution ?? ATTRIBUTION}</p>
-        </div>
-      </details>
 
-      <details className="disc-sub">
-        <summary>How this works</summary>
-        <div className="disc-sub-body">
           <p className="field-hint">
             Runs Kokoro-82M entirely on this phone through sherpa-onnx — no PC and no server. The model is a 334 MB
             download that is stored in the app&apos;s private storage and survives restarts.

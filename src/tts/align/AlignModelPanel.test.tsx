@@ -76,6 +76,17 @@ describe('AlignModelPanel', () => {
     // The estimate keeps working without it — say so instead of hiding the card.
     expect(text).toContain('estimate from each word');
     expect(button('Download')?.disabled).toBe(false);
+    // The row's actions are secondary: teal is the screen's one primary action.
+    expect(button('Download')?.classList.contains('btn-secondary')).toBe(true);
+    expect(container.querySelectorAll('.btn-primary')).toHaveLength(0);
+    // One disclosure per model: the controls and the explanation share a row.
+    const summaries = [...container.querySelectorAll('details.disc-sub > summary')].map(
+      (summary) => summary.textContent
+    );
+    expect(summaries).toEqual(['Details']);
+    // The qualifier has its own muted line, so it carries no separator dot.
+    expect(text).toContain('on-device Whisper, English');
+    expect(text).not.toContain('· on-device');
     expect(button('Delete')).toBeUndefined();
     // Nothing is installed, so measuring would silently download 42 MB.
     expect(button('Measure speed')?.disabled).toBe(true);
