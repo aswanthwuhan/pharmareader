@@ -6,6 +6,8 @@
 import { env as transformersEnv } from '@huggingface/transformers';
 import { KokoroTTS, env } from 'kokoro-js';
 import type { KokoroDevice, KokoroDtype, KokoroRequest, KokoroResponse } from './kokoroProtocol';
+import { generateInPieces } from './modelText';
+import { concatFloat32 } from './wav';
 import { createProgressAggregator } from './progress';
 import { ORT_BASE_URL } from './ort';
 import { kokoroSizeMb } from './sizes';
@@ -129,14 +131,28 @@ async function load(
 }
 
 async function speak(id: number, text: string, voice: string, speed: number): Promise<void> {
-  if (!tts) throw new Error('Kokoro model is not loaded');
+  const model = tts;
+  if (!model) throw new Error('Kokoro model is not loaded');
   currentId = id;
-  const audio = await tts.generate(text, { voice: voice as keyof KokoroTTS['voices'], speed });
-  if (currentId !== id) {
+  // kokoro-js tokenizes with `truncation: true` at the model's 510-token window,
+  // so a long sentence handed to generate() simply loses its last words: the
+  // audio stops where the tokens ran out. Speak it in pieces the window holds
+  // and join the audio, which is what the native engine and Pocket already do.
+  // `generateInPieces` skips the remaining pieces after a stop, so a stop mid
+  // sentence costs one model call, not the whole rest of the sentence.
+  const generated = await generateInPieces(
+    text,
+    async (piece) => {
+      const audio = await model.generate(piece, { voice: voice as keyof KokoroTTS['voices'], speed });
+      return { audio: audio.audio, sampleRate: audio.sampling_rate };
+    },
+    () => currentId !== id
+  );
+  if (!generated) {
     post({ type: 'stopped', id });
     return;
   }
-  const pcm = audio.audio;
+  const pcm = concatFloat32(generated.parts);
   // Transfer instead of copy: a sentence is up to a few MB of Float32.
-  post({ type: 'result', id, audio: pcm, sampleRate: audio.sampling_rate }, [pcm.buffer as ArrayBuffer]);
+  post({ type: 'result', id, audio: pcm, sampleRate: generated.sampleRate }, [pcm.buffer as ArrayBuffer]);
 }

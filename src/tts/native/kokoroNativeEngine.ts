@@ -9,9 +9,11 @@
 import { getSetting, setSetting } from '../../core/settings';
 import type { SpeakEvents, TtsEngine, TtsVoice } from '../../core/types';
 import { planChunks } from '../neural/clauseChunk';
+import { splitForModel } from '../neural/modelText';
 import { modelState, type KokoroModelKey } from './kokoroDownload';
 import type { KokoroStage } from './kokoroFailure';
 import { isKokoroNativeAvailable, Kokoro, type KokoroStatus } from './kokoroPlugin';
+import { joinWavs } from './wavJoin';
 
 /** Voice used when nothing is configured: `af_heart` (sid 3). */
 export const DEFAULT_KOKORO_SID = 3;
@@ -254,35 +256,55 @@ class KokoroNativeEngine implements TtsEngine {
     }
   }
 
-  /** Synthesise one sentence to a WAV Blob (used by the cache/prerender layer). */
+  /**
+   * Synthesise one sentence to a WAV Blob (used by the cache/prerender layer).
+   *
+   * sherpa-onnx's Kokoro front end truncates at the model's token window, just like
+   * the web one: handing it a whole long sentence loses the end of it, so the cached
+   * clip ends in a whisper or mid-word. `speak()` already splits with `planChunks`;
+   * this path — the one the reader actually plays from the cache — has to cut the
+   * same way. `splitForModel` is the web engine's splitter, kept in one place so
+   * both front ends make the same number of model calls for the same sentence.
+   */
   async synthesize(text: string, opts: SpeakOptions): Promise<Blob> {
     requireNative();
     const trimmed = text.trim();
     if (!trimmed) throw new Error('Nothing to synthesise.');
-    const result = await Kokoro.synthesize({
-      text: trimmed,
-      // Same voice resolution as speak()/measure(): without the saved speaker this path
-      // — the one the reader plays cached audio from — ignored the voice setting.
-      sid: sidFromVoiceId(opts.voiceId ?? (await voiceSetting())),
-      speed: clampSpeed(opts.rate),
-      threads: await threadsSetting(),
-      model: await modelSetting(),
-    });
-    if (!result.wavBase64) {
-      throw new Error(result.cancelled ? 'Kokoro synthesis was cancelled.' : 'Kokoro returned no audio.');
+    // Resolved once: every clause of this sentence must use the same voice, pace,
+    // thread count and build, or the joined audio would drift between chunks.
+    const sid = sidFromVoiceId(opts.voiceId ?? (await voiceSetting()));
+    const speed = clampSpeed(opts.rate);
+    const threads = await threadsSetting();
+    const model = await modelSetting();
+    // A stop() (or a new speak()) landing between two clauses must end the job
+    // instead of synthesising the rest of a sentence nobody will hear.
+    const generation = this.generation;
+
+    const blobs: Blob[] = [];
+    for (const clause of splitForModel(trimmed)) {
+      if (generation !== this.generation) throw new Error('Kokoro synthesis was cancelled.');
+      const result = await Kokoro.synthesize({ text: clause, sid, speed, threads, model });
+      if (result.cancelled) throw new Error('Kokoro synthesis was cancelled.');
+      if (!result.wavBase64) throw new Error('Kokoro returned no audio.');
+      blobs.push(base64ToWavBlob(result.wavBase64));
     }
-    return base64ToWavBlob(result.wavBase64);
+    if (blobs.length === 0) throw new Error('Kokoro returned no audio.');
+    // One clause: the plugin's own WAV is the answer, byte for byte (no re-encode).
+    if (blobs.length === 1) return blobs[0]!;
+    return joinWavs(blobs);
   }
 
   /**
-   * The cache identity of a native clip: the speaker and the model build. The build is
-   * still in the key, so the int8 clips v0.3.3 cached are never replayed as fp32 audio
-   * (and the reverse never happens after a downgrade); the speaker is resolved exactly as
-   * `synthesize()` resolves it.
+   * The cache identity of a native clip: the speaker, the model build and whether the
+   * text was cut to fit the model's token window. The build is still in the key, so
+   * the int8 clips v0.3.3 cached are never replayed as fp32 audio (and the reverse
+   * never happens after a downgrade); the speaker is resolved exactly as
+   * `synthesize()` resolves it. `@chunked` retires the clips rendered by the
+   * one-call path, whose long sentences lost their ending.
    */
   async cacheVariant(voiceId?: string): Promise<string> {
     const sid = sidFromVoiceId(voiceId ?? (await voiceSetting()));
-    return `${sid}@${await modelSetting()}`;
+    return `${sid}@${await modelSetting()}@chunked`;
   }
 
   /** Speak the sentences in order, synthesising the next chunk during playback. */

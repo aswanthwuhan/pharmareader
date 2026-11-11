@@ -24,6 +24,8 @@ const lib = vi.hoisted(() => ({
   /** How many generate() calls were in flight at once (the library allows one). */
   active: 0,
   maxActive: 0,
+  /** Every text handed to generate(), in order. */
+  texts: [] as string[],
   empty: false,
 }));
 
@@ -53,11 +55,12 @@ vi.mock('pocket-tts-js', () => {
     }
 
     async generate(
-      _text: string,
+      text: string,
       opts: { onChunk?: (audio: Float32Array) => void }
     ): Promise<{ rtfx: number; genTime: number; audioDuration: number; stopped?: boolean }> {
       lib.active++;
       lib.maxActive = Math.max(lib.maxActive, lib.active);
+      lib.texts.push(text);
       await new Promise((resolve) => setTimeout(resolve, 5)); // inference takes a moment
       if (!lib.empty) opts.onChunk?.(new Float32Array([0.1, 0.2, 0.3, 0.4, 0.5]));
       lib.active--;
@@ -215,6 +218,22 @@ describe('PocketEngine', () => {
     expect(events).toEqual(['start:long', 'end:long']);
   });
 
+  it('caches a long sentence only after voicing all of it', async () => {
+    // The model stops after a bounded number of frames, so a whole long sentence in
+    // one generate() came back short and the missing words were cached for good.
+    await pocketEngine.prepare();
+    const text =
+      'The heart pumps blood through the body without resting, and the lungs add oxygen to that blood before it returns to the heart again, so the cycle can start over.';
+    lib.texts.length = 0;
+    const blob = await pocketEngine.synthesize!(text, { rate: 1 });
+
+    expect(lib.texts.length).toBeGreaterThan(1);
+    for (const piece of lib.texts) expect(piece.split(/\s+/).length).toBeLessThanOrEqual(25);
+    // Every word is voiced, in order, and every clip's audio is in the file.
+    expect(lib.texts.join(' ')).toBe(text.replace(/\s+/g, ' ').trim());
+    expect((await blob.arrayBuffer()).byteLength).toBe(44 + lib.texts.length * 5 * 2);
+  });
+
   it('fails loudly when the model returns no audio', async () => {
     lib.empty = true;
     await expect(pocketEngine.synthesize!('silence', { rate: 1 })).rejects.toThrow('produced no audio');
@@ -245,11 +264,11 @@ describe('voice identity', () => {
   });
 
   it('names the voice it will speak with, and a requested voice wins', async () => {
-    expect(await pocketEngine.cacheVariant?.()).toBe('default');
+    expect(await pocketEngine.cacheVariant?.()).toBe('default@chunked');
     await setSetting(VOICE_KEY, 'alba');
-    expect(await pocketEngine.cacheVariant?.()).toBe('alba');
+    expect(await pocketEngine.cacheVariant?.()).toBe('alba@chunked');
     // The settings panel measures with the engine's own voice; that request decides.
-    expect(await pocketEngine.cacheVariant?.('cosette')).toBe('cosette');
+    expect(await pocketEngine.cacheVariant?.('cosette')).toBe('cosette@chunked');
   });
 
   it('gives the same sentence a different key after a voice change', async () => {
@@ -273,6 +292,6 @@ describe('voice identity', () => {
     await pocketEngine.synthesize!('Metformin.', { rate: 1 });
 
     expect(lib.voices).toEqual(['cosette']);
-    expect(await pocketEngine.cacheVariant?.()).toBe('cosette');
+    expect(await pocketEngine.cacheVariant?.()).toBe('cosette@chunked');
   });
 });

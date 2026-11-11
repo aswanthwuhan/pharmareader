@@ -155,7 +155,8 @@ class KokoroEngine implements TtsEngine {
    */
   async cacheVariant(voiceId?: string): Promise<string> {
     const voice = await this.voice(voiceId);
-    return `${voice}@${KOKORO_DTYPE}`;
+    // `chunked`: clips cached before the worker split long sentences are missing their last words.
+    return `${voice}@${KOKORO_DTYPE}@chunked`;
   }
 
   async prepare(onProgress?: (fraction: number) => void): Promise<void> {

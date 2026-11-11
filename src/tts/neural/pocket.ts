@@ -10,7 +10,7 @@
 import { PocketTTS, type GenerationMetrics, type ProgressInfo } from 'pocket-tts-js';
 import { getSetting } from '../../core/settings';
 import type { SpeakEvents, TtsEngine, TtsVoice } from '../../core/types';
-import { planChunks } from './clauseChunk';
+import { planChunks, splitIntoClauses } from './clauseChunk';
 import { POCKET_SIZE_MB, isModelDownloaded, setModelReady } from './models';
 import { NEURAL_STAGES, neuralError } from './neuralError';
 import { ORT_BASE_URL } from './ort';
@@ -115,7 +115,10 @@ class PocketEngine implements TtsEngine {
    */
   async cacheVariant(voiceId?: string): Promise<string> {
     const saved = voiceId ?? (await getSetting<string>(VOICE_SETTING, ''));
-    return saved || 'default';
+    // `chunked` marks the clips rendered after `synthesize()` learned to voice a
+    // long sentence clause by clause. Clips cached before that change have their
+    // last words missing, and a stale key would keep replaying them.
+    return `${saved || 'default'}@chunked`;
   }
 
   private async load(): Promise<PocketTTS> {
@@ -251,12 +254,22 @@ class PocketEngine implements TtsEngine {
     try {
       const tts = await this.ensure();
       const voice = await this.voiceRef(tts, opts.voiceId);
-      const pcm = await this.render(tts, text, voice);
-      if (pcm.stopped) throw new Error('Pocket TTS synthesis was stopped');
+      // The model stops after a bounded number of frames, so a long sentence sent
+      // in one call comes back short: the last words are simply missing ("it
+      // trails off"). `speak()` already voices long sentences clause by clause;
+      // the cached/pre-rendered path has to cut the same way, or it caches that
+      // shortened clip and every replay keeps the missing words.
+      const parts: Float32Array[] = [];
+      for (const clause of splitIntoClauses(text)) {
+        const pcm = await this.render(tts, clause, voice);
+        if (pcm.stopped) throw new Error('Pocket TTS synthesis was stopped');
+        parts.push(pcm.data);
+      }
+      if (parts.length === 0) throw new Error('Pocket TTS produced no audio for this text');
       // The model has no speed input, so `rate` is baked into the samples here —
       // the shared player plays cached clips at 1x, so the file must already be
       // at the requested speed.
-      return encodeWav(changeSpeed(pcm.data, clampPocketRate(opts.rate)), pcm.sampleRate);
+      return encodeWav(changeSpeed(concatFloat32(parts), clampPocketRate(opts.rate)), tts.sampleRate);
     } catch (err) {
       throw neuralError('pocket', NEURAL_STAGES.synth, err);
     }

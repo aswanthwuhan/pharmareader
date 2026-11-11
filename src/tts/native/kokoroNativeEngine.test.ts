@@ -63,18 +63,18 @@ describe('cache identity', () => {
     await db.settings.clear();
   });
 
-  it('keys a clip by the speaker it will use and the fp32 weights', async () => {
-    expect(await kokoroNativeEngine.cacheVariant?.()).toBe('3@fp32');
+  it('keys a clip by the speaker it will use, the fp32 weights and the chunked text', async () => {
+    expect(await kokoroNativeEngine.cacheVariant?.()).toBe('3@fp32@chunked');
     await setSetting(KOKORO_VOICE_SETTING, '11');
-    expect(await kokoroNativeEngine.cacheVariant?.()).toBe('11@fp32');
+    expect(await kokoroNativeEngine.cacheVariant?.()).toBe('11@fp32@chunked');
     // The settings panel measures with an explicit speaker: that request decides.
-    expect(await kokoroNativeEngine.cacheVariant?.('7')).toBe('7@fp32');
+    expect(await kokoroNativeEngine.cacheVariant?.('7')).toBe('7@fp32@chunked');
   });
 
   it('migrates the int8 setting v0.3.3 wrote and keeps the build in the key', async () => {
     await setSetting(KOKORO_MODEL_SETTING, 'int8');
     // int8 clips are different weights: the key must not replay them as fp32 audio.
-    expect(await kokoroNativeEngine.cacheVariant?.()).toBe('3@fp32');
+    expect(await kokoroNativeEngine.cacheVariant?.()).toBe('3@fp32@chunked');
   });
 
   it('gives the same sentence a different key after a speaker change', async () => {
@@ -94,7 +94,7 @@ describe('cache identity', () => {
   it('falls back like synthesize for a speaker id it cannot read', async () => {
     await setSetting(KOKORO_VOICE_SETTING, '11');
     // "en-US-language" is a phone voice, not a Kokoro speaker: synthesize uses af_heart.
-    expect(await kokoroNativeEngine.cacheVariant?.('en-US-language')).toBe('3@fp32');
+    expect(await kokoroNativeEngine.cacheVariant?.('en-US-language')).toBe('3@fp32@chunked');
   });
 });
 
