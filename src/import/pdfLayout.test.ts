@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   chaptersFromPages,
+  classifyParagraphs,
   dropPageFurniture,
   itemsToLines,
   itemsToPageLines,
@@ -165,6 +166,31 @@ describe('pagesToParagraphs', () => {
       'Left column sentence.',
       'Right column starts here.',
     ]);
+  });
+
+  it('keeps a sentence whole when it runs from the foot of one column to the head of the next', () => {
+    const paragraphs = pagesToParagraphs([
+      page([line('mutations in the filaggrin gene have been', 700), line('identified as the main factor.', 80)]),
+    ]);
+
+    expect(paragraphs.map((current) => current.text)).toEqual([
+      'mutations in the filaggrin gene have been identified as the main factor.',
+    ]);
+  });
+
+  it('keeps the space pdf.js reports between runs when the gap is too narrow to prove one', () => {
+    // "studied" (roman), " in vivo" (italic), " induced" (roman): 1.7pt gaps at 9pt type.
+    const row = [item('studied', 50, 100, 30, 9), item(' in vivo', 81.7, 100, 24, 9), item(' induced', 107.4, 100, 30, 9)];
+    const [only] = pagesToParagraphs([page(itemsToLines(row))]);
+
+    expect(only?.text).toBe('studied in vivo induced');
+  });
+
+  it('still closes a compound whose hyphen ends a run, space or not', () => {
+    const row = [item('anti-', 50, 100, 20, 9), item(' JAK2 antibody', 71.7, 100, 60, 9)];
+    const [only] = pagesToParagraphs([page(itemsToLines(row))]);
+
+    expect(only?.text).toBe('anti-JAK2 antibody');
   });
 
   it('still joins a word hyphenated across a column break', () => {
@@ -447,5 +473,21 @@ describe('stitchPages', () => {
 
     expect(out.map((part) => part.kind ?? 'p')).toEqual(['p', 'caption', 'p']);
     expect(out[1].text).toBe('Figure 2 Effects of melittin on filaggrin');
+  });
+});
+
+describe('classifyParagraphs', () => {
+  it('marks a caption, and leaves a sentence that only opens with a figure number as prose', () => {
+    const out = classifyParagraphs(
+      [
+        paragraph(1, 'Figure 3–1 illustrates a fundamental hypothesis of pharmacology.'),
+        paragraph(1, 'FIGURE 3–1 The relationship between dose and effect.'),
+        paragraph(1, 'Table 2. Doses used in the study.'),
+        paragraph(1, 'Table 2 shows the doses used in the study.'),
+      ],
+      [],
+    );
+
+    expect(out.map((part) => part.kind ?? 'p')).toEqual(['p', 'caption', 'caption', 'p']);
   });
 });

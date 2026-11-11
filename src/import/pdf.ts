@@ -65,20 +65,33 @@ export async function parsePdf(
     const pageItems: PdfTextItem[][] = [];
     const pageBoxes: LayoutBox[][] = [];
     detector = await layoutDetector();
+    let misses = 0;
+    let failed = 0;
 
     for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
       const page = await pdf.getPage(pageNumber);
       const viewport = page.getViewport({ scale: 1 });
       const content = await page.getTextContent();
       const items: PdfTextItem[] = [];
+      let spaceBefore = false;
 
       for (const raw of content.items) {
-        if (!('str' in raw) || !raw.str.trim()) continue;
+        if (!('str' in raw)) continue;
+        if (!raw.str.trim()) {
+          // pdf.js reports the space between two runs (roman → italic → roman) as
+          // a run of its own. The gap it stands for is often narrower than the
+          // gap rule accepts, so dropping it reads "studied in vivo induced" as
+          // "studiedin vivoinduced": hand the space to the run that follows.
+          spaceBefore = raw.str.length > 0;
+          continue;
+        }
         // Viewport transform maps PDF user space to scale-1, top-left-origin space.
         const matrix = Util.transform(viewport.transform, raw.transform) as number[];
         const height = Math.hypot(matrix[2], matrix[3]) || raw.height || 10;
+        const str = spaceBefore && !/^\s/.test(raw.str) ? ` ${raw.str}` : raw.str;
+        spaceBefore = false;
         items.push({
-          str: raw.str,
+          str,
           x: matrix[4],
           y: matrix[5] - height,
           w: raw.width ?? 0,
@@ -93,7 +106,11 @@ export async function parsePdf(
       if (detector && needsModelLayout(sheet)) {
         // The page has to be rasterised before `cleanup` drops its operators.
         const boxes = await detectBoxes(detector, page, viewport, pageNumber);
-        if (!boxes) {
+        // One page that will not render must not cost the rest of the book its
+        // layout; three in a row means the model itself is gone.
+        misses = boxes ? 0 : misses + 1;
+        if (!boxes) failed += 1;
+        if (misses >= 3) {
           // Dropping the handle alone would leave the worker and its ~200 MB alive.
           detector.dispose();
           detector = null;
@@ -148,7 +165,9 @@ export async function parsePdf(
       doc: { title, author, format: 'pdf', chapters },
       charsPerPage: pdf.numPages ? charCount / pdf.numPages : 0,
       pageCount: pdf.numPages,
-      layout: modelStayed ? 'model' : 'heuristic',
+      // A page the model could not read was laid out from the text: say so, and
+      // the book stays on offer for re-analysis.
+      layout: modelStayed && failed === 0 ? 'model' : 'heuristic',
       modelPages: pageBoxes.filter((boxes) => boxes.length > 0).length,
     };
   } finally {

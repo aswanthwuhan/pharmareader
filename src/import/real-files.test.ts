@@ -210,8 +210,10 @@ describe.skipIf(!existsSync(REAL_PDF))('real PDF: two-column BJP review (PMC6240
 
     // "identified" begins the right column, i.e. it comes after the whole left
     // column. Reading the rows in y order would splice it into the sentence above.
-    const identified = sentences.findIndex((sentence) => sentence.startsWith('identified as the main'));
+    // The sentence it finishes started at the foot of the left column, and is whole.
+    const identified = sentences.findIndex((sentence) => sentence.includes('identified as the main'));
     expect(identified).toBeGreaterThan(opening);
+    expect(sentences[identified]).toContain('gene have been identified as the main');
 
     // Words hyphenated over a line or column break are one word again.
     const text = sentences.join(' ');

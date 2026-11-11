@@ -436,7 +436,10 @@ export function linesToParagraphs(
     // indent relative to.
     const settled = !previous || Math.abs(previous.x - bodyLeft) <= Math.max(2, previous.h * 0.3);
 
-    let breaks = !current || !previous || (newColumn && !splitWord) || (sizeChange && !splitWord);
+    // A sentence that runs out at the foot of one column carries on at the head
+    // of the next ("…gene have been" / "identified as…"): that is not a new block.
+    let breaks =
+      !current || !previous || (newColumn && !splitWord && !continuation) || (sizeChange && !splitWord);
 
     if (!breaks && !splitWord && !continuation) {
       // A justified line fills the measure, so a short one ends its paragraph.
@@ -528,8 +531,9 @@ function appendLine(paragraph: PdfParagraph, line: PdfLine): void {
     // A PDF run can end at the break of a hyphenated compound ("anti-" + "JAK2")
     // even inside one line; the space the gap rule would add is not real there,
     // and the run often carries one of its own anyway.
-    const hyphenJoin = /-[\s]*$/.test(paragraph.text) && /^[\p{L}\p{N}(]/u.test(chunk);
+    const hyphenJoin = /-[\s]*$/.test(paragraph.text) && /^[\p{L}\p{N}(]/u.test(chunk.trimStart());
     if (hyphenJoin) {
+      chunk = chunk.trimStart();
       paragraph.text = paragraph.text.replace(/\s+$/, '');
       const lastSpan = paragraph.spans[paragraph.spans.length - 1];
       if (lastSpan) lastSpan.end = paragraph.text.length;
@@ -643,7 +647,10 @@ function buildChapter(title: string, chapterIdx: number, paragraphs: PdfParagrap
 }
 
 /** "Fig. 3", "Figure 2.1", "Table 4", "Chart 2", "Plate IV" — the usual caption openers. */
-const CAPTION = /^(?:fig(?:ure)?|tab(?:le)?|chart|plate|scheme)\s*\.?\s*(?:\d+|[ivxlc]+)(?:[.\-\u2013]\d+)*\s*[.:\u2014\u2013-]?\s+\p{Lu}/iu;
+// No `i` flag on the capital that follows: under `iu`, `\p{Lu}` matches lower
+// case too, and "Figure 3 shows that\u2026" \u2014 a sentence of the body \u2014 was marked a
+// caption and passed over by the voice.
+const CAPTION = /^(?:[Ff]ig(?:ure)?|FIG(?:URE)?|[Tt]ab(?:le)?|TAB(?:LE)?|[Cc]hart|CHART|[Pp]late|PLATE|[Ss]cheme|SCHEME)\s*\.?\s*(?:\d+|[ivxlcIVXLC]+)(?:[.\-\u2013]\d+)*\s*[.:\u2014\u2013-]?\s+\p{Lu}/u;
 
 /** The same opener on a line of its own: many journals set "Figure 1" above the text. */
 const CAPTION_NUMBER = /^(?:fig(?:ure)?|tab(?:le)?|chart|plate|scheme)\s*\.?\s*(?:\d+|[ivxlc]+)(?:[.\-\u2013]\d+)*$/iu;
@@ -710,7 +717,9 @@ function heuristicKind(paragraph: PdfParagraph, page: PdfPage | undefined): Bloc
   // it; what is left in the band is a line that appears once (a date, an imprint,
   // a section marker). Mark those so they are not read out as body text.
   const rows = groupItemsByRow(paragraph.spans.map((span) => span.item));
-  if (!rows.length || paragraph.text.length > 90 || TERMINAL.test(paragraph.text)) return null;
+  // A running head is one row however long ("CHAPTER 3 Pharmacokinetics & … 43");
+  // the length cap only keeps a wrapped paragraph of body text out.
+  if (!rows.length || (rows.length > 1 && paragraph.text.length > 90) || TERMINAL.test(paragraph.text)) return null;
   const top = rows[0];
   const last = rows[rows.length - 1];
   // The same band furniture is measured in, so a page number the repeat test did

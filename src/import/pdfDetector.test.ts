@@ -39,7 +39,8 @@ describe('parsePdf with the layout model installed', () => {
 
     // The loaded model holds ~200 MB of WASM memory in a worker: dropping the
     // handle without disposing it leaks that for the life of the page.
-    expect(detector.detect).toHaveBeenCalledTimes(1);
+    // One bad page is tolerated; three in a row end the attempt.
+    expect(detector.detect.mock.calls.length).toBeLessThanOrEqual(3);
     expect(detector.dispose).toHaveBeenCalledTimes(1);
     expect(parsed.layout).toBe('heuristic');
     expect(parsed.modelPages).toBe(0);
