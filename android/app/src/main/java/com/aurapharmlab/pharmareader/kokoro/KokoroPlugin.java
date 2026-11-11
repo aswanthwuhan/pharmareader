@@ -31,10 +31,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * io thread for many minutes, and the settings panel must still be able to ask whether the
  * model is present.
  *
- * <p>Two model builds are offered, and every method takes an optional {@code model}
- * argument ({@code "int8"} or {@code "fp32"}): the int8 graph is the default for a new
- * install because it is 114 MB instead of 310 MB and runs cooler, but an existing fp32
- * install keeps working until the user downloads int8. Each build lives in its own
+ * <p>Two model builds can exist on disk, and every method takes an optional {@code model}
+ * argument ({@code "int8"} or {@code "fp32"}): fp32 is the build this plugin speaks with
+ * and the default for a new install; the int8 graph v0.3.3 defaulted to is no longer
+ * offered, but its files are still reported so the panel can delete them. Each build lives
+ * in its own
  * directory, so both can be present at once.
  *
  * <p>The model itself is downloaded at runtime (132 MB or 334 MB) rather than shipped in
@@ -84,10 +85,15 @@ public class KokoroPlugin extends Plugin {
     }
 
     /**
-     * The model this call should actually use: the requested build when it is installed,
-     * otherwise the other build when <em>that</em> one is installed (an existing fp32
-     * install keeps working until the user downloads int8), otherwise the requested build
-     * so the "not downloaded" answer names the model the caller asked for.
+     * The model this call should <em>report on</em>: the requested build when it is installed,
+     * otherwise the other build when <em>that</em> one is installed, otherwise the requested
+     * build so the "not downloaded" answer names the model the caller asked for.
+     *
+     * <p>Only {@link #status} and the {@code stillDownloaded} information of
+     * {@link #deleteModel} use this. {@link #load} and {@link #synthesize} take the requested
+     * build as it is: fp32 is the only build the app speaks with, and quietly loading or
+     * speaking the old int8 graph instead — which the user rejected — would poison the fp32
+     * audio cache with int8 clips.
      */
     private KokoroModel.Descriptor resolveDownloaded(KokoroModel.Descriptor wanted) {
         if (store(wanted).isDownloaded()) {
@@ -97,7 +103,7 @@ public class KokoroPlugin extends Plugin {
         return store(other).isDownloaded() ? other : wanted;
     }
 
-    /** The model named by the call's {@code model} argument (int8 when absent or unknown). */
+    /** The model named by the call's {@code model} argument (fp32 when absent or unknown). */
     private static KokoroModel.Descriptor requested(PluginCall call) {
         return KokoroModel.forKey(call == null ? null : call.getString("model", null));
     }
@@ -213,8 +219,8 @@ public class KokoroPlugin extends Plugin {
             call.reject("A model download is already running", "BUSY");
             return;
         }
-        // The download is always the build the caller named, never a fallback: clicking
-        // "Download the lighter INT8 model" on a phone that still has fp32 must fetch int8.
+        // The download is always the build the caller named, never a fallback: the JS side
+        // asks for fp32, and an older fp32 install must not make that answer "already here".
         KokoroModel.Descriptor wanted = requested(call);
         try {
             ioExecutor.execute(() -> {
@@ -278,7 +284,8 @@ public class KokoroPlugin extends Plugin {
                     KokoroTtsEngine engine = KokoroTtsEngine.getInstance();
                     KokoroStore store = store(wanted);
                     // Unloading is global, so only do it when the removed model is the loaded
-                    // one — deleting fp32 while int8 is in memory should not cost a reload.
+                    // one — deleting the old int8 files while fp32 is in memory must not cost
+                    // a 334 MB reload.
                     if (store.modelDir().getAbsolutePath().equals(engine.modelDirPath())) {
                         engine.release();
                     }
@@ -311,7 +318,9 @@ public class KokoroPlugin extends Plugin {
         try {
             synthExecutor.execute(() -> {
                 try {
-                    KokoroModel.Descriptor active = resolveDownloaded(wanted);
+                    // The requested build only: falling back to the other one would speak
+                    // (or load) the int8 graph the user rejected.
+                    KokoroModel.Descriptor active = wanted;
                     KokoroStore store = store(active);
                     if (!store.isDownloaded()) {
                         safeReject(call, "The Kokoro model is not downloaded yet", "NOT_DOWNLOADED");
@@ -413,12 +422,15 @@ public class KokoroPlugin extends Plugin {
                 }
                 try {
                     KokoroTtsEngine engine = KokoroTtsEngine.getInstance();
-                    KokoroModel.Descriptor active = resolveDownloaded(wanted);
+                    // The requested build only: with only the old int8 files on the phone this
+                    // rejects NOT_DOWNLOADED instead of quietly speaking the rejected graph,
+                    // which the JS cache would then store under the fp32 cache key.
+                    KokoroModel.Descriptor active = wanted;
                     KokoroStore store = store(active);
                     String dir = store.modelDir().getAbsolutePath();
-                    // Reload when nothing is loaded or when the other model is in memory: the
-                    // engine keeps one session, and speaking int8 audio from an fp32 session
-                    // (or the reverse) is not what the caller asked for.
+                    // Reload when nothing is loaded or when another build is in memory: the
+                    // engine keeps one session, and speaking one build's audio from the
+                    // other's session is not what the caller asked for.
                     if (!engine.isLoaded() || !dir.equals(engine.modelDirPath())) {
                         if (!store.isDownloaded()) {
                             safeReject(call, "The Kokoro model is not downloaded yet",

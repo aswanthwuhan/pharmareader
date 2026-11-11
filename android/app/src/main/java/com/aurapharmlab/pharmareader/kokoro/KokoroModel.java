@@ -3,21 +3,21 @@ package com.aurapharmlab.pharmareader.kokoro;
 /**
  * Description of the Kokoro-82M speech models that this plugin downloads at runtime.
  *
- * <p>Two builds of the same 53-speaker, 24000 Hz model are offered side by side:
+ * <p>Two builds of the same 53-speaker, 24000 Hz model can sit side by side on disk:
  *
  * <ul>
  *   <li>{@link #FP32} — {@code kokoro-multi-lang-v1_0}, the full-precision graph. It is
- *       what this plugin shipped first and still the reference for quality, but it is
- *       310 MB of weights and heats a phone under load.
+ *       what this plugin shipped first, what it speaks with, and the reference for quality;
+ *       it is 310 MB of weights and heats a phone under load.
  *   <li>{@link #INT8} — {@code kokoro-int8-multi-lang-v1_0}, the int8-quantised graph
- *       (114 MB). Same voices, same speaker ids, same 24 kHz output; on phone CPUs it
- *       costs noticeably less memory and heat per sentence. New installs default to it.
+ *       (114 MB). Same voices, same speaker ids, same 24 kHz output. v0.3.3 defaulted to
+ *       it, but its audio was rejected in use, so it is no longer offered: the entry stays
+ *       only so the app can report and delete files an earlier version downloaded.
  * </ul>
  *
- * <p>Both are <em>not</em> bundled in the APK: the archives are 132 MB and 334 MB and
+ * <p>Neither is <em>bundled</em> in the APK: the archives are 132 MB and 334 MB and
  * Google Play / the user's storage should decide. Each is unpacked into its own
- * {@code filesDir/kokoro/<id>/} directory so the two can coexist, and the user keeps
- * the fp32 model until the int8 one has loaded successfully.
+ * {@code filesDir/kokoro/<id>/} directory so the two can coexist.
  *
  * <p>The plugin pairs the model with sherpa-onnx 1.13.8, whose Kokoro frontend uses
  * {@code lexicon-us-en.txt} first and espeak-ng (bundled, GPL-3.0) for every word the
@@ -28,17 +28,20 @@ package com.aurapharmlab.pharmareader.kokoro;
  * <p>The per-model identity lives in the {@link Descriptor} table below: directory name,
  * archive size, unpacked size, graph file name, minimum file sizes and (for int8) the
  * SHA-256 of the graph. Nothing else in the plugin hardcodes a model size or file name.
+ *
+ * <p>The default build is fp32 and must stay first in {@link #ALL}: an old caller that
+ * knows nothing about a model choice resolves to it.
  */
 public final class KokoroModel {
 
-    /** Key the web layer uses for the lighter int8 graph (also a persisted setting value). */
+    /** Key of the lighter int8 graph. Not offered any more; kept to find and delete it. */
     public static final String KEY_INT8 = "int8";
 
-    /** Key the web layer uses for the original fp32 graph. */
+    /** Key the web layer uses for the full-precision graph, and its persisted setting. */
     public static final String KEY_FP32 = "fp32";
 
-    /** Model a new install downloads and speaks with. */
-    public static final String DEFAULT_KEY = KEY_INT8;
+    /** Build a new install downloads and speaks with: the full-precision graph. */
+    public static final String DEFAULT_KEY = KEY_FP32;
 
     /** Human readable source page for the models, shown in the panel. */
     public static final String SOURCE_URL =
@@ -147,7 +150,7 @@ public final class KokoroModel {
             null,
             "Full precision");
 
-    /** Int8-quantised Kokoro v1.0 — the default, and the one that runs cooler. */
+    /** Int8-quantised Kokoro v1.0. No longer offered; kept so old files can be deleted. */
     public static final Descriptor INT8 = new Descriptor(
             KEY_INT8,
             INT8_ID,
@@ -158,8 +161,8 @@ public final class KokoroModel {
             INT8_MODEL_SHA256,
             "Lighter (int8)");
 
-    /** Every model this build can download, default first. */
-    public static final Descriptor[] ALL = {INT8, FP32};
+    /** Every model this build can report and delete, default first. */
+    public static final Descriptor[] ALL = {FP32, INT8};
 
     private KokoroModel() {}
 
@@ -274,8 +277,8 @@ public final class KokoroModel {
 
     /**
      * Descriptor for a key or model id, case insensitive. A null, blank or unknown value
-     * resolves to the default model ({@link #INT8}) so an old caller that knows nothing
-     * about model choice still speaks.
+     * resolves to the default model ({@link #FP32}) so an old caller that knows nothing
+     * about model choice still speaks the build this plugin ships with.
      */
     public static Descriptor forKey(String key) {
         if (key != null) {
@@ -286,7 +289,7 @@ public final class KokoroModel {
                 }
             }
         }
-        return INT8;
+        return FP32;
     }
 
     /** The other model of the pair (fp32 for int8, int8 for fp32). */

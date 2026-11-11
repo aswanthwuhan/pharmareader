@@ -43,8 +43,13 @@ public class KokoroStoreModelsTest {
         assertEquals(349_886_476L, KokoroModel.ARCHIVE_BYTES);
         assertEquals("fp32", KokoroModel.FP32.key());
         assertEquals(KokoroModel.FP32, KokoroModel.forKey("fp32"));
-        assertEquals(KokoroModel.INT8, KokoroModel.forKey(null));
-        assertEquals(KokoroModel.INT8, KokoroModel.forKey("nonsense"));
+        // fp32 is the default again (v0.3.3 defaulted to int8, whose audio was rejected):
+        // an old caller that names no build must get the full model.
+        assertEquals(KokoroModel.KEY_FP32, KokoroModel.DEFAULT_KEY);
+        assertEquals(KokoroModel.FP32, KokoroModel.forKey(null));
+        assertEquals(KokoroModel.FP32, KokoroModel.forKey("nonsense"));
+        assertEquals(KokoroModel.FP32, KokoroModel.forKey(KokoroModel.DEFAULT_KEY));
+        assertEquals(KokoroModel.INT8, KokoroModel.forKey("int8"));
         assertEquals(KokoroModel.FP32, KokoroModel.other(KokoroModel.INT8));
         assertEquals(KokoroModel.INT8, KokoroModel.other(KokoroModel.FP32));
     }

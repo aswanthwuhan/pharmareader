@@ -23,15 +23,14 @@ export const KOKORO_THREADS_SETTING = 'tts.kokoro.threads';
  * real time, so it is not the default.
  */
 export const DEFAULT_KOKORO_THREADS = 2;
-/** Which build of the model the reader should use: the int8 graph on a new install. */
-export const KOKORO_MODEL_SETTING = 'kokoro.native.model';
-export const DEFAULT_KOKORO_MODEL: KokoroModelKey = 'int8';
 /**
- * Set once the int8 model has been loaded successfully. The panel only offers to delete
- * the 334 MB fp32 files after this, so a user who downloads int8 but cannot load it (old
- * device, corrupt file) still has a working model.
+ * Which build of the model the reader uses. v0.3.3 wrote `int8` here; that build is gone
+ * from the UI, so the value is read only to be migrated: anything that is not `fp32` is
+ * treated as fp32 and rewritten (see `modelSetting`).
  */
-export const KOKORO_INT8_READY_SETTING = 'kokoro.native.int8Ready';
+export const KOKORO_MODEL_SETTING = 'kokoro.native.model';
+/** The one build the reader speaks with: the full-precision 334 MB graph. */
+export const DEFAULT_KOKORO_MODEL: KokoroModelKey = 'fp32';
 
 const MIN_SPEED = 0.5;
 const MAX_SPEED = 2;
@@ -100,39 +99,40 @@ export function sidFromVoiceId(voiceId?: string): number {
   return Number.isFinite(parsed) ? clampNumber(parsed, 0, 103) : DEFAULT_KOKORO_SID;
 }
 
+/**
+ * The saved thread count, exactly as v0.3.3 read it: 1, 2 and 4 are the selector's options,
+ * and a count an older build stored (6, for example) is used as it is rather than silently
+ * rewritten — the panel shows it as a "(saved)" option with the warmer-phone warning.
+ */
 async function threadsSetting(): Promise<number> {
   const saved = await getSetting<number>(KOKORO_THREADS_SETTING, DEFAULT_KOKORO_THREADS);
   const threads = Math.round(Number(saved));
   return Number.isFinite(threads) && threads > 0 ? clampNumber(threads, 1, MAX_THREADS) : DEFAULT_KOKORO_THREADS;
 }
 
-/** The saved model choice; an unknown or missing value means the int8 default. */
+/**
+ * The build to speak with. Only fp32 is offered now, so this is the fp32 build — except
+ * that a `int8` written by v0.3.3 is rewritten to fp32 first, which is what makes the next
+ * Play / prepare() fetch the full model instead of the quantised one.
+ */
 async function modelSetting(): Promise<KokoroModelKey> {
   try {
     const saved = await getSetting<string>(KOKORO_MODEL_SETTING, DEFAULT_KOKORO_MODEL);
-    return saved === 'fp32' || saved === 'int8' ? saved : DEFAULT_KOKORO_MODEL;
+    if (saved === DEFAULT_KOKORO_MODEL) return DEFAULT_KOKORO_MODEL;
+    await setSetting(KOKORO_MODEL_SETTING, DEFAULT_KOKORO_MODEL);
   } catch {
-    return DEFAULT_KOKORO_MODEL;
+    // A settings failure must not stop the model from loading; fp32 is the default.
   }
+  return DEFAULT_KOKORO_MODEL;
 }
 
 /**
- * The build the plugin actually resolved: what the user asked for when it is installed,
- * otherwise the other build when that one is installed (an fp32-only install keeps
- * speaking fp32 until int8 has been downloaded).
+ * Whether the fp32 build itself is on disk. The plugin answers `downloaded` for whichever
+ * build it can fall back to, so an int8-only phone (v0.3.3, fp32 deleted) looks installed
+ * until its own entry in `models` is checked — and that answer would skip the download.
  */
-function resolvedModel(status: KokoroStatus, requested: KokoroModelKey): KokoroModelKey {
-  const reported = status.model;
-  return reported === 'int8' || reported === 'fp32' ? reported : requested;
-}
-
-/** Remember that int8 loaded once, which is what unlocks deleting the fp32 files. */
-async function markInt8Ready(): Promise<void> {
-  try {
-    await setSetting(KOKORO_INT8_READY_SETTING, true);
-  } catch {
-    // The flag only gates a delete offer; failing to store it must not fail the load.
-  }
+export function fp32Installed(status: KokoroStatus): boolean {
+  return modelState(status.models, DEFAULT_KOKORO_MODEL)?.downloaded ?? status.downloaded;
 }
 
 async function voiceSetting(): Promise<string> {
@@ -190,7 +190,7 @@ class KokoroNativeEngine implements TtsEngine {
   async isReady(): Promise<boolean> {
     if (!isKokoroNativeAvailable()) return false;
     try {
-      return (await Kokoro.status({ model: await modelSetting() })).downloaded;
+      return fp32Installed(await Kokoro.status({ model: await modelSetting() }));
     } catch {
       return false;
     }
@@ -204,15 +204,11 @@ class KokoroNativeEngine implements TtsEngine {
     requireNative();
     onStage?.('status');
     const requested = await modelSetting();
-    // The plugin answers `downloaded` for whichever build it can fall back to, so
-    // an fp32 install reported int8 as present and "Download INT8" only reloaded
-    // fp32. A build the user chose explicitly must itself be on disk; only the
-    // unset default may lean on the other one.
-    const chosen = (await getSetting<string | null>(KOKORO_MODEL_SETTING, null)) === requested;
-    const present = (s: KokoroStatus): boolean =>
-      chosen ? (modelState(s.models, requested)?.downloaded ?? s.downloaded) : s.downloaded;
+    // The requested build has to be on disk itself: the plugin reports the fallback it
+    // found as `downloaded`, so on an int8-only phone a plain `status.downloaded` true
+    // would skip the 334 MB download and keep speaking the build the user rejected.
     let status = await Kokoro.status({ model: requested });
-    if (!present(status)) {
+    if (!fp32Installed(status)) {
       onStage?.('download');
       const handle = await Kokoro.addListener('downloadProgress', (progress) => {
         const fraction = clampNumber(progress.fraction, 0, 1);
@@ -231,21 +227,18 @@ class KokoroNativeEngine implements TtsEngine {
       onStage?.('status');
       status = await Kokoro.status({ model: requested });
     }
-    if (!present(status)) throw new Error('Kokoro model files are missing after the download.');
+    if (!fp32Installed(status)) throw new Error('Kokoro model files are missing after the download.');
 
-    const active = resolvedModel(status, requested);
-    if (active === 'int8') await markInt8Ready();
     const threads = await threadsSetting();
     // status.threads is read from the loaded session, so an engine that is already warm in
     // this process (a second reader mount) is reused instead of reloading the model. The
-    // loaded build is compared too: speaking int8 from an fp32 session is not a reuse.
+    // loaded build is compared too: an int8 session left by v0.3.3 is not a reuse.
     const loadedModel = status.loadedModel;
-    if (status.loaded && status.threads === threads && (loadedModel === active || !loadedModel)) {
+    if (status.loaded && status.threads === threads && (loadedModel === requested || !loadedModel)) {
       return;
     }
     onStage?.('load');
-    await Kokoro.load({ model: active, threads });
-    if (active === 'int8') await markInt8Ready();
+    await Kokoro.load({ model: requested, threads });
   }
 
   async listVoices(): Promise<TtsVoice[]> {
@@ -282,12 +275,10 @@ class KokoroNativeEngine implements TtsEngine {
   }
 
   /**
-   * The cache identity of a native clip: the speaker and the model build. int8 and fp32
-   * are different weights, so a clip from one must not be replayed after switching to
-   * the other; the speaker is resolved exactly as `synthesize()` resolves it. The build
-   * is the saved choice rather than the one the plugin may have substituted for a build
-   * that is not downloaded — that can only re-render a clip needlessly, never replay one
-   * in another voice.
+   * The cache identity of a native clip: the speaker and the model build. The build is
+   * still in the key, so the int8 clips v0.3.3 cached are never replayed as fp32 audio
+   * (and the reverse never happens after a downgrade); the speaker is resolved exactly as
+   * `synthesize()` resolves it.
    */
   async cacheVariant(voiceId?: string): Promise<string> {
     const sid = sidFromVoiceId(voiceId ?? (await voiceSetting()));
@@ -366,14 +357,24 @@ class KokoroNativeEngine implements TtsEngine {
   }
 
   /**
-   * Remove one model build from disk and unload whatever is in memory. Without an argument
-   * the plugin's default build (int8) is removed; the panel passes the explicit build, so
-   * deleting the old fp32 files leaves an installed int8 model alone.
+   * Remove one model build from disk. Without an argument the build the reader speaks with
+   * (fp32) is removed; the panel also passes `int8` to reclaim the files v0.3.3 downloaded.
+   *
+   * The session is only unloaded when the build being removed is the one in memory: the
+   * plugin keeps one session, so dropping it while deleting the old int8 files would cost
+   * a 334 MB reload before the next sentence.
    */
-  async deleteModel(model?: KokoroModelKey): Promise<void> {
-    await this.release();
+  async deleteModel(model: KokoroModelKey = DEFAULT_KOKORO_MODEL): Promise<void> {
     if (!isKokoroNativeAvailable()) return;
-    await Kokoro.deleteModel(model ? { model } : undefined);
+    let loaded = '';
+    try {
+      loaded = (await Kokoro.status({ model })).loadedModel ?? '';
+    } catch {
+      // An unreadable status means the caller is gone; deleting is still worth a try.
+      loaded = model;
+    }
+    if (!loaded || loaded === model) await this.release();
+    await Kokoro.deleteModel({ model });
   }
 
   /** Drop the loaded model (used after deleting the download). */

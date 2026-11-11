@@ -3,6 +3,7 @@ import 'fake-indexeddb/auto';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { db } from '../../core/db';
 import { getSetting, setSetting } from '../../core/settings';
 import { resetDownload } from '../downloads';
 import KokoroNativePanel, { KOKORO_DOWNLOAD_ID } from './KokoroNativePanel';
@@ -43,11 +44,16 @@ vi.mock('../native/kokoroPlugin', () => ({
 
 vi.mock('../native/kokoroNativeEngine', () => ({
   DEFAULT_KOKORO_SID: 3,
-  DEFAULT_KOKORO_MODEL: 'int8',
-  KOKORO_MODEL_SETTING: 'kokoro.native.model',
-  KOKORO_INT8_READY_SETTING: 'kokoro.native.int8Ready',
+  DEFAULT_KOKORO_THREADS: 2,
+  DEFAULT_KOKORO_MODEL: 'fp32',
   KOKORO_THREADS_SETTING: 'tts.kokoro.threads',
   KOKORO_VOICE_SETTING: 'tts.voice.kokoro',
+  // The real logic is small; keeping it here is what makes the "an int8-only phone is not
+  // ready" case test the panel's actual behaviour.
+  fp32Installed: (status: {
+    downloaded?: boolean;
+    models?: { key: string; downloaded?: boolean }[];
+  }) => status.models?.find((model) => model.key === 'fp32')?.downloaded ?? status.downloaded,
   kokoroNativeEngine: {
     prepare: (onProgress: (fraction: number) => void, onStage: (stage: string) => void) => {
       native.prepares += 1;
@@ -104,8 +110,11 @@ function button(label: string): HTMLButtonElement | undefined {
   return [...container.querySelectorAll('button')].find((element) => element.textContent === label);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  // Settings are shared across cases through fake-indexeddb: clear them so a thread
+  // scheme or a saved build written by one test cannot decide another one.
+  await db.settings.clear();
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -332,9 +341,22 @@ describe('KokoroNativePanel', () => {
     expect(text()).toContain(
       'More threads finish sooner but keep more cores busy, and the phone gets warmer.'
     );
+    expect(await getSetting('tts.kokoro.threads', 0)).toBe(4);
   });
 
-  it('loads a thread count saved by an older build instead of crashing', async () => {
+  it('keeps the two threads v0.3.3 saved instead of migrating them', async () => {
+    await setSetting('tts.kokoro.threads', 2);
+    await render();
+
+    const select = container.querySelector<HTMLSelectElement>('#kokoro-native-threads');
+    expect(select?.value).toBe('2');
+    expect(select?.selectedOptions[0]?.textContent).toBe('2 threads (recommended)');
+    expect(text()).not.toContain('More threads finish sooner');
+    // Read as it is: the panel writes nothing back.
+    expect(await getSetting('tts.kokoro.threads', 0)).toBe(2);
+  });
+
+  it('shows a thread count saved by an older build as a "(saved)" option', async () => {
     await setSetting('tts.kokoro.threads', 6);
     await render();
 
@@ -344,9 +366,7 @@ describe('KokoroNativePanel', () => {
     expect(text()).toContain('More threads finish sooner');
   });
 
-  it('offers the lighter int8 download to a phone that still has fp32', async () => {
-    // An fp32 install from before the int8 build: the saved choice is fp32.
-    await setSetting('kokoro.native.model', 'fp32');
+  it('offers no lighter build, and deletes the INT8 files v0.3.3 left behind', async () => {
     native.status = () =>
       Promise.resolve({
         downloaded: true,
@@ -355,47 +375,48 @@ describe('KokoroNativePanel', () => {
         model: 'fp32',
         archiveBytes: 349_886_476,
         models: [
-          { key: 'int8', downloaded: false, archiveBytes: 132_353_410 },
+          { key: 'int8', downloaded: true, archiveBytes: 132_353_410, sizeBytes: 132_353_410 },
           { key: 'fp32', downloaded: true, archiveBytes: 349_886_476, sizeBytes: 340_000_000 },
         ],
       });
 
     await render();
-    const offer = button('Download the lighter INT8 model (126 MB)');
-    expect(offer).toBeDefined();
-    await act(async () => {
-      offer!.click();
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    });
-    // prepare() reads the saved build, so the click has to store int8 first.
-    expect(await getSetting('kokoro.native.model', '')).toBe('int8');
-  });
 
-  it('offers to delete the fp32 files only once int8 has loaded successfully', async () => {
-    await setSetting('kokoro.native.int8Ready', true);
-    native.status = () =>
-      Promise.resolve({
-        downloaded: true,
-        loaded: true,
-        sizeBytes: 200_000_000,
-        model: 'int8',
-        archiveBytes: 132_353_410,
-        models: [
-          { key: 'int8', downloaded: true, archiveBytes: 132_353_410 },
-          { key: 'fp32', downloaded: true, archiveBytes: 349_886_476, sizeBytes: 349_000_000 },
-        ],
-      });
+    expect(button('Download the lighter INT8 model (126 MB)')).toBeUndefined();
+    expect(container.querySelector('#kokoro-native-model')).toBeNull();
+    expect(text()).not.toContain('Lighter (int8)');
 
-    await render();
-    const remove = button('Delete the older fp32 model (333 MB)');
+    const remove = button('Remove the old INT8 download (126 MB)');
     expect(remove).toBeDefined();
     await act(async () => {
       remove!.click();
       await new Promise((resolve) => setTimeout(resolve, 25));
     });
-    // Only the fp32 directory is removed; the int8 model stays installed.
-    expect(native.deleted).toEqual(['fp32']);
-    // Both builds installed, so the panel lets the user switch between them.
-    expect(container.querySelector('#kokoro-native-model')).not.toBeNull();
+    // Only the int8 directory goes; the fp32 model the reader speaks with stays.
+    expect(native.deleted).toEqual(['int8']);
+  });
+
+  it('asks for the fp32 download on a phone that only has the INT8 build', async () => {
+    // A v0.3.3 user who deleted fp32: the plugin still answers downloaded (it falls back),
+    // but the fp32 entry says otherwise, so the panel must offer the full model.
+    native.status = () =>
+      Promise.resolve({
+        downloaded: true,
+        loaded: true,
+        sizeBytes: 126_000_000,
+        model: 'int8',
+        archiveBytes: 132_353_410,
+        models: [
+          { key: 'int8', downloaded: true, archiveBytes: 132_353_410 },
+          { key: 'fp32', downloaded: false, archiveBytes: 349_886_476 },
+        ],
+      });
+
+    const shown = await render();
+
+    expect(shown).toContain('Download model (334 MB)');
+    expect(shown).not.toContain('Ready');
+    // Nothing to delete: those files are the only model on the phone until fp32 arrives.
+    expect(button('Remove the old INT8 download (126 MB)')).toBeUndefined();
   });
 });
