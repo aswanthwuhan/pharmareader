@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.6 — 2026-11-11
+Web app only (GitHub Pages). Installs over 0.3.5 without losing data.
+
+**Fixed — the voice no longer turns into a whisper**
+- Kokoro in the browser on a graphics card (WebGPU) no longer fades into a breathy whisper partway through a long sentence. It now voices a sentence in shorter pieces, so it stays clear to the last word. Kokoro without a graphics card, and on Android, was not affected.
+- The Pocket voice no longer changes towards the end of a sentence. A long clause was cut mid-word and its last words were spoken as a separate take after a short gap; clauses are now short enough to be spoken in one go.
+- Sentences that were already prepared with these voices are made again once, so the old clips are replaced.
+
 ## 0.3.5 — 2026-11-11
 Installs over 0.3.4 without losing data.
 

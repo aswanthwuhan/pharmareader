@@ -57,9 +57,12 @@ function boundaryCuts(text: string): number[] {
 
 function hardWrap(text: string, maxWords: number): string[] {
   const words = text.split(' ');
+  // Even pieces: filling to the cap leaves a stub (20 words at 18 -> 18 + 2) that the
+  // engine voices as a sentence of its own.
+  const size = Math.ceil(words.length / Math.ceil(words.length / maxWords));
   const out: string[] = [];
-  for (let start = 0; start < words.length; start += maxWords) {
-    out.push(words.slice(start, start + maxWords).join(' '));
+  for (let start = 0; start < words.length; start += size) {
+    out.push(words.slice(start, start + size).join(' '));
   }
   return out;
 }

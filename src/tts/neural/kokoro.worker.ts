@@ -6,7 +6,7 @@
 import { env as transformersEnv } from '@huggingface/transformers';
 import { KokoroTTS, env } from 'kokoro-js';
 import type { KokoroDevice, KokoroDtype, KokoroRequest, KokoroResponse } from './kokoroProtocol';
-import { generateInPieces } from './modelText';
+import { generateInPieces, MAX_CHUNK_WORDS, WEBGPU_MAX_CHUNK_WORDS } from './modelText';
 import { concatFloat32 } from './wav';
 import { createProgressAggregator } from './progress';
 import { ORT_BASE_URL } from './ort';
@@ -68,6 +68,8 @@ function post(message: KokoroResponse, transfer?: Transferable[]): void {
 }
 
 let tts: KokoroTTS | null = null;
+/** Words per model call: WASM holds the full budget, WebGPU needs shorter calls. */
+let pieceWords = MAX_CHUNK_WORDS;
 /** Request currently being synthesised; -1 once `stop` was received. */
 let currentId = -1;
 /** ONNX sessions are not re-entrant: init/speak run one after another. */
@@ -107,6 +109,8 @@ async function init(dtype: KokoroDtype, device: KokoroDevice): Promise<void> {
   );
   try {
     tts = await load(dtype, device, report);
+    // WebGPU turns the voice breathy late in a long call (see WEBGPU_MAX_CHUNK_WORDS).
+    if (device === 'webgpu') pieceWords = WEBGPU_MAX_CHUNK_WORDS;
   } catch (err) {
     // WebGPU can be advertised but still fail (old driver, no adapter). Retry on
     // WASM with the same weights instead of leaving the engine unusable.
@@ -146,7 +150,8 @@ async function speak(id: number, text: string, voice: string, speed: number): Pr
       const audio = await model.generate(piece, { voice: voice as keyof KokoroTTS['voices'], speed });
       return { audio: audio.audio, sampleRate: audio.sampling_rate };
     },
-    () => currentId !== id
+    () => currentId !== id,
+    pieceWords
   );
   if (!generated) {
     post({ type: 'stopped', id });

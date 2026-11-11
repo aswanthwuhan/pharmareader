@@ -19,6 +19,15 @@ import { createProgressAggregator } from './progress';
 import { wasmThreadCount } from './threadBudget';
 import { changeSpeed, concatFloat32, encodeWav } from './wav';
 
+/**
+ * Clause size for Pocket. pocket-tts-js holds at most 50 SentencePiece tokens per
+ * chunk and re-cuts anything longer at a raw token index — usually mid-word — then
+ * voices the rest as a fresh take after 0.25 s of silence, so the end of the clause
+ * sounds like another speaker. Pharma prose runs ~2.1 tokens a word: 25-word clauses
+ * measured up to 59 tokens, 18-word windows at most 45.
+ */
+const POCKET_CLAUSE = { maxWords: 18 };
+
 /** The only language bundle the app supports for now (Indian English readers). */
 const LANGUAGE = 'english_2026-04';
 const VOICE_SETTING = 'tts.pocket.voice';
@@ -117,8 +126,9 @@ class PocketEngine implements TtsEngine {
     const saved = voiceId ?? (await getSetting<string>(VOICE_SETTING, ''));
     // `chunked` marks the clips rendered after `synthesize()` learned to voice a
     // long sentence clause by clause. Clips cached before that change have their
-    // last words missing, and a stale key would keep replaying them.
-    return `${saved || 'default'}@chunked`;
+    // last words missing, and a stale key would keep replaying them. `2`: clips
+    // rendered from 25-word clauses change voice where the library re-cut them.
+    return `${saved || 'default'}@chunked2`;
   }
 
   private async load(): Promise<PocketTTS> {
@@ -217,7 +227,7 @@ class PocketEngine implements TtsEngine {
 
     // Long sentences are voiced clause by clause, so playback can start after the
     // first clause instead of after the whole sentence (~20 s at RTF 3).
-    const plan = planChunks(items);
+    const plan = planChunks(items, POCKET_CLAUSE);
     if (plan.length === 0) return;
 
     let next = this.render(tts, plan[0].text, voice);
@@ -260,7 +270,7 @@ class PocketEngine implements TtsEngine {
       // the cached/pre-rendered path has to cut the same way, or it caches that
       // shortened clip and every replay keeps the missing words.
       const parts: Float32Array[] = [];
-      for (const clause of splitIntoClauses(text)) {
+      for (const clause of splitIntoClauses(text, POCKET_CLAUSE)) {
         const pcm = await this.render(tts, clause, voice);
         if (pcm.stopped) throw new Error('Pocket TTS synthesis was stopped');
         parts.push(pcm.data);

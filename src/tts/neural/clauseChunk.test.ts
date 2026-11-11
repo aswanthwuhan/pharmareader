@@ -75,6 +75,11 @@ describe('splitIntoClauses', () => {
     expect(chunks.join(' ')).toBe(flatten(text));
   });
 
+  it('hard-wraps into even pieces instead of leaving a stub', () => {
+    const chunks = splitIntoClauses(words(20), { maxWords: 18, minWords: 7 });
+    expect(chunks.map(countWords)).toEqual([10, 10]);
+  });
+
   it('merges a short tail instead of leaving a stub', () => {
     const text = `${words(20, 'lead')}, ${words(20, 'mid')}, ok`;
     const chunks = splitIntoClauses(text, { maxWords: 25, minWords: 5 });

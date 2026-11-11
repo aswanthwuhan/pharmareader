@@ -240,7 +240,7 @@ describe('weight precision', () => {
     // Nothing loaded yet, and the legacy q8 row is still in the store: the key must be
     // the same `af_heart@fp32` an existing fp32 clip was saved under.
     await setSetting(KOKORO_DTYPE_SETTING, 'q8');
-    expect(await kokoroEngine.cacheVariant?.()).toBe('af_heart@fp32@chunked');
+    expect(await kokoroEngine.cacheVariant?.()).toBe('af_heart@fp32@chunked2');
   });
 
   it('does not report ready while only a retired precision is downloaded', async () => {
@@ -284,10 +284,10 @@ describe('voice identity', () => {
 
   it('names the voice it will speak with, not the phone voice in the request', async () => {
     await setKokoroVoice('af_bella');
-    expect(await kokoroEngine.cacheVariant?.()).toBe('af_bella@fp32@chunked');
+    expect(await kokoroEngine.cacheVariant?.()).toBe('af_bella@fp32@chunked2');
 
     await setKokoroVoice('am_adam');
-    expect(await kokoroEngine.cacheVariant?.()).toBe('am_adam@fp32@chunked');
+    expect(await kokoroEngine.cacheVariant?.()).toBe('am_adam@fp32@chunked2');
   });
 
   it('gives the same sentence a different key after a voice change', async () => {
@@ -308,7 +308,7 @@ describe('voice identity', () => {
     // "en-US-language" is a phone voice id, not a Kokoro one: synthesize silently uses
     // voiceIds[0], so the key must say that voice rather than claim the phone voice.
     await setKokoroVoice('af_heart');
-    expect(await kokoroEngine.cacheVariant?.('en-US-language')).toBe('af_heart@fp32@chunked');
+    expect(await kokoroEngine.cacheVariant?.('en-US-language')).toBe('af_heart@fp32@chunked2');
   });
 
   it('asks the worker for the voice the cache identity names', async () => {
@@ -327,7 +327,7 @@ describe('voice identity', () => {
       sampleRate: 24000,
     });
     await expect(rendering).resolves.toBeInstanceOf(Blob);
-    expect(await kokoroEngine.cacheVariant?.()).toBe('af_bella@fp32@chunked');
+    expect(await kokoroEngine.cacheVariant?.()).toBe('af_bella@fp32@chunked2');
   });
 });
 

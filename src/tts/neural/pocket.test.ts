@@ -228,7 +228,8 @@ describe('PocketEngine', () => {
     const blob = await pocketEngine.synthesize!(text, { rate: 1 });
 
     expect(lib.texts.length).toBeGreaterThan(1);
-    for (const piece of lib.texts) expect(piece.split(/\s+/).length).toBeLessThanOrEqual(25);
+    // Over ~50 tokens the library re-cuts a clause mid-word and the tail is a new take.
+    for (const piece of lib.texts) expect(piece.split(/\s+/).length).toBeLessThanOrEqual(18);
     // Every word is voiced, in order, and every clip's audio is in the file.
     expect(lib.texts.join(' ')).toBe(text.replace(/\s+/g, ' ').trim());
     expect((await blob.arrayBuffer()).byteLength).toBe(44 + lib.texts.length * 5 * 2);
@@ -264,11 +265,11 @@ describe('voice identity', () => {
   });
 
   it('names the voice it will speak with, and a requested voice wins', async () => {
-    expect(await pocketEngine.cacheVariant?.()).toBe('default@chunked');
+    expect(await pocketEngine.cacheVariant?.()).toBe('default@chunked2');
     await setSetting(VOICE_KEY, 'alba');
-    expect(await pocketEngine.cacheVariant?.()).toBe('alba@chunked');
+    expect(await pocketEngine.cacheVariant?.()).toBe('alba@chunked2');
     // The settings panel measures with the engine's own voice; that request decides.
-    expect(await pocketEngine.cacheVariant?.('cosette')).toBe('cosette@chunked');
+    expect(await pocketEngine.cacheVariant?.('cosette')).toBe('cosette@chunked2');
   });
 
   it('gives the same sentence a different key after a voice change', async () => {
@@ -292,6 +293,6 @@ describe('voice identity', () => {
     await pocketEngine.synthesize!('Metformin.', { rate: 1 });
 
     expect(lib.voices).toEqual(['cosette']);
-    expect(await pocketEngine.cacheVariant?.()).toBe('cosette@chunked');
+    expect(await pocketEngine.cacheVariant?.()).toBe('cosette@chunked2');
   });
 });
