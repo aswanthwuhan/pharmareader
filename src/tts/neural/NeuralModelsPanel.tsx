@@ -3,6 +3,8 @@ import type { ReactNode } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { setSetting, useSetting } from '../../core/settings';
 import type { TtsEngine, TtsVoice } from '../../core/types';
+import { TTS_RATE_SETTING } from '../TtsSettings';
+import VoiceTest from '../VoiceTest';
 import { resetDownload, startDownload, useDownload, type DownloadState } from '../downloads';
 import { measureRtf, rtfSettingKey } from './benchmark';
 import { copyText } from './clipboard';
@@ -25,6 +27,7 @@ import {
 } from './models';
 import { describeNeuralError, type NeuralErrorInfo } from './neuralError';
 import { POCKET_RATE_MAX, POCKET_RATE_MIN, pocketEngine, resetPocketEngine } from './pocket';
+import { POCKET_VOICES } from './pocketVoices';
 import styles from './NeuralModelsPanel.module.css';
 
 type ModelId = 'pocket' | 'kokoro';
@@ -82,6 +85,8 @@ interface EngineCardProps {
   state: ModelState;
   voices: TtsVoice[];
   voiceId: string;
+  /** The rate the book reads at; the test sample must sound like the book. */
+  rate: number;
   onVoiceChange(voiceId: string): void;
   onDownload(): void;
   onDelete(): void;
@@ -105,6 +110,17 @@ function EngineCard(props: EngineCardProps) {
   const busy = state.kind === 'downloading' || props.measuring;
   const chip = chipFor(state);
   const speed = speedLine(props.rtf);
+  // One line, so a disabled "Test voice" never looks like a broken control.
+  const testReason =
+    state.kind === 'ready'
+      ? null
+      : state.kind === 'downloading'
+        ? 'Available once the download finishes.'
+        : state.kind === 'loading'
+          ? 'Checking the model…'
+          : state.kind === 'error'
+            ? 'Fix the download first.'
+            : 'Download the model first';
 
   return (
     <section className={styles.block} aria-labelledby={`tts-${props.model}-title`}>
@@ -170,12 +186,14 @@ function EngineCard(props: EngineCardProps) {
         </p>
       )}
 
-      {/* A voice list belongs to a model that is here; before that it is a
-          disabled control explaining nothing. */}
+      {/* Voice is a preference, not a feature of the files: Pocket knows its
+          built-in names before anything is downloaded, so a disabled control
+          would hide a choice the reader can make now. */}
       {props.voices.length > 0 && (
         <label className={styles.field}>
           <span className="field-label">Voice</span>
           <select
+            id={`voice-${props.model}`}
             className="input"
             value={props.voiceId}
             onChange={(event) => props.onVoiceChange(event.target.value)}
@@ -188,6 +206,15 @@ function EngineCard(props: EngineCardProps) {
           </select>
         </label>
       )}
+
+      {/* The sample speaks with this engine and the voice above, at the rate the
+          book reads at; it is never written to the audio cache. */}
+      <VoiceTest
+        engine={props.engine}
+        voiceId={props.voiceId}
+        rate={props.rate}
+        disabledReason={testReason}
+      />
 
       {/* One disclosure per model: the technical controls first, then the
           explanation of what the model is doing, under the same label. */}
@@ -315,7 +342,10 @@ export default function NeuralModelsPanel() {
   const [kokoroLeftover, setKokoroLeftover] = useState(false);
   const [pocketFailure, setPocketFailure] = useState<NeuralErrorInfo | null>(null);
   const [kokoroFailure, setKokoroFailure] = useState<NeuralErrorInfo | null>(null);
-  const [pocketVoices, setPocketVoices] = useState<TtsVoice[]>([]);
+  // Pocket's names live in the model bundle, so the engine can only list them
+  // after loading. The static list is the same bundle content, and it lets the
+  // picker exist for a device that has the model but has not loaded it yet.
+  const [pocketVoices, setPocketVoices] = useState<TtsVoice[]>(POCKET_VOICES);
   const [kokoroVoices, setKokoroVoices] = useState<TtsVoice[]>([]);
   const [measuring, setMeasuring] = useState<ModelId | null>(null);
   const [pocketError, setPocketError] = useState<string | null>(null);
@@ -329,6 +359,7 @@ export default function NeuralModelsPanel() {
   // the one download size and asks the disk whether *that* model is here.
   const kokoroVoice = useSetting<string>(KOKORO_VOICE_SETTING, DEFAULT_KOKORO_VOICE);
   const pocketVoice = useSetting<string>('tts.pocket.voice', '');
+  const rate = useSetting<number>(TTS_RATE_SETTING, 1);
   const pocketRtf = useSetting<number>(rtfSettingKey('pocket'), 0);
   const kokoroRtf = useSetting<number>(rtfSettingKey('kokoro'), 0);
 
@@ -409,7 +440,7 @@ export default function NeuralModelsPanel() {
       model: ModelId,
       reset: () => void,
       setAvailable: (availability: Availability) => void,
-      setVoices: (voices: TtsVoice[]) => void,
+      resetVoices: () => void,
       setFailure: (info: NeuralErrorInfo | null) => void,
       setLeftover?: (leftover: boolean) => void
     ) => {
@@ -419,7 +450,7 @@ export default function NeuralModelsPanel() {
         reset();
         // Deletes every file of the model, including weights a retired build cached.
         await deleteModel(model);
-        setVoices([]);
+        resetVoices();
         setFailure(null);
         setAvailable('absent');
         setLeftover?.(false);
@@ -477,10 +508,18 @@ export default function NeuralModelsPanel() {
         state={modelState('pocket', pocketDownload, pocketAvailable, pocketFailure)}
         voices={pocketVoices}
         voiceId={pocketVoice}
+        rate={rate}
         onVoiceChange={(voiceId) => void setSetting('tts.pocket.voice', voiceId)}
         onDownload={() => download('pocket', pocketEngine, setPocketFailure)}
         onDelete={() =>
-          void remove('pocket', resetPocketEngine, setPocketAvailable, setPocketVoices, setPocketFailure)
+          void remove(
+            'pocket',
+            resetPocketEngine,
+            setPocketAvailable,
+            // The names do not live on the disk, so deleting the weights keeps them.
+            () => setPocketVoices(POCKET_VOICES),
+            setPocketFailure
+          )
         }
         onMeasure={() => void measure('pocket', pocketEngine, pocketVoice, setPocketError)}
         measuring={measuring === 'pocket'}
@@ -507,6 +546,7 @@ export default function NeuralModelsPanel() {
           state={modelState('kokoro', kokoroDownload, kokoroAvailable, kokoroFailure)}
           voices={kokoroVoices}
           voiceId={kokoroVoice}
+          rate={rate}
           onVoiceChange={(voiceId) => void setKokoroVoice(voiceId)}
           onDownload={() => {
             // The engine may still hold the model in memory (its worker outlives a visit
@@ -520,7 +560,7 @@ export default function NeuralModelsPanel() {
               'kokoro',
               resetKokoroEngine,
               setKokoroAvailable,
-              setKokoroVoices,
+              () => setKokoroVoices([]),
               setKokoroFailure,
               setKokoroLeftover
             )

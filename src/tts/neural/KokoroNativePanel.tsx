@@ -16,6 +16,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { setSetting, useSetting } from '../../core/settings';
 import type { TtsVoice } from '../../core/types';
 import { resetDownload, startDownload, useDownload, type DownloadReporter } from '../downloads';
+import { TTS_RATE_SETTING } from '../TtsSettings';
+import VoiceTest from '../VoiceTest';
 import {
   DEFAULT_KOKORO_MODEL,
   DEFAULT_KOKORO_SID,
@@ -104,6 +106,30 @@ function verdict(rtf: number): string {
     : 'Slower than real-time — pre-render chapters or use the system voice';
 }
 
+/**
+ * The engine names its voices `accent + gender + name` (`af_heart`, `bm_george`), which is
+ * unreadable in a picker. This spells it out — "Heart · American female (en-US)" — and
+ * leaves any name that does not follow the convention exactly as the engine gave it.
+ */
+function voiceLabel(voice: TtsVoice): string {
+  const match = /^([ab])([fm])_(.+)$/.exec(voice.name);
+  if (!match) return `${voice.name} (${voice.lang})`;
+  const accent = match[1] === 'a' ? 'American' : 'British';
+  const gender = match[2] === 'f' ? 'female' : 'male';
+  const name = match[3].charAt(0).toUpperCase() + match[3].slice(1);
+  return `${name} · ${accent} ${gender} (${voice.lang})`;
+}
+
+/** One line under a disabled "Test voice", so it never looks like a broken control. */
+function testVoiceReason(state: PanelState): string | null {
+  if (state === 'ready') return null;
+  if (state === 'downloading') return 'Available once the download finishes.';
+  if (state === 'absent') return 'Download the model first';
+  if (state === 'unsupported') return 'Kokoro voices are not available on this device.';
+  if (state === 'error') return 'Fix the download first.';
+  return 'Checking the model…';
+}
+
 export default function KokoroNativePanel(): React.JSX.Element {
   const download = useDownload(KOKORO_DOWNLOAD_ID);
   const [shell, setShell] = useState<PanelState>('loading');
@@ -116,6 +142,8 @@ export default function KokoroNativePanel(): React.JSX.Element {
 
   const savedVoice = useSetting<string>(KOKORO_VOICE_SETTING, String(DEFAULT_KOKORO_SID));
   const savedThreads = useSetting<number>(KOKORO_THREADS_SETTING, DEFAULT_KOKORO_THREADS);
+  /** The speed the book reads at; the test sample has to sound like the book. */
+  const rate = useSetting<number>(TTS_RATE_SETTING, 1);
 
   const refresh = useCallback(async () => {
     if (!isKokoroNativeAvailable()) {
@@ -417,10 +445,16 @@ export default function KokoroNativePanel(): React.JSX.Element {
         >
           {voiceOptions.map((voice) => (
             <option key={voice.id} value={voice.id}>
-              {voice.name} ({voice.lang})
+              {voiceLabel(voice)}
             </option>
           ))}
         </select>
+        <VoiceTest
+          engine={kokoroNativeEngine}
+          voiceId={selectedVoice}
+          rate={rate}
+          disabledReason={testVoiceReason(state)}
+        />
       </div>
 
       {busy && (

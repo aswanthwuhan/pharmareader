@@ -21,6 +21,9 @@ const native = vi.hoisted(() => ({
   status: null as null | (() => Promise<Record<string, unknown>>),
   listener: null as null | ((progress: { fraction: number }) => void),
   deleted: [] as string[],
+  voices: [] as { id: string; name: string; lang: string }[],
+  synthesize: null as null | ((text: string, opts: { voiceId?: string; rate: number }) => Promise<Blob>),
+  stops: 0,
 }));
 
 vi.mock('@capacitor/core', () => ({
@@ -59,7 +62,13 @@ vi.mock('../native/kokoroNativeEngine', () => ({
       native.prepares += 1;
       return native.prepare ? native.prepare(onProgress, onStage) : Promise.resolve();
     },
-    listVoices: () => Promise.resolve([]),
+    listVoices: () => Promise.resolve(native.voices),
+    synthesize: (text: string, opts: { voiceId?: string; rate: number }) =>
+      native.synthesize ? native.synthesize(text, opts) : Promise.resolve(new Blob(['wav'])),
+    speak: () => Promise.resolve(),
+    stop: () => {
+      native.stops += 1;
+    },
     measure: () => Promise.resolve({ rtf: 0.5, durationMs: 100, elapsedMs: 200, sampleRate: 24000 }),
     deleteModel: (model?: string) => {
       native.deleted.push(model ?? '');
@@ -83,6 +92,52 @@ vi.mock('../native/kokoroDownload', async (importOriginal) => {
   };
 });
 
+/**
+ * jsdom has no media stack: this stub records play/pause so the voice test's
+ * "second tap stops it" is a fact about the panel, not about jsdom's silence.
+ */
+class FakeAudio {
+  static instances: FakeAudio[] = [];
+  src: string;
+  paused = false;
+  private listeners = new Map<string, () => void>();
+
+  constructor(src?: string) {
+    this.src = src ?? '';
+    FakeAudio.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: () => void): void {
+    this.listeners.set(type, listener);
+  }
+
+  removeEventListener(type: string): void {
+    this.listeners.delete(type);
+  }
+
+  play(): Promise<void> {
+    this.paused = false;
+    return Promise.resolve();
+  }
+
+  pause(): void {
+    this.paused = true;
+  }
+
+  end(): void {
+    this.listeners.get('ended')?.();
+  }
+}
+
+type UrlStatics = {
+  createObjectURL?: (blob: Blob) => string;
+  revokeObjectURL?: (url: string) => void;
+};
+
+const savedCreate = (URL as unknown as UrlStatics).createObjectURL;
+const savedRevoke = (URL as unknown as UrlStatics).revokeObjectURL;
+const revokeObjectURL = vi.fn();
+
 let root: Root | null = null;
 let container: HTMLDivElement;
 
@@ -94,6 +149,23 @@ async function settle(ms = 25): Promise<void> {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, ms));
   });
+}
+
+/** Poll inside act() until `check` passes: Dexie writes and synthesis are asynchronous. */
+async function waitFor(check: () => boolean, timeout = 3000): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (!check() && Date.now() < deadline) {
+    await settle(25);
+  }
+  expect(check()).toBe(true);
+}
+
+async function waitForSetting(key: string, expected: string): Promise<void> {
+  for (let i = 0; i < 60; i++) {
+    if ((await getSetting<string>(key, '')) === expected) return;
+    await settle(25);
+  }
+  expect(await getSetting<string>(key, '')).toBe(expected);
 }
 
 async function render(): Promise<string> {
@@ -124,6 +196,14 @@ beforeEach(async () => {
   native.status = null;
   native.listener = null;
   native.deleted = [];
+  native.voices = [];
+  native.synthesize = null;
+  native.stops = 0;
+  FakeAudio.instances = [];
+  revokeObjectURL.mockClear();
+  vi.stubGlobal('Audio', FakeAudio);
+  (URL as unknown as UrlStatics).createObjectURL = vi.fn(() => 'blob:sample');
+  (URL as unknown as UrlStatics).revokeObjectURL = revokeObjectURL;
   resetDownload(KOKORO_DOWNLOAD_ID);
 });
 
@@ -131,6 +211,11 @@ afterEach(async () => {
   await act(async () => root?.unmount());
   root = null;
   container.remove();
+  vi.unstubAllGlobals();
+  if (savedCreate) (URL as unknown as UrlStatics).createObjectURL = savedCreate;
+  else delete (URL as unknown as UrlStatics).createObjectURL;
+  if (savedRevoke) (URL as unknown as UrlStatics).revokeObjectURL = savedRevoke;
+  else delete (URL as unknown as UrlStatics).revokeObjectURL;
 });
 
 describe('KokoroNativePanel', () => {
@@ -418,5 +503,96 @@ describe('KokoroNativePanel', () => {
     expect(shown).not.toContain('Ready');
     // Nothing to delete: those files are the only model on the phone until fp32 arrives.
     expect(button('Remove the old INT8 download (126 MB)')).toBeUndefined();
+  });
+
+  it('names the speakers readably and saves the chosen one to its own setting', async () => {
+    native.voices = [
+      { id: '3', name: 'af_heart', lang: 'en-US' },
+      { id: '4', name: 'am_adam', lang: 'en-US' },
+      { id: '6', name: 'bf_emma', lang: 'en-GB' },
+      { id: '9', name: 'speaker-from-the-plugin', lang: 'en-US' },
+    ];
+
+    await render();
+
+    const select = container.querySelector<HTMLSelectElement>('#kokoro-native-voice');
+    expect(select).not.toBeNull();
+    expect([...(select?.options ?? [])].map((option) => option.textContent)).toEqual([
+      'Heart · American female (en-US)',
+      'Adam · American male (en-US)',
+      'Emma · British female (en-GB)',
+      'speaker-from-the-plugin (en-US)',
+    ]);
+    // The picker starts on the saved speaker, not on the first option.
+    expect(select?.value).toBe('3');
+
+    await act(async () => {
+      select!.value = '6';
+      select!.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    });
+    await waitForSetting('tts.voice.kokoro', '6');
+  });
+
+  it('disables the voice test with the reason, until the model is here', async () => {
+    await render();
+
+    const test = button('Test voice');
+    expect(test).toBeDefined();
+    expect(test?.disabled).toBe(true);
+    expect(text()).toContain('Download the model first');
+  });
+
+  it("speaks a sample with the chosen speaker at the book's rate, and stops on a second tap", async () => {
+    native.status = () =>
+      Promise.resolve({
+        downloaded: true,
+        loaded: true,
+        sizeBytes: 333_000_000,
+        model: 'fp32',
+        models: [{ key: 'fp32', downloaded: true, sizeBytes: 333_000_000 }],
+      });
+    native.voices = [
+      { id: '3', name: 'af_heart', lang: 'en-US' },
+      { id: '4', name: 'am_adam', lang: 'en-US' },
+    ];
+    const synthesize = vi.fn(
+      async (text: string, opts: { voiceId?: string; rate: number }) => {
+        void text;
+        void opts;
+        return new Blob(['wav']);
+      }
+    );
+    native.synthesize = synthesize;
+    await setSetting('tts.rate', 1.3);
+
+    await render();
+    const select = container.querySelector<HTMLSelectElement>('#kokoro-native-voice')!;
+    await act(async () => {
+      select.value = '4';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    });
+
+    await act(async () => {
+      button('Test voice')!.click();
+    });
+    await waitFor(() => synthesize.mock.calls.length === 1);
+
+    const [spoken, options] = synthesize.mock.calls[0]!;
+    expect(String(spoken)).toContain('This is how your book will sound');
+    expect(options).toEqual({ voiceId: '4', rate: 1.3 });
+    // A voice check must never fill the audio cache.
+    expect(await db.audioCache.count()).toBe(0);
+
+    await waitFor(() => button('Stop test') !== undefined);
+    expect(FakeAudio.instances).toHaveLength(1);
+    await act(async () => {
+      button('Stop test')!.click();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    expect(native.stops).toBe(1);
+    expect(FakeAudio.instances[0]?.paused).toBe(true);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:sample');
   });
 });

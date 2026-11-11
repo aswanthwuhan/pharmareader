@@ -3,9 +3,10 @@ import 'fake-indexeddb/auto';
 import { act, createElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { setSetting } from '../../core/settings';
+import { db } from '../../core/db';
+import { getSetting, setSetting } from '../../core/settings';
 import { resetDownload, startDownload } from '../downloads';
-import { KOKORO_DTYPE_SETTING } from './kokoro';
+import { KOKORO_DTYPE_SETTING, KOKORO_VOICE_SETTING, kokoroEngine } from './kokoro';
 import NeuralModelsPanel from './NeuralModelsPanel';
 import { NEURAL_STAGES, neuralError } from './neuralError';
 
@@ -52,8 +53,53 @@ vi.mock('./pocket', () => ({
 let root: Root | null = null;
 let container: HTMLDivElement;
 
-beforeEach(() => {
+/** jsdom has no media stack: `Audio` records play/pause for the voice test. */
+class FakeAudio {
+  static instances: FakeAudio[] = [];
+  src: string;
+  paused = false;
+  private listeners = new Map<string, () => void>();
+
+  constructor(src?: string) {
+    this.src = src ?? '';
+    FakeAudio.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: () => void): void {
+    this.listeners.set(type, listener);
+  }
+
+  removeEventListener(type: string): void {
+    this.listeners.delete(type);
+  }
+
+  play(): Promise<void> {
+    this.paused = false;
+    return Promise.resolve();
+  }
+
+  pause(): void {
+    this.paused = true;
+  }
+}
+
+type UrlStatics = {
+  createObjectURL?: (blob: Blob) => string;
+  revokeObjectURL?: (url: string) => void;
+};
+
+const savedCreate = (URL as unknown as UrlStatics).createObjectURL;
+const savedRevoke = (URL as unknown as UrlStatics).revokeObjectURL;
+
+beforeEach(async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  // Settings are shared through fake-indexeddb; a "Ready" flag or a saved voice
+  // written by one case must not decide the next one.
+  await db.settings.clear();
+  FakeAudio.instances = [];
+  vi.stubGlobal('Audio', FakeAudio);
+  (URL as unknown as UrlStatics).createObjectURL = vi.fn(() => 'blob:sample');
+  (URL as unknown as UrlStatics).revokeObjectURL = vi.fn();
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -70,7 +116,12 @@ afterEach(async () => {
   root = null;
   container.remove();
   platform.native = false;
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  if (savedCreate) (URL as unknown as UrlStatics).createObjectURL = savedCreate;
+  else delete (URL as unknown as UrlStatics).createObjectURL;
+  if (savedRevoke) (URL as unknown as UrlStatics).revokeObjectURL = savedRevoke;
+  else delete (URL as unknown as UrlStatics).revokeObjectURL;
 });
 
 async function renderPanel(): Promise<string> {
@@ -83,6 +134,27 @@ async function renderPanel(): Promise<string> {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
   return container.textContent ?? '';
+}
+
+/** Poll inside act() until `check` passes: Dexie writes resolve asynchronously. */
+async function waitFor(check: () => boolean, timeout = 3000): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (!check() && Date.now() < deadline) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    });
+  }
+  expect(check()).toBe(true);
+}
+
+async function waitForSetting(key: string, expected: string): Promise<void> {
+  for (let i = 0; i < 60; i++) {
+    if ((await getSetting<string>(key, '')) === expected) return;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    });
+  }
+  expect(await getSetting<string>(key, '')).toBe(expected);
 }
 
 describe('NeuralModelsPanel', () => {
@@ -115,6 +187,26 @@ describe('NeuralModelsPanel', () => {
     expect(summaries).toEqual(['How this works', 'Details', 'Details']);
     // Teal belongs to the row's one primary action, not to three download buttons.
     expect(container.querySelectorAll('.btn-primary')).toHaveLength(0);
+  });
+
+  it('offers the Pocket voices before the model is downloaded or loaded', async () => {
+    // The names live in the model bundle, so a fresh install has no download and
+    // no worker to ask. Without a static list the picker would not exist at all
+    // until after the first Play, and Pocket could never be given a voice.
+    await renderPanel();
+
+    const select = container.querySelector<HTMLSelectElement>('#voice-pocket');
+    expect(select).not.toBeNull();
+    expect([...select!.options].map((option) => option.value)).toEqual([
+      'alba',
+      'azelma',
+      'cosette',
+      'eponine',
+      'fantine',
+      'javert',
+      'jean',
+      'marius',
+    ]);
   });
 
   it('offers a way to reclaim the retired q8 weights of an older download', async () => {
@@ -248,5 +340,86 @@ describe('NeuralModelsPanel', () => {
     });
     expect(container.textContent).toContain('Ready');
     expect(pocket.prepares).toBe(1);
+  });
+
+  it('offers every web Kokoro voice and writes the picker to its own setting', async () => {
+    await renderPanel();
+    await waitFor(() => container.querySelector('#voice-kokoro') !== null);
+
+    const select = container.querySelector<HTMLSelectElement>('#voice-kokoro')!;
+    // The engine lists all 28 voices before the model is downloaded.
+    expect(select.options).toHaveLength(28);
+    const labels = [...select.options].map((option) => option.textContent ?? '');
+    expect(labels).toContain('Heart (en-US)');
+    expect(labels).toContain('Bella (en-US)');
+    // The engine knows which voices are British (b*) and which are American.
+    expect(labels.some((label) => label.includes('en-GB'))).toBe(true);
+
+    const chosen = select.options[6]!.value;
+    await act(async () => {
+      select.value = chosen;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await waitForSetting(KOKORO_VOICE_SETTING, chosen);
+  });
+
+  it('disables each voice test until its model is downloaded, and says why', async () => {
+    const text = await renderPanel();
+
+    const tests = [...container.querySelectorAll('button')].filter(
+      (button) => button.textContent === 'Test voice'
+    );
+    expect(tests).toHaveLength(2); // Pocket and the web Kokoro card
+    expect(tests.every((button) => button.disabled)).toBe(true);
+    expect(text).toContain('Download the model first');
+  });
+
+  it("speaks a sample with the chosen Kokoro voice at the book's rate, and stops on a second tap", async () => {
+    // A finished fp32 load is what stands in for the 320 MB of weights here.
+    await setSetting('tts.model.kokoro.ready', true);
+    await setSetting('tts.rate', 1.2);
+    const synthesize = vi.spyOn(kokoroEngine, 'synthesize').mockResolvedValue(new Blob(['wav']));
+    const stop = vi.spyOn(kokoroEngine, 'stop').mockImplementation(() => undefined);
+
+    await renderPanel();
+    await waitFor(() => container.querySelector('#voice-kokoro') !== null);
+
+    const card = container.querySelector<HTMLElement>('section[aria-labelledby="tts-kokoro-title"]')!;
+    const select = card.querySelector<HTMLSelectElement>('#voice-kokoro')!;
+    const chosen = select.options[3]!.value;
+    await act(async () => {
+      select.value = chosen;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await waitForSetting(KOKORO_VOICE_SETTING, chosen);
+    // The picker only owns the new voice once the saved setting has rendered back into it.
+    await waitFor(() => select.value === chosen);
+
+    const test = [...card.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Test voice'
+    );
+    expect(test?.disabled).toBe(false);
+    await act(async () => {
+      test!.click();
+    });
+    await waitFor(() => synthesize.mock.calls.length === 1);
+
+    const [spoken, options] = synthesize.mock.calls[0]!;
+    expect(String(spoken)).toContain('This is how your book will sound');
+    expect(options).toEqual({ voiceId: chosen, rate: 1.2 });
+    // A voice check must never fill the audio cache.
+    expect(await db.audioCache.count()).toBe(0);
+
+    await waitFor(() =>
+      [...card.querySelectorAll('button')].some((button) => button.textContent === 'Stop test')
+    );
+    const stopButton = [...card.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Stop test'
+    );
+    await act(async () => {
+      stopButton!.click();
+    });
+    expect(stop).toHaveBeenCalled();
+    expect(FakeAudio.instances.at(-1)?.paused).toBe(true);
   });
 });

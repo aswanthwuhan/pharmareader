@@ -10,6 +10,7 @@ import {
   setEntryEnabled,
 } from './lexicon';
 import { systemEngine } from './system';
+import VoiceTest from './VoiceTest';
 import './tts.css';
 
 export const TTS_ENGINE_SETTING = 'tts.engine';
@@ -116,18 +117,11 @@ export function VoicePanel() {
   const rate = useSetting<number>(TTS_RATE_SETTING, 1);
 
   const [voices, setVoices] = useState<TtsVoice[]>([]);
-  const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [testing, setTesting] = useState(false);
-  const mounted = useRef(true);
 
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-      systemEngine.stop();
-    };
-  }, []);
+  // Leaving the panel must silence the platform voice. A model sample is stopped
+  // by its own VoiceTest, which is the only thing that started it.
+  useEffect(() => () => systemEngine.stop(), []);
 
   useEffect(() => {
     let alive = true;
@@ -143,29 +137,6 @@ export function VoicePanel() {
       alive = false;
     };
   }, []);
-
-  const testVoice = async () => {
-    if (testing) {
-      systemEngine.stop();
-      setTesting(false);
-      setStatus(null);
-      return;
-    }
-    setError(null);
-    setTesting(true);
-    setStatus('Speaking the test sentence…');
-    try {
-      const text = await expand(TEST_SENTENCE);
-      await systemEngine.speak([{ id: 'test-voice', text }], { voiceId: voiceId || undefined, rate }, {
-        onError: (err) => setError(err.message),
-      });
-      if (mounted.current) setStatus('Finished.');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (mounted.current) setTesting(false);
-    }
-  };
 
   const engineValue: EngineChoice = isEngineChoice(engine) ? engine : 'auto';
   const systemVoiceActive = engineValue === 'system' || engineValue === 'auto';
@@ -188,7 +159,6 @@ export function VoicePanel() {
           aria-describedby="tts-engine-hint"
           onChange={(e) => {
             void setSetting(TTS_ENGINE_SETTING, e.target.value);
-            setStatus(null);
           }}
         >
           {ENGINE_OPTIONS.map((o) => (
@@ -226,6 +196,17 @@ export function VoicePanel() {
           <p className="field-hint" id="tts-voice-hint">
             {voiceHint}
           </p>
+          <VoiceTest
+            engine={systemEngine}
+            voiceId={voiceId}
+            rate={rate}
+            sample={TEST_SENTENCE}
+            tone="primary"
+            disabledReason={
+              systemVoiceActive ? null : 'The engine above is set to an on-device model.'
+            }
+          />
+          <p className="field-hint tts-test-sentence">Speaks: “{TEST_SENTENCE}”</p>
         </div>
 
         <div className="field">
@@ -253,20 +234,6 @@ export function VoicePanel() {
           </p>
         </div>
       </div>
-
-      <div className="tts-test-row">
-        <button
-          type="button"
-          className={testing ? 'btn btn-secondary' : 'btn btn-primary'}
-          onClick={() => void testVoice()}
-        >
-          {testing ? 'Stop test' : 'Test voice'}
-        </button>
-        <p className="tts-status" role="status">
-          {status ?? ''}
-        </p>
-      </div>
-      <p className="field-hint tts-test-sentence">Speaks: “{TEST_SENTENCE}”</p>
 
       <details className="disc-sub">
         <summary>How this works</summary>

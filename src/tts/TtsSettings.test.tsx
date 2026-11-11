@@ -1,10 +1,18 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../core/db';
 import type { AudioCacheRecord } from '../core/types';
-import TtsSettings, { TEST_SENTENCE, TTS_ENGINE_SETTING, VOICE_TIP, filterEntries, formatBytes } from './TtsSettings';
-import { getSetting } from '../core/settings';
+import TtsSettings, {
+  TEST_SENTENCE,
+  TTS_ENGINE_SETTING,
+  TTS_VOICE_SETTING,
+  VOICE_TIP,
+  filterEntries,
+  formatBytes,
+} from './TtsSettings';
+import { getSetting, setSetting } from '../core/settings';
+import { systemEngine } from './system';
 import { invalidate, listLexiconEntries, saveUserEntry } from './lexicon';
 import { putAudio } from './cache';
 
@@ -74,6 +82,16 @@ async function waitFor(check: () => boolean, timeout = 3000): Promise<void> {
   }
 }
 
+/** Poll a settings row: a select's change reaches Dexie one microtask later. */
+async function waitForSetting<T>(key: string, expected: T, timeout = 3000): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if ((await getSetting<unknown>(key, null)) === expected) return;
+    await flush(25);
+  }
+  expect(await getSetting<unknown>(key, null)).toBe(expected);
+}
+
 async function unmount(): Promise<void> {
   await act(async () => {
     root.unmount();
@@ -93,6 +111,8 @@ beforeEach(() => {
 
 afterEach(async () => {
   if (root) await unmount();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   // Let the mount's lexicon seeding settle before wiping the database,
   // otherwise its transaction is aborted mid-flight and the next test's
   // shared seed promise rejects.
@@ -333,5 +353,86 @@ describe('TtsSettings', () => {
 
   it('keeps the test sentence as specified', () => {
     expect(TEST_SENTENCE).toBe('The half-life of CYP3A4 substrates rises with ketoconazole.');
+  });
+
+  it('tests the chosen system voice without writing to the audio cache', async () => {
+    await setSetting(TTS_VOICE_SETTING, 'v-uk');
+    await setSetting(TTS_ENGINE_SETTING, 'system');
+    const speak = vi.spyOn(systemEngine, 'speak').mockResolvedValue(undefined);
+    await mount();
+
+    await act(async () => {
+      buttonWithText('Test voice')!.click();
+    });
+    await waitFor(() => speak.mock.calls.length > 0);
+
+    // The voice comes from tts.voice.system and the speed from tts.rate; the
+    // sample is the sentence listed under the button, at the default rate.
+    expect(speak).toHaveBeenCalledWith(
+      [{ id: 'voice-test', text: expect.any(String) }],
+      { voiceId: 'v-uk', rate: 1 },
+      expect.anything(),
+    );
+    // A voice check is not a chapter: nothing may land in the audio cache.
+    expect(await db.audioCache.count()).toBe(0);
+    await waitFor(() => buttonWithText('Test voice') !== undefined);
+  });
+
+  it('stops the system test on a second tap', async () => {
+    const stop = vi.spyOn(systemEngine, 'stop').mockImplementation(() => undefined);
+    vi.spyOn(systemEngine, 'speak').mockImplementation(() => new Promise<void>(() => undefined));
+    await mount();
+
+    await act(async () => {
+      buttonWithText('Test voice')!.click();
+    });
+    await waitFor(() => buttonWithText('Stop test') !== undefined);
+
+    await act(async () => {
+      buttonWithText('Stop test')!.click();
+    });
+    await flush(10);
+
+    expect(stop).toHaveBeenCalled();
+    expect(buttonWithText('Test voice')).toBeDefined();
+  });
+
+  it('disables the system test while an on-device model is the engine', async () => {
+    await setSetting(TTS_ENGINE_SETTING, 'kokoro');
+    await mount();
+
+    const test = buttonWithText('Test voice')!;
+    expect(test.disabled).toBe(true);
+    expect(container.textContent).toContain('The engine above is set to an on-device model.');
+    expect(container.querySelector<HTMLSelectElement>('#tts-voice')?.disabled).toBe(true);
+  });
+
+  it('lists the device voices and writes the chosen system voice', async () => {
+    vi.stubGlobal('speechSynthesis', {
+      getVoices: () => [
+        { name: 'English (United States)', lang: 'en-US', voiceURI: 'v-us', default: true, localService: true },
+        { name: 'English (United Kingdom)', lang: 'en-GB', voiceURI: 'v-uk', default: false, localService: true },
+        { name: 'Deutsch', lang: 'de-DE', voiceURI: 'v-de', default: false, localService: true },
+      ],
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      cancel: () => undefined,
+    });
+    await mount();
+
+    const select = container.querySelector<HTMLSelectElement>('#tts-voice')!;
+    await waitFor(() => select.options.length === 3);
+    // English only: a German voice would read the English book with German
+    // phonemes, so it is not offered for narration.
+    expect([...select.options].map((option) => option.textContent)).toEqual([
+      'Device default',
+      'English (United States) (en-US)',
+      'English (United Kingdom) (en-GB)',
+    ]);
+
+    await act(async () => {
+      setInputValue(select, 'v-uk');
+    });
+    await waitForSetting(TTS_VOICE_SETTING, 'v-uk');
   });
 });
