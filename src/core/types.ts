@@ -221,7 +221,8 @@ export interface TtsEngine {
    * Optional: the identity of the audio this engine will produce beyond the voice id
    * passed to it — the voice it will actually speak with (Kokoro and Pocket keep their
    * own choice in their own setting, so the id in the request may be none of their
-   * voices) and Kokoro's weight precision (fp32 vs the int8 q8 build).
+   * voices) and the weights the clip was rendered from (web Kokoro loads fp32 only and
+   * still keys `@fp32`, which is where the existing clips live).
    * `voiceId` is the voice the caller asked for, so the engine can resolve it exactly as
    * `synthesize()` does. Absent or undefined: the voice id alone identifies the clip.
    */

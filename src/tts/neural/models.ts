@@ -20,7 +20,6 @@
  * nothing at all, with no error).
  */
 import { getSetting, setSetting } from '../../core/settings';
-import type { KokoroDtype } from './kokoroProtocol';
 export { POCKET_SIZE_MB, kokoroSizeMb } from './sizes';
 
 export const POCKET_CACHE = 'pocket-tts-js-v1';
@@ -44,6 +43,13 @@ export const POCKET_FILES = [
 
 export type NeuralModelId = 'pocket' | 'kokoro';
 
+/**
+ * The one weights file the web Kokoro runs. transformers.js names the fp32 export
+ * `model.onnx` (`DEFAULT_DTYPE_SUFFIX_MAPPING`); the retired int8/fp16 exports were
+ * `model_quantized.onnx` and `model_fp16.onnx`.
+ */
+export const KOKORO_WEIGHTS_FILE = 'model.onnx';
+
 export interface NeuralModelInfo {
   label: string;
   caches: string[];
@@ -63,13 +69,15 @@ export const NEURAL_MODELS: Record<NeuralModelId, NeuralModelInfo> = {
   kokoro: {
     label: 'Kokoro-82M',
     caches: [TRANSFORMERS_CACHE, KOKORO_VOICES_CACHE],
+    // `match` is deliberately wider than the current export: it is what deletion uses,
+    // so the q8/fp16 weights an older build cached are removed with the model (that is
+    // ~90–170 MB the reader can get back). `complete` names the fp32 file alone, because
+    // those retired weights are not a model this build can speak with.
     match: (url) => url.includes('Kokoro-82M') || url.includes('/voices/'),
-    // `model_quantized.onnx` for q8, `model.onnx`/`model_fp16.onnx` otherwise:
-    // the dtype is user-selectable, so any single weights file will do.
     complete: (files) =>
       files.includes('config.json') &&
       files.includes('tokenizer.json') &&
-      files.some((name) => /^model.*\.onnx$/.test(name)),
+      files.includes(KOKORO_WEIGHTS_FILE),
   },
 };
 
@@ -112,8 +120,13 @@ async function cachedFileNames(id: NeuralModelId): Promise<string[]> {
   return names;
 }
 
-/** Entries matching this model's `match()` (used for deletion + verification). */
-async function hasMatchingEntries(id: NeuralModelId): Promise<boolean> {
+/**
+ * True when anything of this model is in Cache Storage — including weights a retired
+ * build downloaded. The panel keeps "Delete" reachable on that answer: a reader whose
+ * disk only holds the old q8/fp16 export cannot use it, but it is still ~90–170 MB of
+ * space to take back.
+ */
+export async function hasModelFiles(id: NeuralModelId): Promise<boolean> {
   const info = NEURAL_MODELS[id];
   if (typeof caches === 'undefined') return false;
   try {
@@ -141,31 +154,17 @@ export async function isModelDownloaded(id: NeuralModelId): Promise<boolean> {
 }
 
 /**
- * The weights file each precision caches. transformers.js names the export after the
- * dtype (`DEFAULT_DTYPE_SUFFIX_MAPPING`): fp32 → `model.onnx`, fp16 → `model_fp16.onnx`,
- * q8 → `model_quantized.onnx`.
- */
-const KOKORO_WEIGHTS_FILE: Record<KokoroDtype, string> = {
-  fp32: 'model.onnx',
-  fp16: 'model_fp16.onnx',
-  q8: 'model_quantized.onnx',
-};
-
-/**
- * True when the weights of *this* precision are cached.
+ * True when the cached Kokoro weights are the fp32 export the web engine loads.
  *
- * `isModelDownloaded` accepts any `model*.onnx`, which is right for deleting the
- * download but wrong for "is my model ready": a reader whose only download was q8
- * (the old default) was told "Ready" after fp32 became the default, and the first
- * Play then started a silent 320 MB download — or failed offline.
- *
- * Cache Storage is unreadable in private mode; there the `ready` flag is all there is,
- * and it stands for the precision it was set with.
+ * A reader whose only download is an old q8/fp16 build (q8 was the default before) must
+ * not be told "Ready": the first Play would then start a silent 320 MB download, or fail
+ * offline. Cache Storage is unreadable in private mode; there the `ready` flag is all
+ * there is, and it is only ever set by a successful fp32 load.
  */
-export async function isKokoroDtypeDownloaded(dtype: KokoroDtype): Promise<boolean> {
+export async function isKokoroWeightsDownloaded(): Promise<boolean> {
   const files = await cachedFileNames('kokoro');
   if (files.length === 0) return isModelReadyFlag('kokoro');
-  return NEURAL_MODELS.kokoro.complete(files) && files.includes(KOKORO_WEIGHTS_FILE[dtype]);
+  return NEURAL_MODELS.kokoro.complete(files);
 }
 
 /**
@@ -191,7 +190,7 @@ export async function deleteModel(id: NeuralModelId): Promise<void> {
     } catch {
       // Private mode/quota: fall through and let the verification below decide.
     }
-    if (await hasMatchingEntries(id)) {
+    if (await hasModelFiles(id)) {
       throw new Error('Could not delete the downloaded model files');
     }
   }

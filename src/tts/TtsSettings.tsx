@@ -42,7 +42,7 @@ const ENGINE_OPTIONS: { value: EngineChoice; label: string; hint: string }[] = [
   {
     value: 'kokoro',
     label: 'Kokoro (on-device model)',
-    hint: 'Kokoro-82M, from 90 MB (q8) to 320 MB (fp32). Faster than real-time on most phones.',
+    hint: 'Kokoro-82M, 320 MB download. Faster than real-time on most phones.',
   },
 ];
 

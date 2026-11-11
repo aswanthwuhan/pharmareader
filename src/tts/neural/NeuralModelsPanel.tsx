@@ -7,22 +7,20 @@ import { resetDownload, startDownload, useDownload, type DownloadState } from '.
 import { measureRtf, rtfSettingKey } from './benchmark';
 import { copyText } from './clipboard';
 import {
-  DEFAULT_KOKORO_DTYPE,
   DEFAULT_KOKORO_VOICE,
-  KOKORO_DTYPE_SETTING,
   KOKORO_VOICE_SETTING,
   kokoroEngine,
   resetKokoroEngine,
   setKokoroVoice,
 } from './kokoro';
-import type { KokoroDtype } from './kokoroProtocol';
 import KokoroNativePanel from './KokoroNativePanel';
 import {
-  isKokoroDtypeDownloaded,
+  deleteModel,
+  hasModelFiles,
+  isKokoroWeightsDownloaded,
   isModelDownloaded,
   isModelReadyFlag,
   kokoroSizeMb,
-  deleteModel,
   POCKET_SIZE_MB,
 } from './models';
 import { describeNeuralError, type NeuralErrorInfo } from './neuralError';
@@ -40,14 +38,6 @@ type ModelState =
   | { kind: 'downloading'; fraction: number }
   | { kind: 'ready' }
   | { kind: 'error'; info: NeuralErrorInfo };
-
-const DTYPE_LABELS: Record<KokoroDtype, string> = {
-  fp32: 'fp32 — best quality, ~320 MB',
-  fp16: 'fp16 — ~170 MB',
-  // The int8 export is the one that played gibberish: say so instead of selling it
-  // as the small option only.
-  q8: 'q8 — smallest, ~90 MB (lower quality — may sound garbled)',
-};
 
 const POCKET_ATTRIBUTION = 'Pocket TTS by Kyutai — model weights CC-BY-4.0.';
 const KOKORO_ATTRIBUTION = 'Kokoro-82M by hexgrad — Apache-2.0.';
@@ -75,8 +65,8 @@ function modelState(
     };
   }
   if (failure) return { kind: 'error', info: failure };
-  // `available` is the per-precision answer. The store's "done" only says that *a*
-  // download of this model finished, so it must not stand in for the selected weights.
+  // `available` is the disk answer for the one build this app loads (Kokoro fp32). The
+  // store's "done" only says that *a* download of this model finished.
   if (available === 'ready') return { kind: 'ready' };
   if (available === 'loading') return { kind: 'loading' };
   return { kind: 'absent' };
@@ -99,8 +89,12 @@ interface EngineCardProps {
   measuring: boolean;
   rtf: number;
   measureError: string | null;
-  /** A download-size decision or a technical readout: sits behind Details. */
-  advanced?: ReactNode;
+  /**
+   * Files of this model are on disk but are not a model this build can speak with (the
+   * retired q8/fp16 Kokoro weights). Keep "Delete" reachable so the space can be taken
+   * back, even though the card is not "Ready".
+   */
+  canDelete?: boolean;
   /** More than a line of explanation: sits behind Details, under the controls. */
   howItWorks?: ReactNode;
   attribution?: string;
@@ -127,9 +121,9 @@ function EngineCard(props: EngineCardProps) {
               Download
             </button>
           )}
-          {/* Delete only when there is something on disk (or a failed attempt
-              left a partial cache behind). */}
-          {(state.kind === 'ready' || state.kind === 'error') && (
+          {/* Delete when there is something on disk (a failed attempt can leave a partial
+              cache behind, and old weights are still files to remove). */}
+          {(state.kind === 'ready' || state.kind === 'error' || props.canDelete) && (
             <button type="button" className="btn btn-ghost" onClick={props.onDelete} disabled={busy}>
               Delete
             </button>
@@ -146,6 +140,14 @@ function EngineCard(props: EngineCardProps) {
           ~{props.sizeMb} MB · use Wi-Fi
         </span>
       </div>
+
+      {/* "Not downloaded" with a Delete button beside it needs a sentence, or the
+          button looks like it would delete the model that is not there. */}
+      {props.canDelete && (
+        <p className={styles.hint}>
+          Files from an unfinished or older download are still using space on this device; Delete frees them.
+        </p>
+      )}
 
       {state.kind === 'downloading' && (
         <div className={styles.download}>
@@ -192,8 +194,6 @@ function EngineCard(props: EngineCardProps) {
       <details className="disc-sub">
         <summary>Details</summary>
         <div className="disc-sub-body">
-          {props.advanced}
-
           <div className={styles.speed}>
             <p className={styles.speedResult}>
               {speed.value ? (
@@ -311,6 +311,8 @@ export default function NeuralModelsPanel() {
   const kokoroDownload = useDownload('kokoro');
   const [pocketAvailable, setPocketAvailable] = useState<Availability>('loading');
   const [kokoroAvailable, setKokoroAvailable] = useState<Availability>('loading');
+  /** Kokoro files on disk that are not the fp32 model (the retired q8/fp16 weights). */
+  const [kokoroLeftover, setKokoroLeftover] = useState(false);
   const [pocketFailure, setPocketFailure] = useState<NeuralErrorInfo | null>(null);
   const [kokoroFailure, setKokoroFailure] = useState<NeuralErrorInfo | null>(null);
   const [pocketVoices, setPocketVoices] = useState<TtsVoice[]>([]);
@@ -323,8 +325,8 @@ export default function NeuralModelsPanel() {
   // would download into the WebView cache and could not run the native model.
   const native = useMemo(() => Capacitor.isNativePlatform(), []);
 
-  // fp32 everywhere by default: the int8 build is unintelligible (see kokoro.ts).
-  const dtype = useSetting<KokoroDtype>(KOKORO_DTYPE_SETTING, DEFAULT_KOKORO_DTYPE);
+  // fp32 is the only web Kokoro build, so the card has no precision control: it shows
+  // the one download size and asks the disk whether *that* model is here.
   const kokoroVoice = useSetting<string>(KOKORO_VOICE_SETTING, DEFAULT_KOKORO_VOICE);
   const pocketVoice = useSetting<string>('tts.pocket.voice', '');
   const pocketRtf = useSetting<number>(rtfSettingKey('pocket'), 0);
@@ -355,19 +357,23 @@ export default function NeuralModelsPanel() {
     };
   }, [native]);
 
-  // "Downloaded" is per precision: the q8 weights of an older download are not the
-  // fp32 model, so switching precision must change the card, not leave it on "Ready".
-  // A finished download re-checks too: the selection may have changed while it ran.
+  // "Downloaded" means the fp32 weights: the q8/fp16 files of an older download are not
+  // the model, so the card must not say "Ready" on them — but they are files, so "Delete"
+  // stays reachable to reclaim the space. A finished download re-checks too.
   useEffect(() => {
     if (native) return;
     let alive = true;
-    void isKokoroDtypeDownloaded(dtype).then((downloaded) => {
-      if (alive) setKokoroAvailable(downloaded ? 'ready' : 'absent');
-    });
+    void Promise.all([isKokoroWeightsDownloaded(), hasModelFiles('kokoro')]).then(
+      ([downloaded, filesOnDisk]) => {
+        if (!alive) return;
+        setKokoroAvailable(downloaded ? 'ready' : 'absent');
+        setKokoroLeftover(filesOnDisk && !downloaded);
+      }
+    );
     return () => {
       alive = false;
     };
-  }, [native, dtype, kokoroDownload.status]);
+  }, [native, kokoroDownload.status]);
 
   // A download may finish while the panel is unmounted (that is the point of the
   // store). The next mount's disk check is asynchronous, so react to the store
@@ -380,7 +386,7 @@ export default function NeuralModelsPanel() {
 
   useEffect(() => {
     if (native || kokoroDownload.status !== 'done') return;
-    // "Ready" comes from the per-precision disk check above; this only refills voices.
+    // "Ready" comes from the disk check above; this only refills voices.
     void loadVoices(kokoroEngine, setKokoroVoices);
   }, [kokoroDownload.status, native]);
 
@@ -404,16 +410,19 @@ export default function NeuralModelsPanel() {
       reset: () => void,
       setAvailable: (availability: Availability) => void,
       setVoices: (voices: TtsVoice[]) => void,
-      setFailure: (info: NeuralErrorInfo | null) => void
+      setFailure: (info: NeuralErrorInfo | null) => void,
+      setLeftover?: (leftover: boolean) => void
     ) => {
       try {
         // Unload before deleting: an open worker keeps the Cache Storage entries
         // (and the model memory) reachable and some browsers refuse the delete.
         reset();
+        // Deletes every file of the model, including weights a retired build cached.
         await deleteModel(model);
         setVoices([]);
         setFailure(null);
         setAvailable('absent');
+        setLeftover?.(false);
         resetDownload(model);
       } catch (err) {
         setFailure(describeNeuralError(model, err));
@@ -494,49 +503,37 @@ export default function NeuralModelsPanel() {
           engine={kokoroEngine}
           title="Kokoro-82M"
           qualifier="best quality"
-          sizeMb={kokoroSizeMb(dtype)}
+          sizeMb={kokoroSizeMb()}
           state={modelState('kokoro', kokoroDownload, kokoroAvailable, kokoroFailure)}
           voices={kokoroVoices}
           voiceId={kokoroVoice}
           onVoiceChange={(voiceId) => void setKokoroVoice(voiceId)}
           onDownload={() => {
-            // A loaded engine answers prepare() from memory with the *other* precision,
-            // and the card would then report a download that never ran.
+            // The engine may still hold the model in memory (its worker outlives a visit
+            // to Settings), and prepare() would then answer from memory instead of
+            // fetching the weights the card says are missing.
             resetKokoroEngine();
             download('kokoro', kokoroEngine, setKokoroFailure);
           }}
           onDelete={() =>
-            void remove('kokoro', resetKokoroEngine, setKokoroAvailable, setKokoroVoices, setKokoroFailure)
+            void remove(
+              'kokoro',
+              resetKokoroEngine,
+              setKokoroAvailable,
+              setKokoroVoices,
+              setKokoroFailure,
+              setKokoroLeftover
+            )
           }
+          canDelete={kokoroLeftover}
           onMeasure={() => void measure('kokoro', kokoroEngine, kokoroVoice, setKokoroError)}
           measuring={measuring === 'kokoro'}
           rtf={kokoroRtf}
           measureError={kokoroError}
           attribution={KOKORO_ATTRIBUTION}
-          advanced={
-            // A download-size decision, not a daily one: it stays folded away.
-            <div className={styles.field}>
-              <label className="field-label" htmlFor="tts-kokoro-dtype">
-                Precision
-              </label>
-              <select
-                id="tts-kokoro-dtype"
-                className="input"
-                value={dtype}
-                onChange={(event) => void setSetting(KOKORO_DTYPE_SETTING, event.target.value as KokoroDtype)}
-              >
-                {(Object.keys(DTYPE_LABELS) as KokoroDtype[]).map((option) => (
-                  <option key={option} value={option}>
-                    {DTYPE_LABELS[option]}
-                  </option>
-                ))}
-              </select>
-            </div>
-          }
           howItWorks={
             <p className={styles.intro}>
-              {gpuHint}. Changing precision takes effect on the next download or reload. All 28 Kokoro voices are
-              English (af_* and am_* US, bf_* and bm_* UK).
+              {gpuHint}. All 28 Kokoro voices are English (af_* and am_* US, bf_* and bm_* UK).
             </p>
           }
         />

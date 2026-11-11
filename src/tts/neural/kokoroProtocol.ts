@@ -5,7 +5,15 @@
  */
 
 export type KokoroDevice = 'webgpu' | 'wasm';
-export type KokoroDtype = 'fp32' | 'fp16' | 'q8';
+/**
+ * The web build loads exactly one precision: fp32.
+ *
+ * The int8 export (`q8`, `model_quantized.onnx`) played garbled English on WASM and the
+ * fp16 copy bought nothing but a second 170 MB download, so neither is offered any more.
+ * The field stays in the init message because it is how the worker tells kokoro-js which
+ * export to fetch.
+ */
+export type KokoroDtype = 'fp32';
 
 export type KokoroRequest =
   | { type: 'init'; dtype: KokoroDtype; device: KokoroDevice }

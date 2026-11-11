@@ -2,8 +2,8 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  DEFAULT_KOKORO_DTYPE,
   DEFAULT_KOKORO_VOICE,
+  KOKORO_DTYPE,
   KOKORO_DTYPE_SETTING,
   detectDevice,
   kokoroEngine,
@@ -13,7 +13,7 @@ import {
 } from './kokoro';
 import { cacheKey } from '../cache';
 import { cacheVoiceId } from '../cacheIdentity';
-import { setSetting } from '../../core/settings';
+import { getSetting, setSetting } from '../../core/settings';
 import { setModelReady } from './models';
 import type { KokoroRequest, KokoroResponse } from './kokoroProtocol';
 class FakeWorker {
@@ -137,7 +137,7 @@ describe('KokoroEngine', () => {
   });
 
   it('still reports ready after a reload when the model is already downloaded', async () => {
-    // A page reload destroys the worker but not the 90–178 MB in Cache Storage; the
+    // A page reload destroys the worker but not the ~320 MB in Cache Storage; the
     // reader must keep using the on-device voice instead of silently going to the
     // system voice (what the phone bug report showed).
     await setModelReady('kokoro', true);
@@ -168,7 +168,8 @@ describe('KokoroEngine', () => {
     expect(second.at(-1)).toBe(1);
   });
 
-  it('surfaces a worker failure to prepare and recovers with a new worker', async () => {    const first = kokoroEngine.prepare();
+  it('surfaces a worker failure to prepare and recovers with a new worker', async () => {
+    const first = kokoroEngine.prepare();
     await waitFor(() => FakeWorker.instances.length === 1);
     await waitFor(() => lastWorker().posted.length > 0);
     lastWorker().fail('shader compile failed');
@@ -198,30 +199,33 @@ describe('weight precision', () => {
 
   afterEach(async () => {
     // The setting lives in fake-indexeddb for the whole file.
-    await setSetting(KOKORO_DTYPE_SETTING, DEFAULT_KOKORO_DTYPE);
+    await setSetting(KOKORO_DTYPE_SETTING, KOKORO_DTYPE);
   });
 
-  it('defaults to fp32', () => {
-    // The int8 export (q8) is the build that played gibberish; it stays selectable,
-    // but nothing picks it on the user's behalf — not the verbosity of a device.
-    expect(DEFAULT_KOKORO_DTYPE).toBe('fp32');
+  it('has exactly one dtype, and it is fp32', () => {
+    // The int8 export (q8) is the build that played gibberish and fp16 only saved
+    // download size, so there is no precision choice left to make.
+    expect(KOKORO_DTYPE).toBe('fp32');
   });
 
-  it('does not report ready while only the other precision is downloaded', async () => {
-    // An existing reader downloaded q8 when that was the default. fp32 can only come
-    // from a new download, so the reader must not be told the model is already here.
-    stubCaches(['config.json', 'tokenizer.json', 'onnx/model_quantized.onnx']);
-    resetKokoroEngine();
-    await setSetting(KOKORO_DTYPE_SETTING, 'fp32');
-    await expect(kokoroEngine.isReady()).resolves.toBe(false);
-
-    // The same files *are* the model when q8 is what was chosen, and the reader
-    // keeps working on the download it already paid for.
+  it('loads fp32 even when a stored setting still asks for q8', async () => {
+    // A reader who picked q8 (or a pre-fix install that defaulted to it) must not keep
+    // getting the garbled weights: the stored choice is ignored *and* overwritten once,
+    // so it cannot come back on the next load.
     await setSetting(KOKORO_DTYPE_SETTING, 'q8');
-    await expect(kokoroEngine.isReady()).resolves.toBe(true);
+    const preparing = kokoroEngine.prepare();
+    await waitFor(() => FakeWorker.instances.length === 1);
+    const worker = lastWorker();
+    await waitFor(() => worker.posted.length > 0);
+
+    expect(worker.posted[0]).toMatchObject({ type: 'init', dtype: 'fp32' });
+    await expect(getSetting(KOKORO_DTYPE_SETTING, '')).resolves.toBe('fp32');
+    worker.reply({ type: 'ready', voices: ['af_heart'] });
+    await preparing;
   });
 
-  it('asks the worker for fp32 when no precision was chosen', async () => {
+  it('treats a stored fp16 as fp32 as well', async () => {
+    await setSetting(KOKORO_DTYPE_SETTING, 'fp16');
     const preparing = kokoroEngine.prepare();
     await waitFor(() => FakeWorker.instances.length === 1);
     const worker = lastWorker();
@@ -232,72 +236,29 @@ describe('weight precision', () => {
     await preparing;
   });
 
-  it('keeps an explicit q8 choice', async () => {
+  it('keeps the fp32 cache key, so clips rendered before the change stay valid', async () => {
+    // Nothing loaded yet, and the legacy q8 row is still in the store: the key must be
+    // the same `af_heart@fp32` an existing fp32 clip was saved under.
     await setSetting(KOKORO_DTYPE_SETTING, 'q8');
-    const preparing = kokoroEngine.prepare();
-    await waitFor(() => FakeWorker.instances.length === 1);
-    const worker = lastWorker();
-    await waitFor(() => worker.posted.length > 0);
-
-    expect(worker.posted[0]).toMatchObject({ type: 'init', dtype: 'q8' });
-    worker.reply({ type: 'ready', voices: ['af_heart'] });
-    await preparing;
-  });
-
-  it('reports the loaded precision, so the audio cache identity follows the weights', async () => {
-    await setSetting(KOKORO_DTYPE_SETTING, 'q8');
-    // Nothing loaded yet: the saved choice is what a clip would be rendered with.
-    expect(await kokoroEngine.cacheVariant?.()).toBe('af_heart@q8');
-
-    const preparing = kokoroEngine.prepare();
-    await waitFor(() => FakeWorker.instances.length === 1);
-    const worker = lastWorker();
-    await waitFor(() => worker.posted.length > 0);
-    worker.reply({ type: 'ready', voices: ['af_heart'] });
-    await preparing;
-
-    // A setting change only takes effect on the next load, and until then the clips
-    // still come from q8: the loaded precision must win over the saved one.
-    await setSetting(KOKORO_DTYPE_SETTING, 'fp32');
-    expect(await kokoroEngine.cacheVariant?.()).toBe('af_heart@q8');
-
-    // A reload picks fp32 up and with it a different cache identity.
-    resetKokoroEngine();
     expect(await kokoroEngine.cacheVariant?.()).toBe('af_heart@fp32');
   });
 
-  it('keeps the in-flight precision when the setting changes during the download', async () => {
-    // The panel writes the setting while the worker may still be fetching weights. The
-    // clips that load is about to render are q8 audio, so their key must stay q8: the
-    // setting only takes effect on the next load.
+  it('does not report ready while only a retired precision is downloaded', async () => {
+    // An existing reader downloaded q8 when that was the default and the ready flag is
+    // set. fp32 can only come from a new download, so the reader must not be told the
+    // model is already here (it would play the garbled weights or fail offline).
+    stubCaches(['config.json', 'tokenizer.json', 'onnx/model_quantized.onnx']);
     resetKokoroEngine();
-    await setSetting(KOKORO_DTYPE_SETTING, 'q8');
-    const preparing = kokoroEngine.prepare();
-    await waitFor(() => FakeWorker.instances.length === 1);
-    const worker = lastWorker();
-    await waitFor(() => worker.posted.length > 0);
+    await setModelReady('kokoro', true);
+    await expect(kokoroEngine.isReady()).resolves.toBe(false);
 
-    await setSetting(KOKORO_DTYPE_SETTING, 'fp32');
-    expect(await kokoroEngine.cacheVariant?.()).toBe('af_heart@q8');
+    stubCaches(['config.json', 'tokenizer.json', 'onnx/model_fp16.onnx']);
+    await expect(kokoroEngine.isReady()).resolves.toBe(false);
 
-    worker.reply({ type: 'ready', voices: ['af_heart'] });
-    await preparing;
-    expect(await kokoroEngine.cacheVariant?.()).toBe('af_heart@q8');
-  });
-
-  it('goes back to reading the setting after a failed load', async () => {
-    // A failed download leaves no weights to follow; the retry reads the setting afresh
-    // instead of keying clips for a precision that is not on disk.
-    resetKokoroEngine();
-    await setSetting(KOKORO_DTYPE_SETTING, 'q8');
-    const failed = kokoroEngine.prepare();
-    await waitFor(() => FakeWorker.instances.length === 1);
-    await waitFor(() => lastWorker().posted.length > 0);
-    lastWorker().fail('no available backend found');
-    await expect(failed).rejects.toThrow('no available backend found');
-
-    await setSetting(KOKORO_DTYPE_SETTING, 'fp32');
-    expect(await kokoroEngine.cacheVariant?.()).toBe('af_heart@fp32');
+    // The fp32 file is the model, whatever else is lying around.
+    stubCaches(['config.json', 'tokenizer.json', 'onnx/model.onnx']);
+    await expect(kokoroEngine.isReady()).resolves.toBe(true);
+    await setModelReady('kokoro', false);
   });
 });
 
@@ -318,7 +279,7 @@ describe('voice identity', () => {
   afterEach(async () => {
     // Both live in fake-indexeddb for the whole file.
     await setKokoroVoice(DEFAULT_KOKORO_VOICE);
-    await setSetting(KOKORO_DTYPE_SETTING, DEFAULT_KOKORO_DTYPE);
+    await setSetting(KOKORO_DTYPE_SETTING, KOKORO_DTYPE);
   });
 
   it('names the voice it will speak with, not the phone voice in the request', async () => {

@@ -91,7 +91,11 @@ describe('NeuralModelsPanel', () => {
 
     expect(text).toContain('Pocket TTS');
     expect(text).toContain('Kokoro-82M');
-    expect(text).toContain('Precision'); // web-only dtype selector
+    // One web build only: the card names its one size instead of offering a precision.
+    // The q8/fp16 selectors played garbled audio, so they are gone.
+    expect(text).not.toContain('Precision');
+    expect(container.querySelector('#tts-kokoro-dtype')).toBeNull();
+    expect(text).toContain('~320 MB');
     expect(text).toContain('0.80×–1.25×'); // Pocket speed cap is disclosed
     expect(text).not.toContain('Kokoro server');
     expect(text).not.toContain('Server URL');
@@ -113,10 +117,11 @@ describe('NeuralModelsPanel', () => {
     expect(container.querySelectorAll('.btn-primary')).toHaveLength(0);
   });
 
-  it('offers fp32 when only the q8 weights of an older download are cached', async () => {
+  it('offers a way to reclaim the retired q8 weights of an older download', async () => {
     // q8 was the default before this change, so an existing reader has the int8
-    // weights on disk. They are not the fp32 model, and the card that said "Ready"
-    // made the first Play start a silent ~320 MB download.
+    // weights on disk. They are not the model the app loads, so the card must neither
+    // say "Ready" on them (the first Play would silently fetch ~320 MB) nor hide them:
+    // Delete is how the reader gets the ~90 MB back.
     const base = 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main';
     const requests = ['config.json', 'tokenizer.json', 'onnx/model_quantized.onnx'].map((name) => ({
       url: `${base}/${name}`,
@@ -125,27 +130,21 @@ describe('NeuralModelsPanel', () => {
       has: async (name: string) => name === 'transformers-cache',
       open: async () => ({ keys: async () => requests }),
     });
-    await setSetting(KOKORO_DTYPE_SETTING, 'fp32');
+    await setSetting(KOKORO_DTYPE_SETTING, 'q8');
 
     const text = await renderPanel();
-    const downloadButtons = () =>
-      [...container.querySelectorAll('button')].filter((button) => button.textContent === 'Download');
-    expect(downloadButtons()).toHaveLength(2); // Pocket has nothing, Kokoro has q8
+    const buttons = () => [...container.querySelectorAll('button')];
+    expect(buttons().filter((button) => button.textContent === 'Download')).toHaveLength(2);
     expect(text).not.toContain('Ready');
-
-    // Choosing q8 makes those same files the model that will run, on the download
-    // the reader already paid for.
-    await act(async () => {
-      await setSetting(KOKORO_DTYPE_SETTING, 'q8');
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    });
-    expect(downloadButtons()).toHaveLength(1);
-    expect(container.textContent).toContain('Ready');
+    // Only Kokoro has files on disk, so this is its Delete, on a card that is not Ready.
+    expect(buttons().filter((button) => button.textContent === 'Delete')).toHaveLength(1);
+    // The Delete sits next to "Not downloaded", so the card says what it would free.
+    expect(text).toContain('still using space on this device');
 
     await setSetting(KOKORO_DTYPE_SETTING, 'fp32');
   });
 
-  it('does not take an older download for the weights the selection asks for', async () => {
+  it('does not take an older download for the weights the app loads', async () => {
     // The download store is keyed by model, not by precision: a finished q8 download
     // used to keep the card on "Ready" after switching to fp32, and offered no way to
     // fetch the fp32 weights at all.
@@ -159,7 +158,6 @@ describe('NeuralModelsPanel', () => {
           })),
       }),
     });
-    await setSetting(KOKORO_DTYPE_SETTING, 'fp32');
     await startDownload('kokoro', async (report) => report({ fraction: 1 }));
 
     const text = await renderPanel();
@@ -176,8 +174,6 @@ describe('NeuralModelsPanel', () => {
       await new Promise((resolve) => setTimeout(resolve, 25));
     });
     expect(kokoroReset).toHaveBeenCalled();
-
-    await setSetting(KOKORO_DTYPE_SETTING, 'fp32');
   });
 
   it('replaces the web Kokoro card with the native panel on a device', async () => {

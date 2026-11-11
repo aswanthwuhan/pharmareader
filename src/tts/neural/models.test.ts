@@ -5,7 +5,8 @@ import {
   POCKET_CACHE,
   TRANSFORMERS_CACHE,
   deleteModel,
-  isKokoroDtypeDownloaded,
+  hasModelFiles,
+  isKokoroWeightsDownloaded,
   isModelDownloaded,
   kokoroSizeMb,
 } from './models';
@@ -66,15 +67,17 @@ describe('models download bookkeeping', () => {
     // Tokenizer + config alone are not a model.
     await expect(isModelDownloaded('kokoro')).resolves.toBe(false);
 
-    buckets[TRANSFORMERS_CACHE].push(`${kokoro}/onnx/model_quantized.onnx`);
+    // The fp32 weights (the only build the web engine loads) complete it; the
+    // unrelated models' own `model.onnx` must not count.
+    buckets[TRANSFORMERS_CACHE].push(`${kokoro}/onnx/model.onnx`);
     await expect(isModelDownloaded('kokoro')).resolves.toBe(true);
   });
 
-  it('counts only the chosen precision as a Kokoro download', async () => {
+  it('counts only the fp32 weights as a Kokoro download', async () => {
     // The old default was q8, so an existing reader has the int8 weights on disk and
-    // `ready` set. fp32 is the new default: those files are not that model, and
-    // claiming them made the first Play start a silent 320 MB download (or fail
-    // offline). Cache Storage is the only place that knows the difference.
+    // `ready` set. fp32 is the only build the web engine loads now: those files are not
+    // that model, and claiming them made the first Play start a silent 320 MB download
+    // (or fail offline). Cache Storage is the only place that knows the difference.
     const kokoro = 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX';
     const { storage, buckets } = fakeCacheStorage({
       [TRANSFORMERS_CACHE]: [
@@ -87,26 +90,25 @@ describe('models download bookkeeping', () => {
     vi.stubGlobal('caches', storage);
     await setSetting('tts.model.kokoro.ready', true);
 
-    await expect(isKokoroDtypeDownloaded('q8')).resolves.toBe(true);
-    await expect(isKokoroDtypeDownloaded('fp32')).resolves.toBe(false);
-    await expect(isKokoroDtypeDownloaded('fp16')).resolves.toBe(false);
+    await expect(isKokoroWeightsDownloaded()).resolves.toBe(false);
+    // …and the leftover is still visible as something to delete.
+    await expect(hasModelFiles('kokoro')).resolves.toBe(true);
 
     buckets[TRANSFORMERS_CACHE].push(`${kokoro}/onnx/model_fp16.onnx`);
-    await expect(isKokoroDtypeDownloaded('fp16')).resolves.toBe(true);
-    await expect(isKokoroDtypeDownloaded('fp32')).resolves.toBe(false);
+    await expect(isKokoroWeightsDownloaded()).resolves.toBe(false);
 
     buckets[TRANSFORMERS_CACHE].push(`${kokoro}/onnx/model.onnx`);
-    await expect(isKokoroDtypeDownloaded('fp32')).resolves.toBe(true);
+    await expect(isKokoroWeightsDownloaded()).resolves.toBe(true);
     await setSetting('tts.model.kokoro.ready', false);
   });
 
-  it('cannot tell precisions apart when Cache Storage is unreadable', async () => {
-    // Private mode: the flag is the only signal, so it stands for its own download.
+  it('trusts the ready flag when Cache Storage is unreadable', async () => {
+    // Private mode: the flag is the only signal, and only a successful fp32 load sets it.
     vi.stubGlobal('caches', undefined);
     await setSetting('tts.model.kokoro.ready', true);
-    await expect(isKokoroDtypeDownloaded('fp32')).resolves.toBe(true);
+    await expect(isKokoroWeightsDownloaded()).resolves.toBe(true);
     await setSetting('tts.model.kokoro.ready', false);
-    await expect(isKokoroDtypeDownloaded('q8')).resolves.toBe(false);
+    await expect(isKokoroWeightsDownloaded()).resolves.toBe(false);
   });
 
   it('a partial Pocket download is not "downloaded"', async () => {
@@ -146,24 +148,34 @@ describe('models download bookkeeping', () => {
     await expect(isModelDownloaded('pocket')).resolves.toBe(false);
   });
 
-  it('only removes Kokoro entries from the shared transformers cache', async () => {
+  it('removes every Kokoro weight variant from the shared transformers cache', async () => {
     const keep = 'https://huggingface.co/other/model.onnx';
+    const kokoro = 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/onnx';
+    // The q8/fp16 files are retired from the app but a reader who downloaded them still
+    // has them (~90–170 MB), so Delete must take them all, not just the fp32 model.
     const { storage, buckets } = fakeCacheStorage({
-      [TRANSFORMERS_CACHE]: [keep, 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/onnx/model_q8.onnx'],
-      [KOKORO_VOICES_CACHE]: ['https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/voices/af_heart.bin'],
+      [TRANSFORMERS_CACHE]: [
+        keep,
+        `${kokoro}/model.onnx`,
+        `${kokoro}/model_fp16.onnx`,
+        `${kokoro}/model_quantized.onnx`,
+      ],
+      [KOKORO_VOICES_CACHE]: [`${kokoro}/../voices/af_heart.bin`],
     });
     vi.stubGlobal('caches', storage);
 
+    await expect(hasModelFiles('kokoro')).resolves.toBe(true);
     await deleteModel('kokoro');
 
     expect(buckets[TRANSFORMERS_CACHE]).toEqual([keep]);
     expect(buckets[KOKORO_VOICES_CACHE]).toBeUndefined();
+    await expect(hasModelFiles('kokoro')).resolves.toBe(false);
   });
 
-  it('reports download sizes per dtype', () => {
+  it('reports the single fp32 download size', () => {
+    // One web build only: the panel shows a number, not a precision menu.
+    expect(kokoroSizeMb()).toBe(320);
     expect(kokoroSizeMb('fp32')).toBe(320);
-    expect(kokoroSizeMb('fp16')).toBe(170);
-    expect(kokoroSizeMb('q8')).toBe(90);
   });
 
   it('throws when the storage refuses to delete the weights', async () => {

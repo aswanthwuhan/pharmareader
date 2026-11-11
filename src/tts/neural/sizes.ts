@@ -12,9 +12,13 @@
  */
 export const POCKET_SIZE_MB = 180;
 
-/** Approximate download size of the Kokoro weights per dtype. */
-export function kokoroSizeMb(dtype: string): number {
-  if (dtype === 'fp32') return 320;
-  if (dtype === 'fp16') return 170;
-  return 90; // q8 / q4
+/**
+ * Download size of the Kokoro weights, in MB.
+ *
+ * The fp32 export is the only build the web engine loads (the int8 one played gibberish),
+ * so this is one number whatever the caller passes: `kokoro.worker.ts` forwards the dtype
+ * it was initialised with and the answer does not depend on it.
+ */
+export function kokoroSizeMb(_dtype?: string): number {
+  return 320;
 }
