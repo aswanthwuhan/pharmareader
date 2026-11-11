@@ -17,7 +17,7 @@ export type KokoroStage = 'status' | 'download' | 'unpack' | 'load' | 'measure' 
 
 const STAGE_TEXT: Record<KokoroStage, string> = {
   status: 'reading the model state',
-  download: 'downloading the 334 MB model',
+  download: 'downloading the model',
   unpack: 'unpacking the model archive',
   load: 'loading the model into memory',
   measure: 'measuring speech speed',

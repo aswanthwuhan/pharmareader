@@ -1,10 +1,13 @@
 /**
- * Kokoro on-device settings: model size and download state, voice, thread count
+ * Kokoro on-device settings: model build and download state, voice, thread count
  * and a speed measurement that reports the real-time factor measured natively.
  *
- * The download is 334 MB, so the panel warns before it starts on mobile data, shows real
- * progress, offers to resume an interrupted download and refuses to start when the phone
- * does not have the ~750 MB of free space the download plus the unpacked model need.
+ * Two builds can be installed: the int8 graph (126 MB, cooler, the default) and the
+ * original fp32 graph (334 MB, what existing users already have). The panel offers the
+ * int8 download to an fp32 user and only offers to delete the old fp32 files once the int8
+ * model has loaded successfully. The download warns before it starts on mobile data, shows
+ * real progress, offers to resume an interrupted download and refuses to start when the
+ * phone does not have the free space the download plus the unpacked model need.
  *
  * Only the Android build has the native sherpa-onnx plugin; on the web the panel
  * explains that and points at the system voice instead.
@@ -14,7 +17,10 @@ import { setSetting, useSetting } from '../../core/settings';
 import type { TtsVoice } from '../../core/types';
 import { resetDownload, startDownload, useDownload, type DownloadReporter } from '../downloads';
 import {
+  DEFAULT_KOKORO_MODEL,
   DEFAULT_KOKORO_SID,
+  KOKORO_INT8_READY_SETTING,
+  KOKORO_MODEL_SETTING,
   KOKORO_THREADS_SETTING,
   KOKORO_VOICE_SETTING,
   kokoroNativeEngine,
@@ -27,9 +33,12 @@ import {
   formatBytes,
   isBusyError,
   meteredWarning,
+  modelArchiveBytes,
+  modelState,
   resumeFraction,
   storageWarning,
   tagDownloadStage,
+  type KokoroModelKey,
 } from '../native/kokoroDownload';
 import { measureRtf, rtfSettingKey } from './benchmark';
 import {
@@ -49,8 +58,19 @@ const ATTRIBUTION = 'Kokoro-82M by hexgrad (Apache-2.0) via sherpa-onnx (Apache-
 export const KOKORO_DOWNLOAD_ID = 'kokoro';
 const SPEED_TEST_SENTENCE =
   'The half-life of digoxin is about thirty-six hours, prolonged in renal failure.';
-const THREAD_OPTIONS = [2, 4, 6] as const;
-const DEFAULT_THREADS = 4;
+const THREAD_OPTIONS = [1, 2, 4] as const;
+const DEFAULT_THREADS = 2;
+/**
+ * Labels are literal, not derived from the default: 2 is "(recommended)" because it is the
+ * balance the measurements picked, and 1 is the coolest but usually lags behind real time.
+ */
+const THREAD_LABELS: Record<number, string> = {
+  1: '1 thread (coolest, may pause between sentences)',
+  2: '2 threads (recommended)',
+  4: '4 threads (faster, gets hot)',
+};
+const THREAD_WARNING =
+  'More threads finish sooner but keep more cores busy, and the phone gets warmer.';
 /** Minimum touch target the rest of the app uses. */
 const TAP_TARGET = { minHeight: 44, minWidth: 44, display: 'inline-flex', alignItems: 'center' } as const;
 /** The diagnostic block is plain text; no stylesheet rule exists for a <pre> in the panel. */
@@ -95,6 +115,9 @@ export default function KokoroNativePanel(): React.JSX.Element {
 
   const savedVoice = useSetting<string>(KOKORO_VOICE_SETTING, String(DEFAULT_KOKORO_SID));
   const savedThreads = useSetting<number>(KOKORO_THREADS_SETTING, DEFAULT_THREADS);
+  const savedModel = useSetting<string>(KOKORO_MODEL_SETTING, DEFAULT_KOKORO_MODEL);
+  const int8Ready = useSetting<boolean>(KOKORO_INT8_READY_SETTING, false);
+  const chosenModel: KokoroModelKey = savedModel === 'fp32' ? 'fp32' : 'int8';
 
   const refresh = useCallback(async () => {
     if (!isKokoroNativeAvailable()) {
@@ -102,7 +125,9 @@ export default function KokoroNativePanel(): React.JSX.Element {
       return;
     }
     try {
-      const next = await Kokoro.status();
+      // Ask about the saved build: the plugin answers about the one that is installed,
+      // which is the build the reader would actually speak with.
+      const next = await Kokoro.status({ model: chosenModel });
       setStatus(next);
       setShell(next.downloaded ? 'ready' : 'absent');
       setFailure(null);
@@ -112,7 +137,7 @@ export default function KokoroNativePanel(): React.JSX.Element {
       // The query itself failed, so there is no status object to describe the model with.
       setFailure(describeKokoroFailure('status', err, null));
     }
-  }, []);
+  }, [chosenModel]);
 
   useEffect(() => {
     void refresh();
@@ -166,7 +191,7 @@ export default function KokoroNativePanel(): React.JSX.Element {
     report({ stage: 'download' });
     try {
       await followRunningDownload({
-        status: () => Kokoro.status(),
+        status: () => Kokoro.status({ model: chosenModel }),
         listen: async (onFraction) => {
           const handle = await Kokoro.addListener('downloadProgress', (progress) =>
             onFraction(progress.fraction)
@@ -187,21 +212,34 @@ export default function KokoroNativePanel(): React.JSX.Element {
     } catch (err) {
       throw tagDownloadStage(err, failedAt);
     }
-  }, []);
+  }, [chosenModel]);
 
-  const downloadNow = (): void => {
+  /**
+   * Start (or resume) the download of one build. The setting is written first because
+   * {@code prepare()} reads the saved build, and an fp32 user clicking "Download the lighter
+   * INT8 model" must get int8 rather than another look at the model they already have.
+   */
+  const downloadNow = async (model: KokoroModelKey = chosenModel): Promise<void> => {
     setFailure(null);
     setMeasure(null);
     setCopied('idle');
+    if (model !== chosenModel) {
+      try {
+        await setSetting(KOKORO_MODEL_SETTING, model);
+      } catch (err) {
+        setFailure(describeKokoroFailure('status', err, status));
+        return;
+      }
+    }
     void startDownload(KOKORO_DOWNLOAD_ID, runDownload);
   };
 
-  const remove = async (): Promise<void> => {
+  const remove = async (model?: KokoroModelKey): Promise<void> => {
     setFailure(null);
     setMeasure(null);
     setCopied('idle');
     try {
-      await kokoroNativeEngine.deleteModel();
+      await kokoroNativeEngine.deleteModel(model);
       resetDownload(KOKORO_DOWNLOAD_ID);
       await refresh();
     } catch (err) {
@@ -222,7 +260,20 @@ export default function KokoroNativePanel(): React.JSX.Element {
     setFailure(null);
     try {
       await setSetting(KOKORO_THREADS_SETTING, threads);
-      if (status?.loaded) await Kokoro.load({ threads });
+      if (status?.loaded) await Kokoro.load({ threads, model: chosenModel });
+      await refresh();
+    } catch (err) {
+      setFailure(describeKokoroFailure('load', err, status));
+    }
+  };
+
+  /** Switch between the two installed builds and reload the session when one is loaded. */
+  const changeModel = async (model: KokoroModelKey): Promise<void> => {
+    setFailure(null);
+    setMeasure(null);
+    try {
+      await setSetting(KOKORO_MODEL_SETTING, model);
+      if (status?.loaded) await Kokoro.load({ model, threads });
       await refresh();
     } catch (err) {
       setFailure(describeKokoroFailure('load', err, status));
@@ -254,12 +305,26 @@ export default function KokoroNativePanel(): React.JSX.Element {
   const selectedVoice = voiceOptions.some((voice) => voice.id === savedVoice)
     ? savedVoice
     : voiceOptions[0].id;
-  const threads = THREAD_OPTIONS.includes(savedThreads as (typeof THREAD_OPTIONS)[number])
-    ? savedThreads
-    : DEFAULT_THREADS;
+  const savedThreadCount = Number(savedThreads);
+  // A value saved by an older build (6, for example) is shown as-is instead of being
+  // silently rewritten: the select gets an extra "(saved)" option and the warning covers it.
+  const threads =
+    Number.isFinite(savedThreadCount) && savedThreadCount >= 1
+      ? Math.round(savedThreadCount)
+      : DEFAULT_THREADS;
+  const threadsOffered = (THREAD_OPTIONS as readonly number[]).includes(threads);
 
   const downloaded = status?.downloaded === true;
   const sizeLabel = status && status.sizeBytes > 0 ? formatBytes(status.sizeBytes) : 'not downloaded';
+  // Sizes and install state per build, straight from the Java descriptors via status().
+  const int8 = modelState(status?.models, 'int8');
+  const fp32 = modelState(status?.models, 'fp32');
+  const bothInstalled = int8?.downloaded === true && fp32?.downloaded === true;
+  const int8Bytes = modelArchiveBytes(status?.models, 'int8');
+  const fp32Bytes = modelArchiveBytes(status?.models, 'fp32');
+  /** The build the plugin resolved: an fp32-only install answers "fp32" even when int8 is saved. */
+  const activeModel: KokoroModelKey = status?.model === 'fp32' ? 'fp32' : chosenModel;
+  const activeBytes = modelArchiveBytes(status?.models, activeModel);
   const downloading = download.status === 'downloading' || download.status === 'unpacking';
   // A download that failed before the panel was mounted still has to be reported:
   // the store carries the rejection and the stage it happened in.
@@ -287,7 +352,7 @@ export default function KokoroNativePanel(): React.JSX.Element {
   const ready = state === 'ready';
   const resumable = resumeFraction(status?.partialBytes, status?.archiveBytes);
   const spaceWarning = storageWarning(status?.freeBytes, status?.requiredBytes);
-  const dataWarning = meteredWarning(status?.metered, downloaded);
+  const dataWarning = meteredWarning(status?.metered, downloaded, status?.archiveBytes);
   const busy = downloading;
 
   const percent = Math.round(clamp01(fraction) * 100);
@@ -332,7 +397,7 @@ export default function KokoroNativePanel(): React.JSX.Element {
           <h3 className="kokoro-title" id="kokoro-native-heading">
             Kokoro (on-device)
           </h3>
-          <p className="kokoro-sub">Kokoro-82M through sherpa-onnx · 334 MB model</p>
+          <p className="kokoro-sub">Kokoro-82M through sherpa-onnx · {formatBytes(activeBytes)} model</p>
         </div>
         <span className={chipTone ? `status-chip ${chipTone}` : 'status-chip'}>
           <span className="status-dot" aria-hidden="true" />
@@ -426,7 +491,7 @@ export default function KokoroNativePanel(): React.JSX.Element {
           <button
             type="button"
             className="btn btn-secondary"
-            onClick={downloadNow}
+            onClick={() => void downloadNow()}
             disabled={spaceWarning !== null}
           >
             {downloaded
@@ -434,6 +499,7 @@ export default function KokoroNativePanel(): React.JSX.Element {
               : downloadLabel({
                   downloaded: false,
                   partialBytes: status?.partialBytes,
+                  // From the active descriptor (126 MB for int8, 334 MB for fp32).
                   archiveBytes: status?.archiveBytes,
                 })}
           </button>
@@ -443,14 +509,30 @@ export default function KokoroNativePanel(): React.JSX.Element {
             Downloading…
           </button>
         )}
+        {!busy && downloaded && int8 && int8.downloaded === false && (
+          <button type="button" className="btn btn-secondary" onClick={() => void downloadNow('int8')}>
+            Download the lighter INT8 model ({formatBytes(int8Bytes)})
+          </button>
+        )}
         {ready && (
           <button
             type="button"
             className="btn btn-ghost"
             style={TAP_TARGET}
-            onClick={() => void remove()}
+            onClick={() => void remove(activeModel)}
           >
             Delete model
+          </button>
+        )}
+        {/* Only after int8 has loaded once: until then the fp32 files are the safety net. */}
+        {!busy && bothInstalled && int8Ready === true && (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={TAP_TARGET}
+            onClick={() => void remove('fp32')}
+          >
+            Delete the older fp32 model ({formatBytes(fp32?.sizeBytes ?? fp32Bytes)})
           </button>
         )}
       </div>
@@ -459,12 +541,36 @@ export default function KokoroNativePanel(): React.JSX.Element {
         <summary>Details</summary>
         <div className="disc-sub-body">
           <div className="tts-field-grid">
+            {bothInstalled && (
+              <div className="field">
+                <label className="field-label" htmlFor="kokoro-native-model">
+                  Build
+                </label>
+                <select
+                  id="kokoro-native-model"
+                  className="input"
+                  value={chosenModel}
+                  onChange={(event) =>
+                    void changeModel(event.target.value === 'fp32' ? 'fp32' : 'int8')
+                  }
+                  disabled={state === 'unsupported' || busy}
+                >
+                  <option value="int8">Lighter (int8) · {formatBytes(int8Bytes)}</option>
+                  <option value="fp32">Full precision · {formatBytes(fp32Bytes)}</option>
+                </select>
+              </div>
+            )}
             <div className="field">
               <span className="field-label" id="kokoro-native-size-label">
-                Model
+                Installed
               </span>
-              <output id="kokoro-native-size" className="tts-value" aria-labelledby="kokoro-native-size-label">
-                {status?.modelId ? `${status.modelId} · ${sizeLabel}` : sizeLabel}
+              <output
+                id="kokoro-native-size"
+                className="tts-value"
+                aria-labelledby="kokoro-native-size-label"
+                title={status?.modelId}
+              >
+                {status?.modelLabel ? `${status.modelLabel} · ${sizeLabel}` : sizeLabel}
               </output>
             </div>
             <div className="field">
@@ -480,11 +586,18 @@ export default function KokoroNativePanel(): React.JSX.Element {
               >
                 {THREAD_OPTIONS.map((option) => (
                   <option key={option} value={option}>
-                    {formatThreads(option)}
-                    {option === DEFAULT_THREADS ? ' (recommended)' : ''}
+                    {THREAD_LABELS[option]}
                   </option>
                 ))}
+                {!threadsOffered && (
+                  <option value={threads}>{formatThreads(threads)} (saved)</option>
+                )}
               </select>
+              {threads > 2 && (
+                <p className="field-hint" role="status">
+                  {THREAD_WARNING}
+                </p>
+              )}
             </div>
           </div>
 
@@ -523,8 +636,10 @@ export default function KokoroNativePanel(): React.JSX.Element {
           <p className="field-hint">{status?.attribution ?? ATTRIBUTION}</p>
 
           <p className="field-hint">
-            Runs Kokoro-82M entirely on this phone through sherpa-onnx — no PC and no server. The model is a 334 MB
-            download that is stored in the app&apos;s private storage and survives restarts.
+            Runs Kokoro-82M entirely on this phone through sherpa-onnx — no PC and no server. The model is a{' '}
+            {formatBytes(activeBytes)} download that is stored in the app&apos;s private storage and survives restarts.
+            The int8 build sounds the same and keeps the phone cooler; the full-precision build is kept until you delete
+            it.
           </p>
         </div>
       </details>

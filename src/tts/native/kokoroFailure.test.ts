@@ -17,7 +17,7 @@ const STATUS: KokoroStatus = {
 
 describe('stageLabel', () => {
   it('names every stage as a phrase that reads inside a sentence', () => {
-    expect(stageLabel('download')).toBe('downloading the 334 MB model');
+    expect(stageLabel('download')).toBe('downloading the model');
     expect(stageLabel('unpack')).toBe('unpacking the model archive');
     expect(stageLabel('load')).toBe('loading the model into memory');
   });
@@ -59,7 +59,7 @@ describe('describeKokoroFailure', () => {
       STATUS,
       AT
     );
-    expect(failure.details).toContain('stage: download (downloading the 334 MB model)');
+    expect(failure.details).toContain('stage: download (downloading the model)');
     expect(failure.details).toContain('error: HTTP 403 while downloading the model');
     expect(failure.details).toContain('code: DOWNLOAD_FAILED');
     expect(failure.details).toContain('time: 2026-11-09T12:00:00.000Z');

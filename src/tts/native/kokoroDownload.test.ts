@@ -7,7 +7,10 @@ import {
   followRunningDownload,
   formatBytes,
   isBusyError,
+  KOKORO_INT8_ARCHIVE_BYTES,
   meteredWarning,
+  modelArchiveBytes,
+  modelState,
   resumeFraction,
   storageWarning,
   tagDownloadStage,
@@ -200,5 +203,18 @@ describe('followRunningDownload', () => {
 
     await expect(waiting).rejects.toThrow('unpacking it stopped making progress');
     expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('labels each model with its own descriptor size', () => {
+    expect(modelArchiveBytes(undefined, 'int8')).toBe(KOKORO_INT8_ARCHIVE_BYTES);
+    expect(modelArchiveBytes(undefined, 'fp32')).toBe(KOKORO_ARCHIVE_BYTES);
+    expect(formatBytes(KOKORO_INT8_ARCHIVE_BYTES)).toBe('126 MB');
+    const models = [
+      { key: 'int8', downloaded: true, archiveBytes: 3_000_000 },
+      { key: 'fp32', downloaded: false, archiveBytes: 4_000_000 },
+    ];
+    expect(modelArchiveBytes(models, 'int8')).toBe(3_000_000);
+    expect(modelState(models, 'fp32')?.downloaded).toBe(false);
+    expect(modelState(models, 'nope' as never)).toBeUndefined();
   });
 });

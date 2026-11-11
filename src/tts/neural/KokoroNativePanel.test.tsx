@@ -3,6 +3,7 @@ import 'fake-indexeddb/auto';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getSetting, setSetting } from '../../core/settings';
 import { resetDownload } from '../downloads';
 import KokoroNativePanel, { KOKORO_DOWNLOAD_ID } from './KokoroNativePanel';
 
@@ -18,6 +19,7 @@ const native = vi.hoisted(() => ({
   queries: 0,
   status: null as null | (() => Promise<Record<string, unknown>>),
   listener: null as null | ((progress: { fraction: number }) => void),
+  deleted: [] as string[],
 }));
 
 vi.mock('@capacitor/core', () => ({
@@ -27,19 +29,23 @@ vi.mock('@capacitor/core', () => ({
 vi.mock('../native/kokoroPlugin', () => ({
   isKokoroNativeAvailable: () => true,
   Kokoro: {
-    status: () =>
+    status: (options?: { model?: string }) =>
       native.status
         ? native.status()
-        : Promise.resolve({ downloaded: false, loaded: false, sizeBytes: 0 }),
+        : Promise.resolve({ downloaded: false, loaded: false, sizeBytes: 0, model: options?.model }),
     addListener: async (_event: string, listener: (progress: { fraction: number }) => void) => {
       native.listener = listener;
       return { remove: () => Promise.resolve() };
     },
+    load: () => Promise.resolve({ loaded: true, threads: 2, sampleRate: 24000, voiceCount: 53 }),
   },
 }));
 
 vi.mock('../native/kokoroNativeEngine', () => ({
   DEFAULT_KOKORO_SID: 3,
+  DEFAULT_KOKORO_MODEL: 'int8',
+  KOKORO_MODEL_SETTING: 'kokoro.native.model',
+  KOKORO_INT8_READY_SETTING: 'kokoro.native.int8Ready',
   KOKORO_THREADS_SETTING: 'tts.kokoro.threads',
   KOKORO_VOICE_SETTING: 'tts.voice.kokoro',
   kokoroNativeEngine: {
@@ -49,7 +55,10 @@ vi.mock('../native/kokoroNativeEngine', () => ({
     },
     listVoices: () => Promise.resolve([]),
     measure: () => Promise.resolve({ rtf: 0.5, durationMs: 100, elapsedMs: 200, sampleRate: 24000 }),
-    deleteModel: () => Promise.resolve(),
+    deleteModel: (model?: string) => {
+      native.deleted.push(model ?? '');
+      return Promise.resolve();
+    },
   },
 }));
 
@@ -105,6 +114,7 @@ beforeEach(() => {
   native.queries = 0;
   native.status = null;
   native.listener = null;
+  native.deleted = [];
   resetDownload(KOKORO_DOWNLOAD_ID);
 });
 
@@ -269,9 +279,9 @@ describe('KokoroNativePanel', () => {
       await new Promise((resolve) => setTimeout(resolve, 25));
     });
 
-    expect(text()).toContain('Downloading the 334 MB model failed: disk full');
+    expect(text()).toContain('Downloading the model failed: disk full');
     expect(container.querySelector('details pre')?.textContent).toContain(
-      'stage: download (downloading the 334 MB model)'
+      'stage: download (downloading the model)'
     );
     expect(text()).toContain('Error details');
     expect(text()).toContain('Copy error details');
@@ -301,5 +311,91 @@ describe('KokoroNativePanel', () => {
     expect(summaries).toEqual(['Details']);
     expect(button('Resume download (334 MB)')?.classList.contains('btn-secondary')).toBe(true);
     expect(container.querySelectorAll('.btn-primary')).toHaveLength(0);
+  });
+
+  it('offers one, two and four threads, labels 2 recommended and warns above two', async () => {
+    await render();
+    const select = container.querySelector<HTMLSelectElement>('#kokoro-native-threads');
+    expect(select?.value).toBe('2');
+    expect([...(select?.options ?? [])].map((option) => option.textContent)).toEqual([
+      '1 thread (coolest, may pause between sentences)',
+      '2 threads (recommended)',
+      '4 threads (faster, gets hot)',
+    ]);
+    expect(text()).not.toContain('More threads finish sooner');
+
+    await act(async () => {
+      select!.value = '4';
+      select!.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    });
+    expect(text()).toContain(
+      'More threads finish sooner but keep more cores busy, and the phone gets warmer.'
+    );
+  });
+
+  it('loads a thread count saved by an older build instead of crashing', async () => {
+    await setSetting('tts.kokoro.threads', 6);
+    await render();
+
+    const select = container.querySelector<HTMLSelectElement>('#kokoro-native-threads');
+    expect(select?.value).toBe('6');
+    expect(select?.selectedOptions[0]?.textContent).toBe('6 threads (saved)');
+    expect(text()).toContain('More threads finish sooner');
+  });
+
+  it('offers the lighter int8 download to a phone that still has fp32', async () => {
+    // An fp32 install from before the int8 build: the saved choice is fp32.
+    await setSetting('kokoro.native.model', 'fp32');
+    native.status = () =>
+      Promise.resolve({
+        downloaded: true,
+        loaded: true,
+        sizeBytes: 340_000_000,
+        model: 'fp32',
+        archiveBytes: 349_886_476,
+        models: [
+          { key: 'int8', downloaded: false, archiveBytes: 132_353_410 },
+          { key: 'fp32', downloaded: true, archiveBytes: 349_886_476, sizeBytes: 340_000_000 },
+        ],
+      });
+
+    await render();
+    const offer = button('Download the lighter INT8 model (126 MB)');
+    expect(offer).toBeDefined();
+    await act(async () => {
+      offer!.click();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    // prepare() reads the saved build, so the click has to store int8 first.
+    expect(await getSetting('kokoro.native.model', '')).toBe('int8');
+  });
+
+  it('offers to delete the fp32 files only once int8 has loaded successfully', async () => {
+    await setSetting('kokoro.native.int8Ready', true);
+    native.status = () =>
+      Promise.resolve({
+        downloaded: true,
+        loaded: true,
+        sizeBytes: 200_000_000,
+        model: 'int8',
+        archiveBytes: 132_353_410,
+        models: [
+          { key: 'int8', downloaded: true, archiveBytes: 132_353_410 },
+          { key: 'fp32', downloaded: true, archiveBytes: 349_886_476, sizeBytes: 349_000_000 },
+        ],
+      });
+
+    await render();
+    const remove = button('Delete the older fp32 model (333 MB)');
+    expect(remove).toBeDefined();
+    await act(async () => {
+      remove!.click();
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    });
+    // Only the fp32 directory is removed; the int8 model stays installed.
+    expect(native.deleted).toEqual(['fp32']);
+    // Both builds installed, so the panel lets the user switch between them.
+    expect(container.querySelector('#kokoro-native-model')).not.toBeNull();
   });
 });

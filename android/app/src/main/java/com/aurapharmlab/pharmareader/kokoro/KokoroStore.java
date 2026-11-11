@@ -14,6 +14,7 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.SocketTimeoutException;
 import java.net.URL;
+import java.security.MessageDigest;
 import java.util.Locale;
 
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
@@ -21,29 +22,36 @@ import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream;
 
 /**
- * On-device storage for the Kokoro model: resumable runtime download, streaming
+ * On-device storage for the Kokoro models: resumable runtime download, streaming
  * bzip2/tar extraction, verification, size accounting and deletion.
  *
  * <p>Everything lives under {@code context.filesDir/kokoro/}, i.e. app-private storage that
  * needs no permission and is removed with the app. Nothing is bundled in the APK.
  *
- * <p>The 334&nbsp;MiB archive is first written to a {@code .part} file so an interrupted
- * download (a dropped mobile connection, the app being killed in the background) resumes
- * with an HTTP {@code Range} request instead of starting again. Only once the archive is
- * complete is it unpacked, into a scratch directory that is moved into place atomically, so
- * a cancelled or broken download can never leave a half-model that looks installed.
+ * <p>One store instance is bound to one {@link KokoroModel.Descriptor}: the fp32 model and
+ * the int8 model each get their own directory ({@code kokoro/<id>/}), their own partially
+ * downloaded archive and their own scratch directory, so the two can be installed side by
+ * side and deleting one leaves the other untouched.
+ *
+ * <p>The archive is first written to a {@code .part} file so an interrupted download (a
+ * dropped mobile connection, the app being killed in the background) resumes with an HTTP
+ * {@code Range} request instead of starting again. Only once the archive is complete is it
+ * unpacked, into a scratch directory that is moved into place atomically, so a cancelled or
+ * broken download can never leave a half-model that looks installed.
  *
  * <p>Integrity: the download is checked against the size the server reported, and bzip2
  * carries a CRC32 per block, so a truncated or corrupted archive fails to unpack rather
- * than producing a silently broken model. There is no published SHA-256 for the release
- * asset (GitHub reports {@code digest: null}), so none is pinned here.
+ * than producing a silently broken model. The int8 graph additionally has its published
+ * SHA-256 pinned in {@link KokoroModel#INT8_MODEL_SHA256}: the int8 export from before
+ * 2026-10-26 produces NaN activations (i.e. loud garbage) on Android arm64, and a digest
+ * check is the only way to tell that build apart from the fixed one.
  */
 public final class KokoroStore {
 
     private static final String TAG = "KokoroStore";
     private static final String ROOT_DIR = "kokoro";
-    private static final String SCRATCH_DIR = ".extract";
-    private static final String ARCHIVE_PART = ".model.tar.bz2.part";
+    /** Archive this plugin shipped before two models existed; adopted for resume. */
+    private static final String LEGACY_FP32_PART = ".model.tar.bz2.part";
     private static final int CONNECT_TIMEOUT_MS = 30_000;
     private static final int READ_TIMEOUT_MS = 60_000;
     private static final int BUFFER_BYTES = 128 * 1024;
@@ -67,18 +75,29 @@ public final class KokoroStore {
     }
 
     private final File root;
+    private final KokoroModel.Descriptor model;
 
+    public KokoroStore(Context context, KokoroModel.Descriptor model) {
+        this(new File(context.getFilesDir(), ROOT_DIR), model);
+    }
+
+    /** Store for the default model ({@link KokoroModel#DEFAULT_KEY}). */
     public KokoroStore(Context context) {
-        this(new File(context.getFilesDir(), ROOT_DIR));
+        this(context, KokoroModel.forKey(KokoroModel.DEFAULT_KEY));
     }
 
     /**
      * Rooted at an explicit directory instead of {@code filesDir}. The download, extraction and
      * verification are plain {@code java.io}, so the JVM tests drive this constructor to run the
-     * real thing on a desktop.
+     * real thing on a desktop. Binds to the fp32 model, whose reference archive the live tests use.
      */
     KokoroStore(File root) {
+        this(root, KokoroModel.FP32);
+    }
+
+    KokoroStore(File root, KokoroModel.Descriptor model) {
         this.root = root;
+        this.model = model == null ? KokoroModel.forKey(KokoroModel.DEFAULT_KEY) : model;
     }
 
     /** {@code android.util.Log} is a stub in the JVM tests; fall back to the console there. */
@@ -98,18 +117,27 @@ public final class KokoroStore {
         }
     }
 
+    /** The model this store manages. */
+    public KokoroModel.Descriptor descriptor() {
+        return model;
+    }
+
     public File rootDir() {
         return root;
     }
 
+    /** {@code filesDir/kokoro/<id>} for this store's model. */
     public File modelDir() {
-        return new File(root, KokoroModel.ID);
+        return new File(root, model.id());
     }
 
     /** True when a complete, verified model is present. */
     public boolean isDownloaded() {
         File dir = modelDir();
         if (!dir.isDirectory() || !new File(dir, KokoroModel.MARKER_FILE).isFile()) {
+            return false;
+        }
+        if (!model.id().equals(readMarker(dir))) {
             return false;
         }
         return verify(dir) == null;
@@ -122,7 +150,7 @@ public final class KokoroStore {
         if (!dir.isDirectory()) {
             return 0L;
         }
-        for (String name : KokoroModel.REQUIRED_FILES) {
+        for (String name : model.requiredFiles()) {
             File f = new File(dir, name);
             if (f.isFile()) {
                 total += f.length();
@@ -132,10 +160,23 @@ public final class KokoroStore {
         return total;
     }
 
-    /** Bytes of a partially downloaded archive that the next download will resume from. */
+    /**
+     * Bytes of a partially downloaded archive that the next download will resume from.
+     *
+     * <p>The fp32 archive used to be saved as {@code .model.tar.bz2.part}; if that file is
+     * still there from a build before two models existed, it is reported (and adopted by the
+     * next download) instead of being thrown away.
+     */
     public long partialBytes() {
-        File part = new File(root, ARCHIVE_PART);
-        return part.isFile() ? part.length() : 0L;
+        File part = partFile();
+        if (part.isFile()) {
+            return part.length();
+        }
+        File legacy = legacyPartFile();
+        if (legacy != null && legacy.isFile()) {
+            return legacy.length();
+        }
+        return 0L;
     }
 
     public long freeBytes() {
@@ -150,12 +191,14 @@ public final class KokoroStore {
         if (dir == null || !dir.isDirectory()) {
             return "model directory missing";
         }
-        for (int i = 0; i < KokoroModel.REQUIRED_FILES.length; i++) {
-            File f = new File(dir, KokoroModel.REQUIRED_FILES[i]);
+        String[] files = model.requiredFiles();
+        long[] minBytes = model.minBytes();
+        for (int i = 0; i < files.length; i++) {
+            File f = new File(dir, files[i]);
             if (!f.isFile()) {
-                return "missing " + KokoroModel.REQUIRED_FILES[i];
+                return "missing " + files[i];
             }
-            long min = KokoroModel.MIN_BYTES[i];
+            long min = i < minBytes.length ? minBytes[i] : 0L;
             if (f.length() < min) {
                 return String.format(
                         Locale.US, "%s is too small (%d bytes)", f.getName(), f.length());
@@ -171,13 +214,45 @@ public final class KokoroStore {
     }
 
     /**
+     * Returns null when the graph file matches the descriptor's pinned SHA-256, no check is
+     * pinned for this build, or the file is absent; otherwise a message naming the digest.
+     */
+    public String verifyDigest(File dir) {
+        return verifyDigest(dir, model);
+    }
+
+    /** Same as {@link #verifyDigest(File)} for an explicit descriptor (unit tests, panel). */
+    static String verifyDigest(File dir, KokoroModel.Descriptor model) {
+        String expected = model.sha256Model();
+        if (expected == null) {
+            return null;
+        }
+        File graph = new File(dir, model.modelFile());
+        if (!graph.isFile()) {
+            return "missing " + model.modelFile();
+        }
+        String actual;
+        try {
+            actual = sha256(graph);
+        } catch (IOException e) {
+            return "could not read " + model.modelFile() + ": " + e.getMessage();
+        }
+        if (expected.equalsIgnoreCase(actual)) {
+            return null;
+        }
+        return "The downloaded " + model.modelFile() + " is not the published build "
+                + "(SHA-256 " + actual + ", expected " + expected + "). This copy would play "
+                + "garbled audio. Delete the model and download it again.";
+    }
+
+    /**
      * Downloads and extracts the model, resuming a previous partial download. Blocking;
      * call from a worker thread.
      *
      * @return the number of bytes extracted into the model directory
      */
     public long download(Progress progress) throws IOException {
-        long needed = KokoroModel.REQUIRED_FREE_BYTES + SPACE_MARGIN;
+        long needed = model.requiredFreeBytes() + SPACE_MARGIN;
         long free = freeBytes();
         if (free > 0 && free < needed) {
             throw new StorageException(String.format(
@@ -189,8 +264,9 @@ public final class KokoroStore {
         }
         ensureDir(root, "model storage");
 
-        File part = new File(root, ARCHIVE_PART);
-        File scratch = new File(root, SCRATCH_DIR);
+        File part = partFile();
+        adoptLegacyPart(part);
+        File scratch = scratchDir();
         boolean success = false;
         try {
             long archiveBytes = fetchArchive(part, progress);
@@ -199,18 +275,18 @@ public final class KokoroStore {
             if (progress != null) {
                 progress.onProgress(1d, archiveBytes, archiveBytes);
             }
-            info("archive ready: " + archiveBytes + " bytes");
+            info("archive ready (" + model.key() + "): " + archiveBytes + " bytes");
 
             long freeAfterDownload = freeBytes();
             if (freeAfterDownload > 0
-                    && freeAfterDownload < KokoroModel.EXTRACTED_BYTES + SPACE_MARGIN) {
+                    && freeAfterDownload < model.extractedBytes() + SPACE_MARGIN) {
                 throw new StorageException(String.format(
                         Locale.US,
                         "Not enough free storage to unpack the model: %d MB available, "
                                 + "about %d MB needed. The download was kept and will be "
                                 + "unpacked once space is free.",
                         freeAfterDownload / (1024 * 1024),
-                        KokoroModel.EXTRACTED_BYTES / (1024 * 1024)));
+                        model.extractedBytes() / (1024 * 1024)));
             }
 
             deleteRecursively(scratch);
@@ -221,7 +297,7 @@ public final class KokoroStore {
                 extracted = extractArchive(part, scratch);
             } catch (IOException e) {
                 // A truncated or corrupt archive fails identically on every retry, so drop it
-                // unless the failure looks like a full disk (then keeping it saves 334 MiB).
+                // unless the failure looks like a full disk (then keeping it saves the download).
                 if (freeBytes() > SPACE_MARGIN) {
                     deleteRecursively(part);
                 }
@@ -235,6 +311,13 @@ public final class KokoroStore {
             String problem = verify(extracted);
             if (problem != null) {
                 throw new IOException("Downloaded model is incomplete: " + problem);
+            }
+            // The int8 export published before 2026-10-26 loads and reports the right sizes but
+            // produces NaN activations on Android arm64. Its digest is pinned; refuse it here.
+            String digestProblem = verifyDigest(extracted);
+            if (digestProblem != null) {
+                deleteRecursively(part);
+                throw new IOException(digestProblem);
             }
 
             File target = modelDir();
@@ -255,16 +338,45 @@ public final class KokoroStore {
         }
     }
 
-    /** Remove the model and any partial download from disk. */
+    /**
+     * Remove this model and its partial download from disk. The other model's directory and
+     * archive are left alone.
+     */
     public void delete() throws IOException {
         deleteRecursively(modelDir());
-        deleteRecursively(new File(root, SCRATCH_DIR));
-        deleteRecursively(new File(root, ARCHIVE_PART));
-        File[] leftovers = root.listFiles();
-        if (leftovers != null) {
-            for (File f : leftovers) {
-                deleteRecursively(f);
-            }
+        deleteRecursively(scratchDir());
+        deleteRecursively(partFile());
+        File legacy = legacyPartFile();
+        if (legacy != null) {
+            deleteRecursively(legacy);
+        }
+    }
+
+    /** The partially downloaded archive for this model. */
+    File partFile() {
+        return new File(root, model.archivePartName());
+    }
+
+    /** Scratch directory for this model's unpack. */
+    File scratchDir() {
+        return new File(root, ".extract-" + model.key());
+    }
+
+    /**
+     * The fp32 archive used to be saved as {@code .model.tar.bz2.part} (before the int8 model
+     * existed). Move it onto the new name so an in-flight download still resumes.
+     */
+    private File legacyPartFile() {
+        return model.isInt8() ? null : new File(root, LEGACY_FP32_PART);
+    }
+
+    private void adoptLegacyPart(File part) {
+        File legacy = legacyPartFile();
+        if (legacy == null || !legacy.isFile() || part.isFile()) {
+            return;
+        }
+        if (legacy.renameTo(part)) {
+            info("adopted the pre-int8 partial download as " + part.getName());
         }
     }
 
@@ -272,7 +384,7 @@ public final class KokoroStore {
 
     /** Resume the archive download until it is complete, retrying once on a network error. */
     private long fetchArchive(File part, Progress progress) throws IOException {
-        if (part.isFile() && part.length() >= KokoroModel.ARCHIVE_BYTES) {
+        if (part.isFile() && part.length() >= model.archiveBytes()) {
             info("archive already downloaded: " + part.length() + " bytes");
             return part.length();
         }
@@ -300,14 +412,14 @@ public final class KokoroStore {
      */
     private long fetchOnce(File part, Progress progress) throws IOException {
         long existing = part.isFile() ? part.length() : 0L;
-        if (existing > KokoroModel.ARCHIVE_BYTES) {
+        if (existing > model.archiveBytes()) {
             // Left over from a different (larger) archive: not resumable.
             deleteRecursively(part);
             existing = 0L;
         }
-        long total = KokoroModel.ARCHIVE_BYTES;
+        long total = model.archiveBytes();
 
-        HttpURLConnection connection = openConnection(KokoroModel.DOWNLOAD_URL);
+        HttpURLConnection connection = openConnection(model.downloadUrl());
         try {
             if (existing > 0L) {
                 connection.setRequestProperty("Range", "bytes=" + existing + "-");
@@ -336,7 +448,8 @@ public final class KokoroStore {
             }
             info(String.format(
                     Locale.US,
-                    "GET model -> %d, resuming at %d of %d bytes", code, existing, total));
+                    "GET %s -> %d, resuming at %d of %d bytes",
+                    model.key(), code, existing, total));
             copyToPart(connection.getInputStream(), part, existing, total, progress);
         } finally {
             connection.disconnect();
@@ -424,7 +537,7 @@ public final class KokoroStore {
         } catch (NoClassDefFoundError error) {
             // commons-compress loads its stream plumbing (bit/byte counters) from commons-io. When
             // that jar is missing from the APK, the tar reader dies with
-            // "org/apache/commons/io/input/CountingInputStream" *after* the 334 MB download has
+            // "org/apache/commons/io/input/CountingInputStream" *after* the download has
             // finished, which reads to the user as a failed download. Say what is actually wrong.
             throw new IOException(unpackerMessage(error), error);
         }
@@ -479,9 +592,9 @@ public final class KokoroStore {
                 + "). Reinstall the app: the build has to ship commons-io next to commons-compress.";
     }
 
-    /** The archive contains a single {@code kokoro-multi-lang-v1_0/} directory. */
+    /** The archive contains a single {@code kokoro-multi-lang-v1_0/} (or int8) directory. */
     private File findModelDir(File scratch) throws IOException {
-        File expected = new File(scratch, KokoroModel.ID);
+        File expected = new File(scratch, model.id());
         if (expected.isDirectory()) {
             return expected;
         }
@@ -519,10 +632,56 @@ public final class KokoroStore {
     }
 
     private void writeMarker(File dir) throws IOException {
+        writeMarker(dir, model);
+    }
+
+    /**
+     * The marker records which model directory this is: a renamed or reused directory then
+     * fails {@link #isDownloaded()} instead of being trusted by size alone.
+     */
+    static void writeMarker(File dir, KokoroModel.Descriptor model) throws IOException {
         File marker = new File(dir, KokoroModel.MARKER_FILE);
         try (OutputStream out = new FileOutputStream(marker)) {
-            out.write((KokoroModel.ID + "\n").getBytes("UTF-8"));
+            out.write((model.id() + "\n").getBytes("UTF-8"));
         }
+    }
+
+    private static String readMarker(File dir) {
+        File marker = new File(dir, KokoroModel.MARKER_FILE);
+        if (!marker.isFile() || marker.length() > 256L) {
+            return "";
+        }
+        try (InputStream in = new FileInputStream(marker)) {
+            byte[] bytes = new byte[(int) marker.length()];
+            int read = in.read(bytes);
+            return read <= 0 ? "" : new String(bytes, 0, read, "UTF-8").trim();
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
+    /** Streaming SHA-256 of a file, lowercase hex. */
+    static String sha256(File file) throws IOException {
+        MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (Exception e) {
+            throw new IOException("SHA-256 is not available on this device", e);
+        }
+        try (InputStream in = new BufferedInputStream(new FileInputStream(file), BUFFER_BYTES)) {
+            byte[] buffer = new byte[BUFFER_BYTES];
+            int read;
+            while ((read = in.read(buffer)) > 0) {
+                digest.update(buffer, 0, read);
+            }
+        }
+        byte[] sum = digest.digest();
+        StringBuilder hex = new StringBuilder(sum.length * 2);
+        for (byte b : sum) {
+            hex.append(Character.forDigit((b >> 4) & 0xF, 16));
+            hex.append(Character.forDigit(b & 0xF, 16));
+        }
+        return hex.toString();
     }
 
     // ---------------------------------------------------------------- file helpers

@@ -6,17 +6,32 @@
  * Speech is sentence-pipelined: the next sentence is synthesised while the
  * current one plays, which hides most of the model latency on a phone CPU.
  */
-import { getSetting } from '../../core/settings';
+import { getSetting, setSetting } from '../../core/settings';
 import type { SpeakEvents, TtsEngine, TtsVoice } from '../../core/types';
 import { planChunks } from '../neural/clauseChunk';
+import type { KokoroModelKey } from './kokoroDownload';
 import type { KokoroStage } from './kokoroFailure';
-import { isKokoroNativeAvailable, Kokoro } from './kokoroPlugin';
+import { isKokoroNativeAvailable, Kokoro, type KokoroStatus } from './kokoroPlugin';
 
 /** Voice used when nothing is configured: `af_heart` (sid 3). */
 export const DEFAULT_KOKORO_SID = 3;
 export const KOKORO_VOICE_SETTING = 'tts.voice.kokoro';
 export const KOKORO_THREADS_SETTING = 'tts.kokoro.threads';
-export const DEFAULT_KOKORO_THREADS = 4;
+/**
+ * Two threads: the model runs at roughly 0.75x real time on a mid-range phone without
+ * keeping four cores busy. One thread is offered (coolest) but is usually slower than
+ * real time, so it is not the default.
+ */
+export const DEFAULT_KOKORO_THREADS = 2;
+/** Which build of the model the reader should use: the int8 graph on a new install. */
+export const KOKORO_MODEL_SETTING = 'kokoro.native.model';
+export const DEFAULT_KOKORO_MODEL: KokoroModelKey = 'int8';
+/**
+ * Set once the int8 model has been loaded successfully. The panel only offers to delete
+ * the 334 MB fp32 files after this, so a user who downloads int8 but cannot load it (old
+ * device, corrupt file) still has a working model.
+ */
+export const KOKORO_INT8_READY_SETTING = 'kokoro.native.int8Ready';
 
 const MIN_SPEED = 0.5;
 const MAX_SPEED = 2;
@@ -91,6 +106,35 @@ async function threadsSetting(): Promise<number> {
   return Number.isFinite(threads) && threads > 0 ? clampNumber(threads, 1, MAX_THREADS) : DEFAULT_KOKORO_THREADS;
 }
 
+/** The saved model choice; an unknown or missing value means the int8 default. */
+async function modelSetting(): Promise<KokoroModelKey> {
+  try {
+    const saved = await getSetting<string>(KOKORO_MODEL_SETTING, DEFAULT_KOKORO_MODEL);
+    return saved === 'fp32' || saved === 'int8' ? saved : DEFAULT_KOKORO_MODEL;
+  } catch {
+    return DEFAULT_KOKORO_MODEL;
+  }
+}
+
+/**
+ * The build the plugin actually resolved: what the user asked for when it is installed,
+ * otherwise the other build when that one is installed (an fp32-only install keeps
+ * speaking fp32 until int8 has been downloaded).
+ */
+function resolvedModel(status: KokoroStatus, requested: KokoroModelKey): KokoroModelKey {
+  const reported = status.model;
+  return reported === 'int8' || reported === 'fp32' ? reported : requested;
+}
+
+/** Remember that int8 loaded once, which is what unlocks deleting the fp32 files. */
+async function markInt8Ready(): Promise<void> {
+  try {
+    await setSetting(KOKORO_INT8_READY_SETTING, true);
+  } catch {
+    // The flag only gates a delete offer; failing to store it must not fail the load.
+  }
+}
+
 async function voiceSetting(): Promise<string> {
   const saved = await getSetting<string>(KOKORO_VOICE_SETTING, String(DEFAULT_KOKORO_SID));
   return typeof saved === 'string' && saved.length > 0 ? saved : String(DEFAULT_KOKORO_SID);
@@ -146,7 +190,7 @@ class KokoroNativeEngine implements TtsEngine {
   async isReady(): Promise<boolean> {
     if (!isKokoroNativeAvailable()) return false;
     try {
-      return (await Kokoro.status()).downloaded;
+      return (await Kokoro.status({ model: await modelSetting() })).downloaded;
     } catch {
       return false;
     }
@@ -159,7 +203,8 @@ class KokoroNativeEngine implements TtsEngine {
   ): Promise<void> {
     requireNative();
     onStage?.('status');
-    let status = await Kokoro.status();
+    const requested = await modelSetting();
+    let status = await Kokoro.status({ model: requested });
     if (!status.downloaded) {
       onStage?.('download');
       const handle = await Kokoro.addListener('downloadProgress', (progress) => {
@@ -170,23 +215,30 @@ class KokoroNativeEngine implements TtsEngine {
         onProgress?.(fraction);
       });
       try {
-        await Kokoro.download();
+        await Kokoro.download({ model: requested });
       } finally {
         await handle.remove().catch(() => undefined);
       }
       onProgress?.(1);
       onStage?.('unpack');
       onStage?.('status');
-      status = await Kokoro.status();
+      status = await Kokoro.status({ model: requested });
     }
     if (!status.downloaded) throw new Error('Kokoro model files are missing after the download.');
 
+    const active = resolvedModel(status, requested);
+    if (active === 'int8') await markInt8Ready();
     const threads = await threadsSetting();
     // status.threads is read from the loaded session, so an engine that is already warm in
-    // this process (a second reader mount) is reused instead of reloading the model.
-    if (status.loaded && status.threads === threads) return;
+    // this process (a second reader mount) is reused instead of reloading the model. The
+    // loaded build is compared too: speaking int8 from an fp32 session is not a reuse.
+    const loadedModel = status.loadedModel;
+    if (status.loaded && status.threads === threads && (loadedModel === active || !loadedModel)) {
+      return;
+    }
     onStage?.('load');
-    await Kokoro.load({ threads });
+    await Kokoro.load({ model: active, threads });
+    if (active === 'int8') await markInt8Ready();
   }
 
   async listVoices(): Promise<TtsVoice[]> {
@@ -212,6 +264,7 @@ class KokoroNativeEngine implements TtsEngine {
       sid: sidFromVoiceId(opts.voiceId),
       speed: clampSpeed(opts.rate),
       threads: await threadsSetting(),
+      model: await modelSetting(),
     });
     if (!result.wavBase64) {
       throw new Error(result.cancelled ? 'Kokoro synthesis was cancelled.' : 'Kokoro returned no audio.');
@@ -235,11 +288,12 @@ class KokoroNativeEngine implements TtsEngine {
       const sid = sidFromVoiceId(opts.voiceId ?? (await voiceSetting()));
       const speed = clampSpeed(opts.rate);
       const threads = await threadsSetting();
+      const model = await modelSetting();
 
       const synthesize = async (text: string): Promise<Blob | null> => {
         const trimmed = text.trim();
         if (!trimmed) return null;
-        const result = await Kokoro.synthesize({ text: trimmed, sid, speed, threads });
+        const result = await Kokoro.synthesize({ text: trimmed, sid, speed, threads, model });
         if (!alive() || result.cancelled || !result.wavBase64) return null;
         return base64ToWavBlob(result.wavBase64);
       };
@@ -289,11 +343,15 @@ class KokoroNativeEngine implements TtsEngine {
     void audio.play().catch(() => undefined);
   }
 
-  /** Remove the downloaded model files and unload them from memory. */
-  async deleteModel(): Promise<void> {
+  /**
+   * Remove one model build from disk and unload whatever is in memory. Without an argument
+   * the plugin's default build (int8) is removed; the panel passes the explicit build, so
+   * deleting the old fp32 files leaves an installed int8 model alone.
+   */
+  async deleteModel(model?: KokoroModelKey): Promise<void> {
     await this.release();
     if (!isKokoroNativeAvailable()) return;
-    await Kokoro.deleteModel();
+    await Kokoro.deleteModel(model ? { model } : undefined);
   }
 
   /** Drop the loaded model (used after deleting the download). */
@@ -316,6 +374,7 @@ class KokoroNativeEngine implements TtsEngine {
       sid: sidFromVoiceId(opts.voiceId ?? (await voiceSetting())),
       speed: clampSpeed(opts.rate),
       threads,
+      model: await modelSetting(),
     });
     if (result.cancelled || !result.wavBase64) throw new Error('Kokoro synthesis was cancelled.');
     return {

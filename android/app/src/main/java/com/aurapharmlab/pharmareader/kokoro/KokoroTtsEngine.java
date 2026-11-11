@@ -70,6 +70,8 @@ public final class KokoroTtsEngine {
     private volatile int sampleRate = DEFAULT_SAMPLE_RATE;
     private volatile int voiceCount;
     private volatile String modelDirPath;
+    /** Key of the model build in memory ({@code int8} / {@code fp32}); null when released. */
+    private volatile String modelKey;
     private volatile String provider = DEFAULT_PROVIDER;
 
     private KokoroTtsEngine() {}
@@ -87,6 +89,16 @@ public final class KokoroTtsEngine {
 
     public int threads() {
         return threads;
+    }
+
+    /** Absolute path of the loaded model directory, or null when nothing is loaded. */
+    public String modelDirPath() {
+        return modelDirPath;
+    }
+
+    /** Key of the loaded model build ({@code int8} / {@code fp32}), or null when released. */
+    public String modelKey() {
+        return modelKey;
     }
 
     public int sampleRate() {
@@ -116,7 +128,20 @@ public final class KokoroTtsEngine {
      */
     public synchronized void load(File modelDir, int threads, boolean debug, String provider)
             throws IOException {
+        load(modelDir, KokoroModel.FP32, threads, debug, provider);
+    }
+
+    /**
+     * Same as above, but for an explicit model build: the graph file name comes from the
+     * {@link KokoroModel.Descriptor} (fp32 is {@code model.onnx}, int8 is
+     * {@code model.int8.onnx}), so the two models can share this engine. The directory is
+     * compared too, so loading the other model replaces the session instead of reusing it.
+     */
+    public synchronized void load(
+            File modelDir, KokoroModel.Descriptor model, int threads, boolean debug, String provider)
+            throws IOException {
         String path = modelDir.getAbsolutePath();
+        String graph = model == null ? KokoroModel.MODEL_FILE : model.modelFile();
         int wanted = clampThreads(threads);
         String wantedProvider = clampProvider(provider);
         if (tts != null && wanted == this.threads && wantedProvider.equals(this.provider)
@@ -126,7 +151,7 @@ public final class KokoroTtsEngine {
         release();
 
         OfflineTtsKokoroModelConfig kokoro = new OfflineTtsKokoroModelConfig();
-        kokoro.setModel(new File(modelDir, KokoroModel.MODEL_FILE).getAbsolutePath());
+        kokoro.setModel(new File(modelDir, graph).getAbsolutePath());
         kokoro.setVoices(new File(modelDir, KokoroModel.VOICES_FILE).getAbsolutePath());
         kokoro.setTokens(new File(modelDir, KokoroModel.TOKENS_FILE).getAbsolutePath());
         kokoro.setLexicon(new File(modelDir, KokoroModel.LEXICON_FILE).getAbsolutePath());
@@ -134,14 +159,14 @@ public final class KokoroTtsEngine {
         // out-of-vocabulary words, which is why this plugin pins 1.13.8.
         kokoro.setDataDir(new File(modelDir, KokoroModel.ESPEAK_DIR).getAbsolutePath());
 
-        OfflineTtsModelConfig model = new OfflineTtsModelConfig();
-        model.setKokoro(kokoro);
-        model.setNumThreads(wanted);
-        model.setDebug(debug);
-        model.setProvider(wantedProvider);
+        OfflineTtsModelConfig modelConfig = new OfflineTtsModelConfig();
+        modelConfig.setKokoro(kokoro);
+        modelConfig.setNumThreads(wanted);
+        modelConfig.setDebug(debug);
+        modelConfig.setProvider(wantedProvider);
 
         OfflineTtsConfig config = new OfflineTtsConfig();
-        config.setModel(model);
+        config.setModel(modelConfig);
         config.setMaxNumSentences(1);
         config.setSilenceScale(0.2f);
 
@@ -153,6 +178,7 @@ public final class KokoroTtsEngine {
         this.sampleRate = created.sampleRate() > 0 ? created.sampleRate() : DEFAULT_SAMPLE_RATE;
         this.voiceCount = created.numSpeakers();
         this.modelDirPath = path;
+        this.modelKey = model == null ? KokoroModel.KEY_FP32 : model.key();
         this.provider = wantedProvider;
         this.tts = created;
         Log.i(TAG, String.format(Locale.US,
@@ -163,6 +189,7 @@ public final class KokoroTtsEngine {
         OfflineTts current = tts;
         tts = null;
         modelDirPath = null;
+        modelKey = null;
         voiceCount = 0;
         sampleRate = DEFAULT_SAMPLE_RATE;
         if (current != null) {

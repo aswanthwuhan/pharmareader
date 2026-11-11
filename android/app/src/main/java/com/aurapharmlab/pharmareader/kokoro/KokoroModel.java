@@ -1,90 +1,298 @@
 package com.aurapharmlab.pharmareader.kokoro;
 
 /**
- * Static description of the Kokoro-82M speech model that this plugin downloads at
- * runtime.
+ * Description of the Kokoro-82M speech models that this plugin downloads at runtime.
  *
- * <p>Model choice: {@code kokoro-multi-lang-v1_0} (fp32, 53 speakers, 24000 Hz) from the
- * official sherpa-onnx {@code tts-models} release. It is Kokoro v1.0, i.e. the quality
- * generation after the original v0.19, and unlike the int8 variants the fp32 graph runs
- * faster on phone CPUs. The archive is <em>not</em> bundled in the APK: it is 333.7 MiB
- * and Google Play / the user's storage should decide.
+ * <p>Two builds of the same 53-speaker, 24000 Hz model are offered side by side:
  *
- * <p>The plugin pairs this model with sherpa-onnx 1.13.8, whose Kokoro frontend uses
+ * <ul>
+ *   <li>{@link #FP32} — {@code kokoro-multi-lang-v1_0}, the full-precision graph. It is
+ *       what this plugin shipped first and still the reference for quality, but it is
+ *       310 MB of weights and heats a phone under load.
+ *   <li>{@link #INT8} — {@code kokoro-int8-multi-lang-v1_0}, the int8-quantised graph
+ *       (114 MB). Same voices, same speaker ids, same 24 kHz output; on phone CPUs it
+ *       costs noticeably less memory and heat per sentence. New installs default to it.
+ * </ul>
+ *
+ * <p>Both are <em>not</em> bundled in the APK: the archives are 132 MB and 334 MB and
+ * Google Play / the user's storage should decide. Each is unpacked into its own
+ * {@code filesDir/kokoro/<id>/} directory so the two can coexist, and the user keeps
+ * the fp32 model until the int8 one has loaded successfully.
+ *
+ * <p>The plugin pairs the model with sherpa-onnx 1.13.8, whose Kokoro frontend uses
  * {@code lexicon-us-en.txt} first and espeak-ng (bundled, GPL-3.0) for every word the
  * lexicon does not know. That fallback is what keeps drug names such as "digoxin" or
  * "fluoxetine" pronounceable; newer sherpa-onnx releases dropped espeak-ng and silently
  * skip out-of-vocabulary words.
+ *
+ * <p>The per-model identity lives in the {@link Descriptor} table below: directory name,
+ * archive size, unpacked size, graph file name, minimum file sizes and (for int8) the
+ * SHA-256 of the graph. Nothing else in the plugin hardcodes a model size or file name.
  */
 public final class KokoroModel {
 
-    /** Identifier reported to the web layer (also stored in the ".ready" marker). */
-    public static final String ID = "kokoro-multi-lang-v1_0";
+    /** Key the web layer uses for the lighter int8 graph (also a persisted setting value). */
+    public static final String KEY_INT8 = "int8";
 
-    /** Where the archive is fetched from. */
-    public static final String DOWNLOAD_URL =
-            "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/"
-                    + ID + ".tar.bz2";
+    /** Key the web layer uses for the original fp32 graph. */
+    public static final String KEY_FP32 = "fp32";
 
-    /** Human readable source page for the model, shown in the panel. */
+    /** Model a new install downloads and speaks with. */
+    public static final String DEFAULT_KEY = KEY_INT8;
+
+    /** Human readable source page for the models, shown in the panel. */
     public static final String SOURCE_URL =
             "https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models";
-
-    /** Exact byte size of the .tar.bz2 archive (used until the HTTP response confirms it). */
-    public static final long ARCHIVE_BYTES = 349_886_476L;
-
-    /** Rough size of the extracted model directory, for the "no space" pre-check (bytes). */
-    public static final long EXTRACTED_BYTES = 420_000_000L;
-
-    /**
-     * Free storage the download needs: the archive is kept on disk (for resume) while it is
-     * unpacked, so both exist at peak. ~734 MiB, i.e. "about 750 MB" in the UI.
-     */
-    public static final long REQUIRED_FREE_BYTES = ARCHIVE_BYTES + EXTRACTED_BYTES;
 
     /** Shown in the UI and in the license notice. */
     public static final String ATTRIBUTION =
             "Kokoro-82M by hexgrad (Apache-2.0) via sherpa-onnx (Apache-2.0)";
 
-    public static final String MODEL_FILE = "model.onnx";
     public static final String VOICES_FILE = "voices.bin";
     public static final String TOKENS_FILE = "tokens.txt";
     public static final String LEXICON_FILE = "lexicon-us-en.txt";
     public static final String ESPEAK_DIR = "espeak-ng-data";
     public static final String MARKER_FILE = ".ready";
 
-    /** Files that must exist (and be non-empty) inside the extracted model directory. */
-    public static final String[] REQUIRED_FILES = {
-            MODEL_FILE, VOICES_FILE, TOKENS_FILE, LEXICON_FILE
-    };
+    /** Suffix of the partially downloaded archive kept for resume, per model directory. */
+    public static final String ARCHIVE_PART_SUFFIX = ".tar.bz2.part";
 
-    /** Directories that must exist inside the extracted model directory. */
+    /** Directories that must exist inside every extracted model directory. */
     public static final String[] REQUIRED_DIRS = {ESPEAK_DIR};
-
-    /** Minimum plausible size per required file, to catch truncated/interrupted extracts. */
-    public static final long[] MIN_BYTES = {200_000_000L, 1_000_000L, 1L, 1_000_000L};
 
     /** af_heart: the voice the Kokoro authors recommend for a neutral US English read. */
     public static final int DEFAULT_SID = 3;
 
-    /** Speaker id -> speaker name, in model order (ids 0..52). */
-    public static final String[] VOICE_NAMES = {
-            "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica", "af_kore",
-            "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
-            "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael",
-            "am_onyx", "am_puck", "am_santa",
-            "bf_alice", "bf_emma", "bf_isabella", "bf_lily",
-            "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
-            "ef_dora", "em_alex", "ff_siwis",
-            "hf_alpha", "hf_beta", "hm_omega", "hm_psi",
-            "if_sara", "im_nicola",
-            "jf_alpha", "jf_gongitsune", "jf_nezumi", "jf_tebukuro", "jm_kumo",
-            "pf_dora", "pm_alex", "pm_santa",
-            "zf_xiaobei", "zf_xiaoni", "zf_xiaoxiao", "zf_xiaoyi",
-            "zm_yunjian", "zm_yunxi", "zm_yunxia", "zm_yunyang",
+    // ---------------------------------------------------------------------------------
+    // fp32 (kokoro-multi-lang-v1_0): the model this plugin shipped before int8 existed.
+    // ---------------------------------------------------------------------------------
+
+    /** Directory name, archive name and reported model id of the fp32 build. */
+    public static final String FP32_ID = "kokoro-multi-lang-v1_0";
+
+    /** Graph file inside the fp32 model directory. */
+    public static final String MODEL_FILE = "model.onnx";
+
+    /** Exact byte size of the fp32 .tar.bz2 archive (used until HTTP confirms it). */
+    public static final long ARCHIVE_BYTES = 349_886_476L;
+
+    /** Rough size of the extracted fp32 model directory, for the "no space" pre-check. */
+    public static final long EXTRACTED_BYTES = 420_000_000L;
+
+    /**
+     * Free storage the fp32 download needs: the archive is kept on disk (for resume) while
+     * it is unpacked, so both exist at peak. ~734 MiB, i.e. "about 750 MB" in the UI.
+     */
+    public static final long REQUIRED_FREE_BYTES = ARCHIVE_BYTES + EXTRACTED_BYTES;
+
+    /** Minimum plausible size per required fp32 file, to catch truncated extracts. */
+    public static final long[] MIN_BYTES = {200_000_000L, 1_000_000L, 1L, 1_000_000L};
+
+    /** Files that must exist (and be non-empty) inside every extracted model directory. */
+    public static final String[] REQUIRED_FILES = {
+            MODEL_FILE, VOICES_FILE, TOKENS_FILE, LEXICON_FILE
     };
 
+    /** Legacy alias: the fp32 model id, still reported by older callers. */
+    public static final String ID = FP32_ID;
+
+    /** Legacy alias: where the fp32 archive is fetched from. */
+    public static final String DOWNLOAD_URL = downloadUrl(FP32_ID);
+
+    // ---------------------------------------------------------------------------------
+    // int8 (kokoro-int8-multi-lang-v1_0): same voices, 114 MB graph, less heat.
+    // ---------------------------------------------------------------------------------
+
+    /** Directory name, archive name and reported model id of the int8 build. */
+    public static final String INT8_ID = "kokoro-int8-multi-lang-v1_0";
+
+    /** Graph file inside the int8 model directory. */
+    public static final String INT8_MODEL_FILE = "model.int8.onnx";
+
+    /** Exact byte size of the int8 archive. */
+    public static final long INT8_ARCHIVE_BYTES = 132_353_410L;
+
+    /**
+     * Rough size of the extracted int8 model directory. The real tree is 189 878 541 B;
+     * the extra head-room only makes the "no space" pre-check slightly conservative.
+     */
+    public static final long INT8_EXTRACTED_BYTES = 200_000_000L;
+
+    /** Minimum plausible size per required int8 file (voices.bin is the big one here). */
+    public static final long[] INT8_MIN_BYTES = {100_000_000L, 1_000_000L, 1L, 1_000_000L};
+
+    /**
+     * SHA-256 of {@code model.int8.onnx} in the published archive.
+     *
+     * <p>This is not paranoia: the int8 export published before 2026-10-26 produced NaN
+     * activations on Android arm64 (sherpa-onnx PR #4087), i.e. a graph that loads, reports
+     * the right sizes and plays loud garbage. A digest mismatch is refused with a message
+     * telling the user to delete and download again.
+     */
+    public static final String INT8_MODEL_SHA256 =
+            "75635ea3b85a32d00094dcdd61a258aba87c160f7c264c304a7b3ae9d734195e";
+
+    // ---------------------------------------------------------------------------------
+    // The descriptor table.
+    // ---------------------------------------------------------------------------------
+
+    /** Full-precision Kokoro v1.0. */
+    public static final Descriptor FP32 = new Descriptor(
+            KEY_FP32,
+            FP32_ID,
+            MODEL_FILE,
+            ARCHIVE_BYTES,
+            EXTRACTED_BYTES,
+            MIN_BYTES,
+            null,
+            "Full precision");
+
+    /** Int8-quantised Kokoro v1.0 — the default, and the one that runs cooler. */
+    public static final Descriptor INT8 = new Descriptor(
+            KEY_INT8,
+            INT8_ID,
+            INT8_MODEL_FILE,
+            INT8_ARCHIVE_BYTES,
+            INT8_EXTRACTED_BYTES,
+            INT8_MIN_BYTES,
+            INT8_MODEL_SHA256,
+            "Lighter (int8)");
+
+    /** Every model this build can download, default first. */
+    public static final Descriptor[] ALL = {INT8, FP32};
+
     private KokoroModel() {}
+
+    /**
+     * One downloadable model: everything the store, the engine and the panel need to know
+     * about it that is not shared with the other build.
+     */
+    public static final class Descriptor {
+
+        private final String key;
+        private final String id;
+        private final String modelFile;
+        private final long archiveBytes;
+        private final long extractedBytes;
+        private final long[] minBytes;
+        private final String sha256Model;
+        private final String label;
+
+        Descriptor(
+                String key,
+                String id,
+                String modelFile,
+                long archiveBytes,
+                long extractedBytes,
+                long[] minBytes,
+                String sha256Model,
+                String label) {
+            this.key = key;
+            this.id = id;
+            this.modelFile = modelFile;
+            this.archiveBytes = archiveBytes;
+            this.extractedBytes = extractedBytes;
+            this.minBytes = minBytes.clone();
+            this.sha256Model = sha256Model;
+            this.label = label;
+        }
+
+        /** Short key the JS layer passes around ({@code "int8"} / {@code "fp32"}). */
+        public String key() {
+            return key;
+        }
+
+        /** Directory name under {@code filesDir/kokoro/}, archive name and reported id. */
+        public String id() {
+            return id;
+        }
+
+        /** Graph file name inside the model directory. */
+        public String modelFile() {
+            return modelFile;
+        }
+
+        public long archiveBytes() {
+            return archiveBytes;
+        }
+
+        public long extractedBytes() {
+            return extractedBytes;
+        }
+
+        /** Minimum plausible size per entry of {@link #requiredFiles()}. */
+        public long[] minBytes() {
+            return minBytes.clone();
+        }
+
+        /** SHA-256 of the graph file, or null when the build is not checked by digest. */
+        public String sha256Model() {
+            return sha256Model;
+        }
+
+        /** Short human label used by the panel ("Lighter (int8)", "Full precision"). */
+        public String label() {
+            return label;
+        }
+
+        /** Where the archive is fetched from. */
+        public String downloadUrl() {
+            return KokoroModel.downloadUrl(id);
+        }
+
+        /** Archive plus unpacked tree: both exist while the archive is unpacked. */
+        public long requiredFreeBytes() {
+            return archiveBytes + extractedBytes;
+        }
+
+        /** Files that must exist (and be non-empty) inside this model's directory. */
+        public String[] requiredFiles() {
+            return new String[] {modelFile, VOICES_FILE, TOKENS_FILE, LEXICON_FILE};
+        }
+
+        /** Partially downloaded archive kept for resume, inside this model's parent. */
+        public String archivePartName() {
+            return id + ARCHIVE_PART_SUFFIX;
+        }
+
+        /** True when this descriptor is the int8 build (used for the digest and the copy). */
+        public boolean isInt8() {
+            return KEY_INT8.equals(key);
+        }
+
+        @Override
+        public String toString() {
+            return key + " (" + id + ")";
+        }
+    }
+
+    /** The archive URL for a model id. */
+    public static String downloadUrl(String modelId) {
+        return "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/"
+                + modelId + ".tar.bz2";
+    }
+
+    /**
+     * Descriptor for a key or model id, case insensitive. A null, blank or unknown value
+     * resolves to the default model ({@link #INT8}) so an old caller that knows nothing
+     * about model choice still speaks.
+     */
+    public static Descriptor forKey(String key) {
+        if (key != null) {
+            String trimmed = key.trim();
+            for (Descriptor descriptor : ALL) {
+                if (descriptor.key.equalsIgnoreCase(trimmed) || descriptor.id.equalsIgnoreCase(trimmed)) {
+                    return descriptor;
+                }
+            }
+        }
+        return INT8;
+    }
+
+    /** The other model of the pair (fp32 for int8, int8 for fp32). */
+    public static Descriptor other(Descriptor descriptor) {
+        return descriptor != null && descriptor.isInt8() ? FP32 : INT8;
+    }
 
     public static int count() {
         return VOICE_NAMES.length;
@@ -168,4 +376,21 @@ public final class KokoroModel {
         }
         return out;
     }
+
+    /** Speaker id -> speaker name, in model order (ids 0..52). */
+    public static final String[] VOICE_NAMES = {
+            "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica", "af_kore",
+            "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
+            "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael",
+            "am_onyx", "am_puck", "am_santa",
+            "bf_alice", "bf_emma", "bf_isabella", "bf_lily",
+            "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
+            "ef_dora", "em_alex", "ff_siwis",
+            "hf_alpha", "hf_beta", "hm_omega", "hm_psi",
+            "if_sara", "im_nicola",
+            "jf_alpha", "jf_gongitsune", "jf_nezumi", "jf_tebukuro", "jm_kumo",
+            "pf_dora", "pm_alex", "pm_santa",
+            "zf_xiaobei", "zf_xiaoni", "zf_xiaoxiao", "zf_xiaoyi",
+            "zm_yunjian", "zm_yunxi", "zm_yunxia", "zm_yunyang",
+    };
 }

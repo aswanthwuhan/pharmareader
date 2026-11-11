@@ -31,13 +31,21 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * io thread for many minutes, and the settings panel must still be able to ask whether the
  * model is present.
  *
- * <p>The model itself is downloaded at runtime (334 MiB) rather than shipped in the APK.
+ * <p>Two model builds are offered, and every method takes an optional {@code model}
+ * argument ({@code "int8"} or {@code "fp32"}): the int8 graph is the default for a new
+ * install because it is 114 MB instead of 310 MB and runs cooler, but an existing fp32
+ * install keeps working until the user downloads int8. Each build lives in its own
+ * directory, so both can be present at once.
+ *
+ * <p>The model itself is downloaded at runtime (132 MB or 334 MB) rather than shipped in
+ * the APK.
  */
 @CapacitorPlugin(name = "Kokoro")
 public class KokoroPlugin extends Plugin {
 
     private static final String TAG = "KokoroPlugin";
-    private static final int DEFAULT_THREADS = 4;
+    /** 2 threads: about 0.75x real time on a mid-range phone without keeping 4 cores hot. */
+    private static final int DEFAULT_THREADS = 2;
     /** Longer text is a caller bug: one ONNX call per sentence, not per chapter. */
     private static final int MAX_TEXT_CHARS = 4000;
 
@@ -53,11 +61,66 @@ public class KokoroPlugin extends Plugin {
      * older epoch resolves with {@code cancelled: true} instead of speaking stale audio.
      */
     private volatile int epoch;
-    private KokoroStore store;
+    /** One store per model build; both can be installed side by side. */
+    private final java.util.Map<String, KokoroStore> stores = new java.util.HashMap<>();
 
     @Override
     public void load() {
-        store = new KokoroStore(getContext());
+        // The stores are created on first use (they are plain file handles); this also keeps
+        // the plugin usable when getContext() is only available after load().
+    }
+
+    /** The store for one model build. */
+    private KokoroStore store(KokoroModel.Descriptor model) {
+        synchronized (stores) {
+            KokoroStore existing = stores.get(model.key());
+            if (existing != null) {
+                return existing;
+            }
+            KokoroStore created = new KokoroStore(getContext(), model);
+            stores.put(model.key(), created);
+            return created;
+        }
+    }
+
+    /**
+     * The model this call should actually use: the requested build when it is installed,
+     * otherwise the other build when <em>that</em> one is installed (an existing fp32
+     * install keeps working until the user downloads int8), otherwise the requested build
+     * so the "not downloaded" answer names the model the caller asked for.
+     */
+    private KokoroModel.Descriptor resolveDownloaded(KokoroModel.Descriptor wanted) {
+        if (store(wanted).isDownloaded()) {
+            return wanted;
+        }
+        KokoroModel.Descriptor other = KokoroModel.other(wanted);
+        return store(other).isDownloaded() ? other : wanted;
+    }
+
+    /** The model named by the call's {@code model} argument (int8 when absent or unknown). */
+    private static KokoroModel.Descriptor requested(PluginCall call) {
+        return KokoroModel.forKey(call == null ? null : call.getString("model", null));
+    }
+
+    /** The {@code models} array of {@link #status}: one entry per build, installed or not. */
+    private JSArray modelStates(KokoroModel.Descriptor active) {
+        JSArray models = new JSArray();
+        for (KokoroModel.Descriptor model : KokoroModel.ALL) {
+            KokoroStore modelStore = store(model);
+            JSObject entry = new JSObject();
+            entry.put("key", model.key());
+            entry.put("id", model.id());
+            entry.put("label", model.label());
+            entry.put("downloaded", modelStore.isDownloaded());
+            entry.put("sizeBytes", modelStore.sizeBytes());
+            entry.put("partialBytes", modelStore.partialBytes());
+            entry.put("archiveBytes", model.archiveBytes());
+            entry.put("requiredBytes", model.requiredFreeBytes());
+            entry.put("extractedBytes", model.extractedBytes());
+            entry.put("active", model.key().equals(active.key()));
+            models.put(entry);
+        }
+        return models;
     }
 
     @Override
@@ -79,26 +142,36 @@ public class KokoroPlugin extends Plugin {
     @PluginMethod
     public void status(PluginCall call) {
         try {
+            KokoroModel.Descriptor wanted = requested(call);
             statusExecutor.execute(() -> {
                 try {
                     KokoroTtsEngine engine = KokoroTtsEngine.getInstance();
+                    KokoroModel.Descriptor active = resolveDownloaded(wanted);
+                    KokoroStore store = store(active);
                     JSObject result = new JSObject();
                     result.put("downloaded", store.isDownloaded());
                     result.put("loaded", engine.isLoaded());
+                    result.put("loadedModel", engine.isLoaded() && engine.modelKey() != null
+                            ? engine.modelKey() : "");
                     result.put("sizeBytes", store.sizeBytes());
                     result.put("freeBytes", store.freeBytes());
                     result.put("partialBytes", store.partialBytes());
-                    result.put("requiredBytes", KokoroModel.REQUIRED_FREE_BYTES);
+                    result.put("requiredBytes", active.requiredFreeBytes());
                     result.put("metered", isMetered());
-                    result.put("modelId", KokoroModel.ID);
+                    result.put("model", active.key());
+                    result.put("requested", wanted.key());
+                    result.put("modelId", active.id());
+                    result.put("modelLabel", active.label());
                     result.put("modelUrl", KokoroModel.SOURCE_URL);
-                    result.put("archiveBytes", KokoroModel.ARCHIVE_BYTES);
+                    result.put("archiveBytes", active.archiveBytes());
+                    result.put("extractedBytes", active.extractedBytes());
                     result.put("attribution", KokoroModel.ATTRIBUTION);
                     result.put("sampleRate", engine.sampleRate());
-                    result.put("threads", engine.threads());
+                    result.put("threads", engine.isLoaded() ? engine.threads() : defaultThreads());
                     result.put("provider", engine.provider());
                     result.put("defaultSid", KokoroModel.DEFAULT_SID);
                     result.put("voiceCount", KokoroModel.count());
+                    result.put("models", modelStates(active));
                     call.resolve(result);
                 } catch (Throwable t) {
                     Log.e(TAG, "status failed", t);
@@ -140,13 +213,18 @@ public class KokoroPlugin extends Plugin {
             call.reject("A model download is already running", "BUSY");
             return;
         }
+        // The download is always the build the caller named, never a fallback: clicking
+        // "Download the lighter INT8 model" on a phone that still has fp32 must fetch int8.
+        KokoroModel.Descriptor wanted = requested(call);
         try {
             ioExecutor.execute(() -> {
                 try {
+                    KokoroStore store = store(wanted);
                     if (store.isDownloaded()) {
                         JSObject result = new JSObject();
                         result.put("downloaded", true);
                         result.put("sizeBytes", store.sizeBytes());
+                        result.put("model", wanted.key());
                         call.resolve(result);
                         return;
                     }
@@ -155,11 +233,13 @@ public class KokoroPlugin extends Plugin {
                         progress.put("fraction", fraction);
                         progress.put("bytes", bytesRead);
                         progress.put("totalBytes", totalBytes);
+                        progress.put("model", wanted.key());
                         notifyListeners("downloadProgress", progress);
                     });
                     JSObject result = new JSObject();
                     result.put("downloaded", true);
                     result.put("sizeBytes", size);
+                    result.put("model", wanted.key());
                     call.resolve(result);
                 } catch (OutOfMemoryError e) {
                     Log.e(TAG, "download ran out of memory", e);
@@ -190,14 +270,24 @@ public class KokoroPlugin extends Plugin {
                     "BUSY");
             return;
         }
+        // Only the named build is removed; the other one keeps working.
+        KokoroModel.Descriptor wanted = requested(call);
         try {
             ioExecutor.execute(() -> {
                 try {
-                    KokoroTtsEngine.getInstance().release();
+                    KokoroTtsEngine engine = KokoroTtsEngine.getInstance();
+                    KokoroStore store = store(wanted);
+                    // Unloading is global, so only do it when the removed model is the loaded
+                    // one — deleting fp32 while int8 is in memory should not cost a reload.
+                    if (store.modelDir().getAbsolutePath().equals(engine.modelDirPath())) {
+                        engine.release();
+                    }
                     store.delete();
                     JSObject result = new JSObject();
                     result.put("downloaded", false);
                     result.put("sizeBytes", 0L);
+                    result.put("model", wanted.key());
+                    result.put("stillDownloaded", resolveDownloaded(wanted).key());
                     call.resolve(result);
                 } catch (Throwable t) {
                     Log.e(TAG, "delete failed", t);
@@ -213,25 +303,29 @@ public class KokoroPlugin extends Plugin {
 
     @PluginMethod
     public void load(PluginCall call) {
-        Integer requested = call.getInt("threads", null);
+        Integer threadsArg = call.getInt("threads", null);
         boolean debug = Boolean.TRUE.equals(call.getBoolean("debug", Boolean.FALSE));
-        int threads = requested == null || requested <= 0 ? defaultThreads() : requested;
+        int threads = threadsArg == null || threadsArg <= 0 ? defaultThreads() : threadsArg;
         String provider = call.getString("provider", KokoroTtsEngine.DEFAULT_PROVIDER);
+        KokoroModel.Descriptor wanted = requested(call);
         try {
             synthExecutor.execute(() -> {
                 try {
+                    KokoroModel.Descriptor active = resolveDownloaded(wanted);
+                    KokoroStore store = store(active);
                     if (!store.isDownloaded()) {
                         safeReject(call, "The Kokoro model is not downloaded yet", "NOT_DOWNLOADED");
                         return;
                     }
                     KokoroTtsEngine engine = KokoroTtsEngine.getInstance();
-                    engine.load(store.modelDir(), threads, debug, provider);
+                    engine.load(store.modelDir(), active, threads, debug, provider);
                     JSObject result = new JSObject();
                     result.put("loaded", true);
                     result.put("threads", engine.threads());
                     result.put("provider", engine.provider());
                     result.put("sampleRate", engine.sampleRate());
                     result.put("voiceCount", engine.voiceCount());
+                    result.put("model", active.key());
                     call.resolve(result);
                 } catch (OutOfMemoryError e) {
                     Log.e(TAG, "load ran out of memory", e);
@@ -309,6 +403,7 @@ public class KokoroPlugin extends Plugin {
         float speed = speedArg == null || speedArg <= 0f ? 1.0f : speedArg;
         Integer threadsArg = call.getInt("threads", null);
         final int myEpoch = epoch;
+        KokoroModel.Descriptor wanted = requested(call);
 
         try {
             synthExecutor.execute(() -> {
@@ -318,7 +413,13 @@ public class KokoroPlugin extends Plugin {
                 }
                 try {
                     KokoroTtsEngine engine = KokoroTtsEngine.getInstance();
-                    if (!engine.isLoaded()) {
+                    KokoroModel.Descriptor active = resolveDownloaded(wanted);
+                    KokoroStore store = store(active);
+                    String dir = store.modelDir().getAbsolutePath();
+                    // Reload when nothing is loaded or when the other model is in memory: the
+                    // engine keeps one session, and speaking int8 audio from an fp32 session
+                    // (or the reverse) is not what the caller asked for.
+                    if (!engine.isLoaded() || !dir.equals(engine.modelDirPath())) {
                         if (!store.isDownloaded()) {
                             safeReject(call, "The Kokoro model is not downloaded yet",
                                     "NOT_DOWNLOADED");
@@ -326,7 +427,8 @@ public class KokoroPlugin extends Plugin {
                         }
                         int threads = threadsArg == null || threadsArg <= 0
                                 ? defaultThreads() : threadsArg;
-                        engine.load(store.modelDir(), threads, false);
+                        engine.load(store.modelDir(), active, threads, false,
+                                KokoroTtsEngine.DEFAULT_PROVIDER);
                     }
                     // In-memory WAV bytes only: nothing is written to disk (the JS player builds a
                     // blob URL from wavBase64), so there is no file to clean up afterwards.
@@ -346,6 +448,7 @@ public class KokoroPlugin extends Plugin {
                     result.put("rtf", synth.rtf);
                     result.put("elapsedMs", synth.elapsedMs);
                     result.put("bytes", (long) synth.wav.length);
+                    result.put("model", active.key());
                     result.put("wavBase64", Base64.encodeToString(synth.wav, Base64.NO_WRAP));
                     call.resolve(result);
                 } catch (OutOfMemoryError e) {
@@ -381,7 +484,9 @@ public class KokoroPlugin extends Plugin {
 
     private static int defaultThreads() {
         int cores = Runtime.getRuntime().availableProcessors();
-        return Math.max(2, Math.min(DEFAULT_THREADS, cores));
+        // No floor of 2: one thread is the coolest option the panel offers, and on a
+        // single-core phone it is the only honest default.
+        return Math.max(1, Math.min(DEFAULT_THREADS, cores));
     }
 
     private static void resolveCancelled(PluginCall call) {

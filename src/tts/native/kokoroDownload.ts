@@ -7,10 +7,55 @@
  */
 import type { KokoroStage } from './kokoroFailure';
 
-/** 334 MiB archive of `kokoro-multi-lang-v1_0` (matches KokoroModel.ARCHIVE_BYTES). */
+/** The two builds of the model the native plugin can install. */
+export type KokoroModelKey = 'int8' | 'fp32';
+export const KOKORO_MODEL_KEYS: readonly KokoroModelKey[] = ['int8', 'fp32'];
+
+/** What the plugin's `status()` says about one model build. */
+export interface KokoroModelState {
+  key: string;
+  id?: string;
+  label?: string;
+  downloaded: boolean;
+  sizeBytes?: number;
+  partialBytes?: number;
+  archiveBytes?: number;
+  requiredBytes?: number;
+  extractedBytes?: number;
+  active?: boolean;
+}
+
+/**
+ * Archive sizes as a fallback only: on the device the numbers come from the Java
+ * descriptor (`KokoroModel.ARCHIVE_BYTES` / `INT8_ARCHIVE_BYTES`) through `status()`.
+ * These constants keep standalone renders (tests, the browser build) honest.
+ */
+/** 126 MiB int8 archive of `kokoro-int8-multi-lang-v1_0`. */
+export const KOKORO_INT8_ARCHIVE_BYTES = 132_353_410;
+/** 334 MiB fp32 archive of `kokoro-multi-lang-v1_0` (matches KokoroModel.ARCHIVE_BYTES). */
 export const KOKORO_ARCHIVE_BYTES = 349_886_476;
-/** Archive plus unpacked model: both exist while the archive is being unpacked (~734 MiB). */
+/** fp32 archive plus unpacked model: both exist while the archive is being unpacked (~734 MiB). */
 export const KOKORO_REQUIRED_BYTES = 769_886_476;
+/** int8 archive plus unpacked model (~190 MiB extracted, with head-room). */
+export const KOKORO_INT8_REQUIRED_BYTES = KOKORO_INT8_ARCHIVE_BYTES + 200_000_000;
+
+/** One model's entry from `status().models`, or undefined when the plugin did not send it. */
+export function modelState(
+  models: KokoroModelState[] | undefined,
+  key: KokoroModelKey
+): KokoroModelState | undefined {
+  return models?.find((model) => model.key === key);
+}
+
+/** Archive size of a model: from the descriptor when the plugin sent it, else the fallback. */
+export function modelArchiveBytes(
+  models: KokoroModelState[] | undefined,
+  key: KokoroModelKey
+): number {
+  const reported = modelState(models, key)?.archiveBytes;
+  if (reported && Number.isFinite(reported) && reported > 0) return reported;
+  return key === 'int8' ? KOKORO_INT8_ARCHIVE_BYTES : KOKORO_ARCHIVE_BYTES;
+}
 
 export function formatBytes(bytes: number | undefined): string {
   if (bytes === undefined || !Number.isFinite(bytes) || bytes <= 0) return '0 MB';
@@ -62,9 +107,13 @@ export function storageWarning(
 }
 
 /** The mobile-data warning shown before a download, or null when it does not apply. */
-export function meteredWarning(metered: boolean | undefined, downloaded: boolean): string | null {
+export function meteredWarning(
+  metered: boolean | undefined,
+  downloaded: boolean,
+  archiveBytes: number = KOKORO_ARCHIVE_BYTES
+): string | null {
   if (!metered || downloaded) return null;
-  return `334 MB download — use Wi-Fi. On mobile data this can use a large part of a data plan.`;
+  return `${formatBytes(archiveBytes)} download — use Wi-Fi. On mobile data this can use a large part of a data plan.`;
 }
 
 /**
