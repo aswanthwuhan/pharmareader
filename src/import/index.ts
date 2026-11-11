@@ -90,7 +90,7 @@ async function parseFile(
       });
       // Under ~50 characters per page there is no real text layer: a scan.
       const warning =
-        parsed.charsPerPage < 50 ? 'Looks scanned — OCR not supported yet' : undefined;
+        parsed.charsPerPage < 50 ? 'Looks scanned — OCR not supported yet' : parsed.modelNote;
       return { doc: parsed.doc, warning, layout: parsed.layout };
     }
 
@@ -275,6 +275,8 @@ export interface ReanalyseResult {
   layout: 'model' | 'heuristic';
   /** Pages the model actually laid out; the rest were plain enough for the text rules. */
   modelPages: number;
+  /** Why the model did not lay out every page it was asked for, when it did not. */
+  modelNote?: string;
   sentencesBefore: number;
   sentencesAfter: number;
   /** Highlights whose text was found again. */
@@ -339,6 +341,7 @@ export async function reanalyseBook(bookId: string, onProgress?: (note: string) 
   const result: ReanalyseResult = {
     layout: parsed.layout,
     modelPages: parsed.modelPages,
+    modelNote: parsed.modelNote,
     sentencesBefore: before.flat.length,
     sentencesAfter: after.flat.length,
     highlightsKept: 0,

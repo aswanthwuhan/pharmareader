@@ -81,7 +81,12 @@ export function layoutParagraphs(
         ? [linesToParagraph(pageNumber, lines)]
         : linesToParagraphs(pageNumber, lines, pageWidth, pitch, measure);
     for (const part of parts) {
-      part.kind = kind;
+      // A picture box drawn too large takes the paragraph beside it with it, and
+      // the voice then skips that paragraph as part of the figure. Labels inside
+      // a diagram are short; running text that fills the measure is prose.
+      // On a page that is mostly picture the measure is a caption's width, which
+      // a chart legend would fill; half the sheet is the least a text line spans.
+      part.kind = kind === 'figure' && isProse(part, Math.max(measure, pageWidth * 0.5)) ? 'p' : kind;
       paragraphs.push(part);
     }
   }
@@ -291,6 +296,13 @@ function columnOf(box: LayoutBox, narrow: LayoutBox[], pageWidth: number): numbe
   }
   const own = columns.filter((edge) => edge <= box.x + tolerance / 2).length - 1;
   return Math.max(0, own);
+}
+
+/** Two or more lines that fill most of the measure, and a paragraph's worth of text. */
+function isProse(paragraph: PdfParagraph, measure: number): boolean {
+  if (paragraph.text.length < 150) return false;
+  const wide = itemsToLines(paragraph.spans.map((span) => span.item)).filter((line) => line.w >= measure * 0.6);
+  return wide.length >= 2;
 }
 
 function hasWords(text: string): boolean {

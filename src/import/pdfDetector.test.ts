@@ -7,7 +7,13 @@ import { parsePdf } from './pdf';
 
 // A model that is "installed": the real one needs a browser, a worker and 32 MB.
 const detector = vi.hoisted(() => ({ detect: vi.fn(), dispose: vi.fn() }));
-vi.mock('./layout/detector', () => ({ createLayoutDetector: async () => detector }));
+const start = vi.hoisted(() => ({ error: null as Error | null }));
+vi.mock('./layout/detector', () => ({
+  createLayoutDetector: async () => {
+    if (start.error) throw start.error;
+    return detector;
+  },
+}));
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const NMC_PDF = resolve(HERE, '__fixtures__/nmc-md-pharmacology.pdf');
@@ -25,6 +31,7 @@ function recordedPage12(width: number, height: number): LayoutBox[] {
 }
 
 beforeEach(() => {
+  start.error = null;
   detector.detect.mockReset();
   detector.dispose.mockReset();
 });
@@ -44,6 +51,19 @@ describe('parsePdf with the layout model installed', () => {
     expect(detector.dispose).toHaveBeenCalledTimes(1);
     expect(parsed.layout).toBe('heuristic');
     expect(parsed.modelPages).toBe(0);
+    // The fall back is said out loud, not left to look like a model that does nothing.
+    expect(parsed.modelNote).toMatch(/layout model failed on \d+ pages?/);
+  });
+
+  it('says why when the installed model will not start, and still imports the book', { timeout: 120_000 }, async () => {
+    start.error = new Error('protobuf parsing failed');
+
+    const parsed = await parsePdf(read(NMC_PDF), 'nmc');
+
+    expect(parsed.layout).toBe('heuristic');
+    expect(parsed.doc.chapters.length).toBeGreaterThan(0);
+    expect(parsed.modelNote).toContain('could not start');
+    expect(parsed.modelNote).toContain('protobuf parsing failed');
   });
 
   it('turns the regions of a table page into one table block of the saved document', { timeout: 120_000 }, async () => {

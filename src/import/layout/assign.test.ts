@@ -218,6 +218,36 @@ describe('layoutParagraphs', () => {
     expect(paragraphs[0].text).toBe('1 10 20 2 11 21 3 12 22');
   });
 
+  it('keeps a paragraph the model boxed in with a picture, and still skips the labels of a diagram', () => {
+    const page = { width: 400, height: 800 };
+    const words = 'the clinician must determine the dose that most closely achieves this goal'.split(' ');
+    // Four full lines of running text, then two short labels of a diagram, all inside one image box.
+    const prose = [0, 1, 2, 3].flatMap((row) => items(words.slice(0, 8), 20, 100 + row * 20));
+    const labels = [...items(['Input'], 150, 300), ...items(['Elimination'], 150, 360)];
+    const boxes = [box('image', 10, 90, 380, 300)];
+
+    const paragraphs = layoutParagraphs(1, page.width, page.height, [...prose, ...labels], boxes, { pitch: 20, measure: 360 });
+
+    expect(paragraphs.filter((paragraph) => paragraph.kind === 'p')).toHaveLength(1);
+    expect(paragraphs.filter((paragraph) => paragraph.kind === 'p')[0].text).toContain('the clinician must determine');
+    expect(paragraphs.filter((paragraph) => paragraph.kind === 'figure').map((paragraph) => paragraph.text)).toEqual([
+      'Input',
+      'Elimination',
+    ]);
+  });
+
+  it('does not take a chart legend for prose on a page whose only text is a narrow caption', () => {
+    const page = { width: 400, height: 800 };
+    const words = 'placebo low dose medium dose high dose'.split(' ');
+    // Six legend lines, 150 pt wide: wider than the 100 pt caption measure, under half the sheet.
+    const legend = [0, 1, 2, 3, 4, 5].flatMap((row) => items(words.slice(0, 4), 40, 100 + row * 20, 38));
+    const boxes = [box('chart', 10, 90, 380, 300)];
+
+    const paragraphs = layoutParagraphs(1, page.width, page.height, legend, boxes, { pitch: 20, measure: 100 });
+
+    expect(paragraphs.every((paragraph) => paragraph.kind === 'figure')).toBe(true);
+  });
+
   it('labels a caption region as a caption', () => {
     const page = { width: 400, height: 800 };
     const items_ = items(['Fig.', '2', 'Effect', 'of', 'venom'], 20, 300);

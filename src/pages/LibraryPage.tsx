@@ -309,7 +309,7 @@ export default function LibraryPage() {
         if (warning) {
           setWarnings((current) => [
             ...current,
-            { file: file.name, message: warning, scanned: /scanned/i.test(warning) },
+            { file: file.name, message: warning, scanned: warning.startsWith('Looks scanned') },
           ]);
         }
         if (files.length === 1 && !warning) navigate(`/read/${result.bookId}`);

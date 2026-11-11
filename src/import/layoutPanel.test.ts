@@ -59,4 +59,10 @@ describe('describeRun', () => {
     expect(describeRun(3, 0, 1, totals())).toContain('Re-analysed 2 of 3 PDFs');
     expect(describeRun(3, 0, 1, totals())).toContain('1 could not be read');
   });
+
+  it('ends with the reason the model fell short, when there is one', () => {
+    const note = 'The layout model failed on 2 pages; those pages were read with the text layout only.';
+    expect(describeRun(1, 0, 0, totals({ modelPages: 5, modelNote: note })).endsWith(note)).toBe(true);
+    expect(describeRun(1, 1, 0, totals({ modelPages: 5 }))).not.toContain('layout model failed');
+  });
 });

@@ -48,6 +48,12 @@ export interface PdfParseResult {
   layout: 'model' | 'heuristic';
   /** Pages the model laid out; 0 with `model` means no page needed it. */
   modelPages: number;
+  /**
+   * Set when the model was installed and wanted but did not lay out every page
+   * that asked for it, in words the reader can be shown. A silent fall back to
+   * the text layout looks exactly like a model that does not work.
+   */
+  modelNote?: string;
 }
 
 export async function parsePdf(
@@ -64,7 +70,14 @@ export async function parsePdf(
     const pages: PdfPage[] = [];
     const pageItems: PdfTextItem[][] = [];
     const pageBoxes: LayoutBox[][] = [];
-    detector = await layoutDetector();
+    let modelNote: string | undefined;
+    try {
+      detector = await layoutDetector();
+    } catch (error) {
+      // A machine without WebAssembly, or a corrupt download: read the text as
+      // before rather than failing the whole import — and say so.
+      modelNote = `The layout model could not start, so this PDF was read with the text layout only (${reason(error)}).`;
+    }
     let misses = 0;
     let failed = 0;
 
@@ -168,6 +181,11 @@ export async function parsePdf(
       // A page the model could not read was laid out from the text: say so, and
       // the book stays on offer for re-analysis.
       layout: modelStayed && failed === 0 ? 'model' : 'heuristic',
+      modelNote:
+        modelNote ??
+        (failed
+          ? `The layout model failed on ${failed} ${failed === 1 ? 'page' : 'pages'}${modelStayed ? '' : ' and was stopped'}; ${modelStayed ? (failed === 1 ? 'that page was' : 'those pages were') : 'the rest of this PDF was'} read with the text layout only.`
+          : undefined),
       modelPages: pageBoxes.filter((boxes) => boxes.length > 0).length,
     };
   } finally {
@@ -179,15 +197,17 @@ export async function parsePdf(
 
 /** The detector, when the setting allows it and the model is installed. */
 async function layoutDetector(): Promise<PageLayoutDetector | null> {
-  const mode = await getSetting<LayoutMode>('import.layout', 'auto');
+  // A settings read that fails is not a model that failed: fall back to the default.
+  const mode = await getSetting<LayoutMode>('import.layout', 'auto').catch(() => 'auto' as LayoutMode);
   if (mode === 'heuristic') return null;
-  try {
-    return await createLayoutDetector();
-  } catch {
-    // A machine without WebAssembly, or a corrupt download: read the text as
-    // before rather than failing the whole import.
-    return null;
-  }
+  // Null when the model is not downloaded; a model that is there and will not
+  // start throws, and the caller reports it.
+  return createLayoutDetector();
+}
+
+function reason(error: unknown): string {
+  const text = (error instanceof Error ? error.message : String(error)).trim().replace(/[.\s]+$/, '');
+  return text || 'no reason given';
 }
 
 /**

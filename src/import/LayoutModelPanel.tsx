@@ -214,6 +214,7 @@ export default function LayoutModelPanel() {
         totals.highlightsKept += result.highlightsKept;
         totals.highlightsUnlinked += result.highlightsUnlinked;
         totals.modelPages += result.modelPages;
+        totals.modelNote ??= result.modelNote;
         totals.bookmarksKept += result.bookmarksKept;
         totals.bookmarksMoved += result.bookmarksMoved;
         totals.positionKept &&= result.positionKept;
@@ -473,7 +474,8 @@ export function describeRun(books: number, modelBooks: number, failed: number, t
   if (!totals.positionKept) parts.push('a reading position was moved to the nearest text that is still there');
   if (failed > 0) parts.push(`${failed} could not be read`);
 
-  return `${parts.join('; ')}.`;
+  // The reason the model fell short, in its own sentence: the summary above only says that it did.
+  return `${parts.join('; ')}.${totals.modelNote ? ` ${totals.modelNote}` : ''}`;
 }
 
 function messageOf(error: unknown): string {
