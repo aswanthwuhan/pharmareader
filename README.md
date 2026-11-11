@@ -1,5 +1,7 @@
 # PharmaReader
 
+**[Open PharmaReader](https://aswanthwuhan.github.io/pharmareader/)** · [Downloads](https://github.com/aswanthwuhan/pharmareader/releases) · [About the creator and other tools](https://github.com/aswanthwuhan/aswanthwuhan)
+
 Offline-first PWA for MD Pharmacology study: import your own PDF/EPUB/DOCX/text, read with
 listen-along TTS, highlight, and review FSRS flashcards mapped to the NMC syllabus. Files,
 highlights and cards live in IndexedDB only — no accounts, no backend. GPL-3.0.
