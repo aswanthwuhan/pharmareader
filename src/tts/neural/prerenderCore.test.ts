@@ -225,6 +225,17 @@ describe('runPrerender', () => {
     expect(expand).toHaveBeenCalledWith('two', 'pocket');
   });
 
+  it('puts the engine cache variant in the key, matching playback', async () => {
+    // Kokoro's precision changes the sound, so the pre-render must key the same way
+    // the player does or playback would never find these clips.
+    const engine = { ...fakeEngine(), id: 'kokoro' as const, cacheVariant: () => 'q8' };
+    const cacheKey = vi.fn(async () => 'key');
+
+    await runPrerender(engine, [items[0]!], { voiceId: 'af_heart', rate: 1 }, undefined, fakeDeps({ cacheKey }));
+
+    expect(cacheKey).toHaveBeenCalledWith('expanded:one', 'kokoro', 'af_heart@q8', 1);
+  });
+
   it('refuses engines that cannot synthesize', async () => {
     const engine = { ...fakeEngine(), synthesize: undefined } as unknown as TtsEngine;
     await expect(runPrerender(engine, items, {}, undefined, fakeDeps())).rejects.toThrow(/cannot pre-render/);

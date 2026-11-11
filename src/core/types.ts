@@ -217,4 +217,10 @@ export interface TtsEngine {
   resume(): void;
   /** Optional: render to audio blob (for cache/pre-render). */
   synthesize?(text: string, opts: { voiceId?: string; rate: number }): Promise<Blob>;
+  /**
+   * Optional: extra audio-cache identity for a choice that changes the sound without
+   * changing the voice id — Kokoro's weight precision (fp32 vs the int8 q8 build).
+   * Absent or undefined: the voice id alone identifies the clip.
+   */
+  cacheVariant?(): string | undefined | Promise<string | undefined>;
 }

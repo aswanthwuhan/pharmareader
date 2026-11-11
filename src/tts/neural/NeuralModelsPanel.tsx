@@ -7,6 +7,7 @@ import { resetDownload, startDownload, useDownload, type DownloadState } from '.
 import { measureRtf, rtfSettingKey } from './benchmark';
 import { copyText } from './clipboard';
 import {
+  DEFAULT_KOKORO_DTYPE,
   DEFAULT_KOKORO_VOICE,
   KOKORO_DTYPE_SETTING,
   KOKORO_VOICE_SETTING,
@@ -16,7 +17,14 @@ import {
 } from './kokoro';
 import type { KokoroDtype } from './kokoroProtocol';
 import KokoroNativePanel from './KokoroNativePanel';
-import { isModelDownloaded, isModelReadyFlag, kokoroSizeMb, deleteModel, POCKET_SIZE_MB } from './models';
+import {
+  isKokoroDtypeDownloaded,
+  isModelDownloaded,
+  isModelReadyFlag,
+  kokoroSizeMb,
+  deleteModel,
+  POCKET_SIZE_MB,
+} from './models';
 import { describeNeuralError, type NeuralErrorInfo } from './neuralError';
 import { POCKET_RATE_MAX, POCKET_RATE_MIN, pocketEngine, resetPocketEngine } from './pocket';
 import styles from './NeuralModelsPanel.module.css';
@@ -36,7 +44,9 @@ type ModelState =
 const DTYPE_LABELS: Record<KokoroDtype, string> = {
   fp32: 'fp32 — best quality, ~320 MB',
   fp16: 'fp16 — ~170 MB',
-  q8: 'q8 — smallest, ~90 MB (can be slower on some CPUs)',
+  // The int8 export is the one that played gibberish: say so instead of selling it
+  // as the small option only.
+  q8: 'q8 — smallest, ~90 MB (lower quality — may sound garbled)',
 };
 
 const POCKET_ATTRIBUTION = 'Pocket TTS by Kyutai — model weights CC-BY-4.0.';
@@ -65,7 +75,9 @@ function modelState(
     };
   }
   if (failure) return { kind: 'error', info: failure };
-  if (download.status === 'done' || available === 'ready') return { kind: 'ready' };
+  // `available` is the per-precision answer. The store's "done" only says that *a*
+  // download of this model finished, so it must not stand in for the selected weights.
+  if (available === 'ready') return { kind: 'ready' };
   if (available === 'loading') return { kind: 'loading' };
   return { kind: 'absent' };
 }
@@ -311,7 +323,8 @@ export default function NeuralModelsPanel() {
   // would download into the WebView cache and could not run the native model.
   const native = useMemo(() => Capacitor.isNativePlatform(), []);
 
-  const dtype = useSetting<KokoroDtype>(KOKORO_DTYPE_SETTING, defaultDtype());
+  // fp32 everywhere by default: the int8 build is unintelligible (see kokoro.ts).
+  const dtype = useSetting<KokoroDtype>(KOKORO_DTYPE_SETTING, DEFAULT_KOKORO_DTYPE);
   const kokoroVoice = useSetting<string>(KOKORO_VOICE_SETTING, DEFAULT_KOKORO_VOICE);
   const pocketVoice = useSetting<string>('tts.pocket.voice', '');
   const pocketRtf = useSetting<number>(rtfSettingKey('pocket'), 0);
@@ -332,9 +345,6 @@ export default function NeuralModelsPanel() {
         });
       }
       if (native) return;
-      const kokoroDownloaded = await isModelDownloaded('kokoro');
-      if (!alive) return;
-      setKokoroAvailable(kokoroDownloaded ? 'ready' : 'absent');
       // Kokoro's voice list is static, so it is available without loading the model.
       void loadVoices(kokoroEngine, (voices) => {
         if (alive) setKokoroVoices(voices);
@@ -344,6 +354,20 @@ export default function NeuralModelsPanel() {
       alive = false;
     };
   }, [native]);
+
+  // "Downloaded" is per precision: the q8 weights of an older download are not the
+  // fp32 model, so switching precision must change the card, not leave it on "Ready".
+  // A finished download re-checks too: the selection may have changed while it ran.
+  useEffect(() => {
+    if (native) return;
+    let alive = true;
+    void isKokoroDtypeDownloaded(dtype).then((downloaded) => {
+      if (alive) setKokoroAvailable(downloaded ? 'ready' : 'absent');
+    });
+    return () => {
+      alive = false;
+    };
+  }, [native, dtype, kokoroDownload.status]);
 
   // A download may finish while the panel is unmounted (that is the point of the
   // store). The next mount's disk check is asynchronous, so react to the store
@@ -356,7 +380,7 @@ export default function NeuralModelsPanel() {
 
   useEffect(() => {
     if (native || kokoroDownload.status !== 'done') return;
-    setKokoroAvailable('ready');
+    // "Ready" comes from the per-precision disk check above; this only refills voices.
     void loadVoices(kokoroEngine, setKokoroVoices);
   }, [kokoroDownload.status, native]);
 
@@ -475,7 +499,12 @@ export default function NeuralModelsPanel() {
           voices={kokoroVoices}
           voiceId={kokoroVoice}
           onVoiceChange={(voiceId) => void setKokoroVoice(voiceId)}
-          onDownload={() => download('kokoro', kokoroEngine, setKokoroFailure)}
+          onDownload={() => {
+            // A loaded engine answers prepare() from memory with the *other* precision,
+            // and the card would then report a download that never ran.
+            resetKokoroEngine();
+            download('kokoro', kokoroEngine, setKokoroFailure);
+          }}
           onDelete={() =>
             void remove('kokoro', resetKokoroEngine, setKokoroAvailable, setKokoroVoices, setKokoroFailure)
           }
@@ -523,8 +552,4 @@ async function loadVoices(engine: TtsEngine, setVoices: (voices: TtsVoice[]) => 
   } catch {
     /* listing voices is best-effort */
   }
-}
-
-function defaultDtype(): KokoroDtype {
-  return typeof navigator !== 'undefined' && 'gpu' in navigator ? 'fp32' : 'q8';
 }

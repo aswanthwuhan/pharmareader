@@ -5,6 +5,7 @@ import {
   POCKET_CACHE,
   TRANSFORMERS_CACHE,
   deleteModel,
+  isKokoroDtypeDownloaded,
   isModelDownloaded,
   kokoroSizeMb,
 } from './models';
@@ -67,6 +68,45 @@ describe('models download bookkeeping', () => {
 
     buckets[TRANSFORMERS_CACHE].push(`${kokoro}/onnx/model_quantized.onnx`);
     await expect(isModelDownloaded('kokoro')).resolves.toBe(true);
+  });
+
+  it('counts only the chosen precision as a Kokoro download', async () => {
+    // The old default was q8, so an existing reader has the int8 weights on disk and
+    // `ready` set. fp32 is the new default: those files are not that model, and
+    // claiming them made the first Play start a silent 320 MB download (or fail
+    // offline). Cache Storage is the only place that knows the difference.
+    const kokoro = 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX';
+    const { storage, buckets } = fakeCacheStorage({
+      [TRANSFORMERS_CACHE]: [
+        `${kokoro}/config.json`,
+        `${kokoro}/tokenizer.json`,
+        `${kokoro}/onnx/model_quantized.onnx`,
+      ],
+      [KOKORO_VOICES_CACHE]: [],
+    });
+    vi.stubGlobal('caches', storage);
+    await setSetting('tts.model.kokoro.ready', true);
+
+    await expect(isKokoroDtypeDownloaded('q8')).resolves.toBe(true);
+    await expect(isKokoroDtypeDownloaded('fp32')).resolves.toBe(false);
+    await expect(isKokoroDtypeDownloaded('fp16')).resolves.toBe(false);
+
+    buckets[TRANSFORMERS_CACHE].push(`${kokoro}/onnx/model_fp16.onnx`);
+    await expect(isKokoroDtypeDownloaded('fp16')).resolves.toBe(true);
+    await expect(isKokoroDtypeDownloaded('fp32')).resolves.toBe(false);
+
+    buckets[TRANSFORMERS_CACHE].push(`${kokoro}/onnx/model.onnx`);
+    await expect(isKokoroDtypeDownloaded('fp32')).resolves.toBe(true);
+    await setSetting('tts.model.kokoro.ready', false);
+  });
+
+  it('cannot tell precisions apart when Cache Storage is unreadable', async () => {
+    // Private mode: the flag is the only signal, so it stands for its own download.
+    vi.stubGlobal('caches', undefined);
+    await setSetting('tts.model.kokoro.ready', true);
+    await expect(isKokoroDtypeDownloaded('fp32')).resolves.toBe(true);
+    await setSetting('tts.model.kokoro.ready', false);
+    await expect(isKokoroDtypeDownloaded('q8')).resolves.toBe(false);
   });
 
   it('a partial Pocket download is not "downloaded"', async () => {

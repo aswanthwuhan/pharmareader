@@ -1,5 +1,6 @@
 import type { AudioCacheRecord, TtsEngine } from '../core/types';
 import { cacheKey, getAudio, putAudio, wavDurationMs } from './cache';
+import { cacheVoiceId } from './cacheIdentity';
 import { expand } from './lexicon';
 import { estimateTimings, wordTimings, type WordTiming } from './align';
 
@@ -275,7 +276,9 @@ export function createPlayer(options: PlayerOptions): Player {
     const original = item.spoken ?? item.text;
     const text = (await expand(original, engine.id)) || original;
     if (gen !== generation) throw new AbortPlayback();
-    const key = await cacheKey(text, engine.id, options.voiceId, options.rate);
+    // Kokoro's precision is part of the identity: q8 and fp32 clips must not mix.
+    const voiceId = await cacheVoiceId(engine, options.voiceId);
+    const key = await cacheKey(text, engine.id, voiceId, options.rate);
     if (gen !== generation) throw new AbortPlayback();
 
     const cached = clips.get(key);

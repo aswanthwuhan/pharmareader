@@ -4,6 +4,7 @@
  * `prerender.ts` binds the real `../cache` and `../lexicon` modules.
  */
 import type { AudioCacheRecord, TtsEngine } from '../../core/types';
+import { cacheVoiceId } from '../cacheIdentity';
 
 export interface PrerenderItem {
   id: string;
@@ -99,7 +100,10 @@ export async function runPrerender(
           report.aborted = true;
           break;
         }
-        const key = await deps.cacheKey(text, engine.id, opts.voiceId, rate);
+        // Must match the player's key exactly, precision included, or the chapter
+        // pre-render would fill the cache with clips playback never looks up.
+        const voiceId = await cacheVoiceId(engine, opts.voiceId);
+        const key = await deps.cacheKey(text, engine.id, voiceId, rate);
         const cached = await deps.getAudio(key);
         if (signal?.aborted) {
           report.aborted = true;

@@ -3,16 +3,24 @@ import 'fake-indexeddb/auto';
 import { act, createElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { resetDownload } from '../downloads';
+import { setSetting } from '../../core/settings';
+import { resetDownload, startDownload } from '../downloads';
+import { KOKORO_DTYPE_SETTING } from './kokoro';
 import NeuralModelsPanel from './NeuralModelsPanel';
 import { NEURAL_STAGES, neuralError } from './neuralError';
 
 /** Lets each test choose the platform before the component renders. */
 const platform = vi.hoisted(() => ({ native: false }));
+/** The panel must unload the loaded model before fetching another precision. */
+const kokoroReset = vi.hoisted(() => vi.fn());
 
 vi.mock('@capacitor/core', () => ({
   Capacitor: { isNativePlatform: () => platform.native },
 }));
+vi.mock('./kokoro', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./kokoro')>();
+  return { ...actual, resetKokoroEngine: kokoroReset };
+});
 // The native panel has its own plugin dependencies; only its presence matters here.
 vi.mock('./KokoroNativePanel', () => ({ default: () => null }));
 
@@ -54,6 +62,7 @@ beforeEach(() => {
   pocket.prepares = 0;
   resetDownload('pocket');
   resetDownload('kokoro');
+  kokoroReset.mockClear();
 });
 
 afterEach(async () => {
@@ -61,6 +70,7 @@ afterEach(async () => {
   root = null;
   container.remove();
   platform.native = false;
+  vi.unstubAllGlobals();
 });
 
 async function renderPanel(): Promise<string> {
@@ -101,6 +111,73 @@ describe('NeuralModelsPanel', () => {
     expect(summaries).toEqual(['How this works', 'Details', 'Details']);
     // Teal belongs to the row's one primary action, not to three download buttons.
     expect(container.querySelectorAll('.btn-primary')).toHaveLength(0);
+  });
+
+  it('offers fp32 when only the q8 weights of an older download are cached', async () => {
+    // q8 was the default before this change, so an existing reader has the int8
+    // weights on disk. They are not the fp32 model, and the card that said "Ready"
+    // made the first Play start a silent ~320 MB download.
+    const base = 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main';
+    const requests = ['config.json', 'tokenizer.json', 'onnx/model_quantized.onnx'].map((name) => ({
+      url: `${base}/${name}`,
+    }));
+    vi.stubGlobal('caches', {
+      has: async (name: string) => name === 'transformers-cache',
+      open: async () => ({ keys: async () => requests }),
+    });
+    await setSetting(KOKORO_DTYPE_SETTING, 'fp32');
+
+    const text = await renderPanel();
+    const downloadButtons = () =>
+      [...container.querySelectorAll('button')].filter((button) => button.textContent === 'Download');
+    expect(downloadButtons()).toHaveLength(2); // Pocket has nothing, Kokoro has q8
+    expect(text).not.toContain('Ready');
+
+    // Choosing q8 makes those same files the model that will run, on the download
+    // the reader already paid for.
+    await act(async () => {
+      await setSetting(KOKORO_DTYPE_SETTING, 'q8');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    });
+    expect(downloadButtons()).toHaveLength(1);
+    expect(container.textContent).toContain('Ready');
+
+    await setSetting(KOKORO_DTYPE_SETTING, 'fp32');
+  });
+
+  it('does not take an older download for the weights the selection asks for', async () => {
+    // The download store is keyed by model, not by precision: a finished q8 download
+    // used to keep the card on "Ready" after switching to fp32, and offered no way to
+    // fetch the fp32 weights at all.
+    const base = 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main';
+    vi.stubGlobal('caches', {
+      has: async (name: string) => name === 'transformers-cache',
+      open: async () => ({
+        keys: async () =>
+          ['config.json', 'tokenizer.json', 'onnx/model_quantized.onnx'].map((name) => ({
+            url: `${base}/${name}`,
+          })),
+      }),
+    });
+    await setSetting(KOKORO_DTYPE_SETTING, 'fp32');
+    await startDownload('kokoro', async (report) => report({ fraction: 1 }));
+
+    const text = await renderPanel();
+    const downloadButtons = () =>
+      [...container.querySelectorAll('button')].filter((button) => button.textContent === 'Download');
+    expect(downloadButtons()).toHaveLength(2); // Pocket, and Kokoro's missing fp32
+    expect(text).not.toContain('Ready');
+
+    // Asking for the missing weights unloads the model first: a loaded engine answers
+    // prepare() from memory with the old precision, and the card would then report a
+    // download that never ran.
+    await act(async () => {
+      downloadButtons()[1].click();
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    });
+    expect(kokoroReset).toHaveBeenCalled();
+
+    await setSetting(KOKORO_DTYPE_SETTING, 'fp32');
   });
 
   it('replaces the web Kokoro card with the native panel on a device', async () => {

@@ -101,7 +101,7 @@ interface Spoken {
 }
 
 class FakeEngine implements TtsEngine {
-  id = 'system' as const;
+  id: TtsEngine['id'] = 'system';
   label = 'Fake';
   capabilities: TtsCapabilities = {
     streaming: true,
@@ -125,6 +125,9 @@ class FakeEngine implements TtsEngine {
 
   /** Present only for engines that can render audio. */
   synthesize?: (text: string, opts: { voiceId?: string; rate: number }) => Promise<Blob>;
+
+  /** Present only for engines whose weights change the sound (Kokoro's precision). */
+  cacheVariant?: () => string | undefined;
 
   constructor(canSynth: boolean) {
     if (canSynth) {
@@ -472,6 +475,31 @@ describe('synthesising engines', () => {
     const secondEl = FakeAudio.instances[1]!;
     await until(() => secondEl.src.startsWith('blob:'));
     expect(engine.synthTexts).toHaveLength(1);
+    second.stop();
+  });
+
+  it('renders again after the weight precision changes instead of replaying the old clip', async () => {
+    // The bug: the precision was not in the cache key, so a sentence rendered with
+    // the garbled int8 weights kept playing after the user switched to fp32.
+    const engine = new FakeEngine(true);
+    engine.id = 'kokoro';
+    let precision = 'q8';
+    engine.cacheVariant = () => precision;
+
+    const first = createPlayer({ ...baseOptions, items: [items[0]!], engine });
+    first.play();
+    const firstEl = FakeAudio.instances[0]!;
+    await until(() => firstEl.src.startsWith('blob:'));
+    firstEl.finish();
+    await until(() => engine.synthTexts.length === 1);
+
+    precision = 'fp32';
+    const second = createPlayer({ ...baseOptions, items: [items[0]!], engine });
+    second.play();
+    const secondEl = FakeAudio.instances[1]!;
+    await until(() => secondEl.src.startsWith('blob:'));
+
+    expect(engine.synthTexts).toHaveLength(2);
     second.stop();
   });
 

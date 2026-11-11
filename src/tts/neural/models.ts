@@ -20,6 +20,7 @@
  * nothing at all, with no error).
  */
 import { getSetting, setSetting } from '../../core/settings';
+import type { KokoroDtype } from './kokoroProtocol';
 export { POCKET_SIZE_MB, kokoroSizeMb } from './sizes';
 
 export const POCKET_CACHE = 'pocket-tts-js-v1';
@@ -137,6 +138,34 @@ export async function isModelComplete(id: NeuralModelId): Promise<boolean> {
 /** True when the weights are present and complete, or `prepare()` has succeeded. */
 export async function isModelDownloaded(id: NeuralModelId): Promise<boolean> {
   return (await isModelReadyFlag(id)) || (await isModelComplete(id));
+}
+
+/**
+ * The weights file each precision caches. transformers.js names the export after the
+ * dtype (`DEFAULT_DTYPE_SUFFIX_MAPPING`): fp32 → `model.onnx`, fp16 → `model_fp16.onnx`,
+ * q8 → `model_quantized.onnx`.
+ */
+const KOKORO_WEIGHTS_FILE: Record<KokoroDtype, string> = {
+  fp32: 'model.onnx',
+  fp16: 'model_fp16.onnx',
+  q8: 'model_quantized.onnx',
+};
+
+/**
+ * True when the weights of *this* precision are cached.
+ *
+ * `isModelDownloaded` accepts any `model*.onnx`, which is right for deleting the
+ * download but wrong for "is my model ready": a reader whose only download was q8
+ * (the old default) was told "Ready" after fp32 became the default, and the first
+ * Play then started a silent 320 MB download — or failed offline.
+ *
+ * Cache Storage is unreadable in private mode; there the `ready` flag is all there is,
+ * and it stands for the precision it was set with.
+ */
+export async function isKokoroDtypeDownloaded(dtype: KokoroDtype): Promise<boolean> {
+  const files = await cachedFileNames('kokoro');
+  if (files.length === 0) return isModelReadyFlag('kokoro');
+  return NEURAL_MODELS.kokoro.complete(files) && files.includes(KOKORO_WEIGHTS_FILE[dtype]);
 }
 
 /**

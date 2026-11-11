@@ -8,7 +8,7 @@
 import { getSetting, setSetting } from '../../core/settings';
 import type { SpeakEvents, TtsEngine, TtsVoice } from '../../core/types';
 import type { KokoroDevice, KokoroDtype, KokoroRequest, KokoroResponse } from './kokoroProtocol';
-import { isModelDownloaded, setModelReady } from './models';
+import { isKokoroDtypeDownloaded, setModelReady } from './models';
 import { NEURAL_STAGES, neuralError } from './neuralError';
 import { FloatPlayer } from './playback';
 import { encodeWav } from './wav';
@@ -16,6 +16,16 @@ import { encodeWav } from './wav';
 export const KOKORO_DTYPE_SETTING = 'tts.kokoro.dtype';
 export const KOKORO_VOICE_SETTING = 'tts.kokoro.voice';
 export const DEFAULT_KOKORO_VOICE = 'af_heart';
+
+/**
+ * Precision used when the user has not chosen one, on every device.
+ *
+ * It used to be q8 on WASM: `onnx/model_quantized.onnx` is the int8 export of the
+ * same graph, and its waveform is not English — the emulator played "another
+ * language" (garbled) while the fp32 weights were clean. The ~320 MB download (230 MB more than q8) is
+ * the price of a voice you can understand; q8 stays available in Settings.
+ */
+export const DEFAULT_KOKORO_DTYPE: KokoroDtype = 'fp32';
 
 /** Keep in sync with `VOICES` in kokoro-js (v1.2.1). */
 const KOKORO_VOICES: TtsVoice[] = [
@@ -93,6 +103,12 @@ class KokoroEngine implements TtsEngine {
   private voiceIds: string[] = KOKORO_VOICES.map((voice) => voice.id);
   private nextId = 1;
   private ready = false;
+  /**
+   * Precision the clips come from: the one a finished load used, or the one the load in
+   * flight asked for; null before a load starts. The cache identity follows it (see
+   * `cacheVariant`), so a precision switch during the download cannot relabel output.
+   */
+  private dtype: KokoroDtype | null = null;
   private stopped = false;
   /** Bumped by `speak`/`stop` so a superseded utterance cannot resume playback. */
   private generation = 0;
@@ -101,7 +117,29 @@ class KokoroEngine implements TtsEngine {
     if (this.ready) return true;
     // Same reload problem as Pocket: the cached model survives the reload, the worker
     // does not. Without this the reader fell back to the system voice after every reload.
-    return isModelDownloaded('kokoro');
+    // Only *this* precision counts: the q8 files are not the fp32 model, and claiming
+    // ready for them made the first Play start a silent download of the other weights.
+    return isKokoroDtypeDownloaded(await this.precision());
+  }
+
+  /**
+   * The web build's cache identity is the voice *and* the weight precision: the same
+   * sentence at q8 and fp32 is different audio, so switching precision must not
+   * replay clips made with the other one.
+   *
+   * The loaded precision wins over the setting: the setting only takes effect on the
+   * next load, and until then the clips still come from the old weights.
+   */
+  async cacheVariant(): Promise<string> {
+    return this.precision();
+  }
+
+  /**
+   * Precision the next clip will come from: the loaded (or loading) one, else the
+   * setting that the next load will read.
+   */
+  private async precision(): Promise<KokoroDtype> {
+    return this.dtype ?? (await getSetting<KokoroDtype>(KOKORO_DTYPE_SETTING, DEFAULT_KOKORO_DTYPE));
   }
 
   async prepare(onProgress?: (fraction: number) => void): Promise<void> {
@@ -123,9 +161,10 @@ class KokoroEngine implements TtsEngine {
 
   private async init(): Promise<void> {
     const device = await usableDevice();
-    // WebGPU wants fp32 weights; WASM on phones is fastest with q8.
-    const fallback: KokoroDtype = device === 'webgpu' ? 'fp32' : 'q8';
-    const dtype = await getSetting<KokoroDtype>(KOKORO_DTYPE_SETTING, fallback);
+    const dtype = await getSetting<KokoroDtype>(KOKORO_DTYPE_SETTING, DEFAULT_KOKORO_DTYPE);
+    // Record it before the download starts: the setting may change while it runs, and
+    // from here on the identity is the precision being fetched, not what the panel says.
+    this.dtype = dtype;
 
     try {
       const worker = this.ensureWorker();
@@ -136,6 +175,9 @@ class KokoroEngine implements TtsEngine {
       try {
         await done;
       } catch (err) {
+        // The weights never loaded: forget the precision, or later clips would be keyed
+        // for a model that is not there instead of the one the next attempt reads.
+        if (this.dtype === dtype) this.dtype = null;
         // Say which build failed: "no available backend found" is only actionable
         // together with the device/dtype the worker was asked for.
         throw neuralError(
@@ -255,6 +297,7 @@ class KokoroEngine implements TtsEngine {
     this.worker?.terminate();
     this.worker = null;
     this.ready = false;
+    this.dtype = null;
     this.loading = null;
     this.progressListeners.clear();
     const init = this.pendingInit;
@@ -284,6 +327,7 @@ class KokoroEngine implements TtsEngine {
   /** Something is wrong with the worker: fail fast and allow a retry. */
   private fail(err: Error): void {
     this.ready = false;
+    this.dtype = null;
     this.loading = null;
     this.pendingInit?.reject(err);
     this.pendingInit = null;
