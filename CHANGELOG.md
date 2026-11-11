@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.2 — 2026-11-11
+Installs over 0.3.1 without losing data.
+
+**Fixed — PDF layout model**
+- An import could wait at "Analysing layout" for ever when the phone stopped the model in the background. A page now gives up after 90 seconds, loading after 60, and the import carries on with the text layout.
+- When the downloaded model cannot start, or fails on some pages, the import now says so and why, and the re-analyse summary ends with the reason. Before, the book was quietly read with the text layout.
+- A paragraph the model boxed in with a picture is read as text instead of being skipped with the figure; the labels inside a diagram are still skipped.
+
 ## 0.3.1 — 2026-11-11
 Installs over 0.3.0 without losing data.
 
