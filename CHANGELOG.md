@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.5 — 2026-11-11
+Installs over 0.3.4 without losing data.
+
+**Fixed — long sentences**
+- The end of a long sentence no longer trails off, turns into a whisper or goes missing. Kokoro in the browser, Kokoro on Android and the Pocket voice now voice a long sentence in pieces and join them, so the whole sentence is heard.
+- Sentences that were already prepared are made again once, so the old cut-off clips are replaced.
+
+**Changed — Kokoro back to the full model**
+- Android uses the full 334 MB Kokoro model again. The lighter INT8 model from 0.3.3 is gone because it did not sound right.
+- A phone that has only the INT8 files downloads the full model once, with progress. **Remove the old INT8 download (126 MB)** then frees the space.
+- Threads: 2 by default, 1 for a cooler phone, 4 with a warning that the phone gets warmer.
+- Kokoro in the browser is the full fp32 model only. The q8 and fp16 options are removed.
+
+**New — a voice picker and Test voice for every voice model**
+- The phone voice, Kokoro in the browser, Pocket and Kokoro on Android each have their own voice list, and a **Test voice** button that speaks a short sample with that voice at the current speed.
+- Android Kokoro voices have readable names instead of file names, and Pocket's voices are listed before the model is downloaded.
+
 ## 0.3.4 — 2026-11-11
 Installs over 0.3.3 without losing data.
 
