@@ -1125,14 +1125,15 @@
   }
 }
 
-/* A found passage: the same yellow the reader highlights with, washed over
-   the page so the printed words stay legible underneath. */
+/* The spoken sentence: the same yellow the reader highlights with, washed over
+   the page so the printed words stay legible underneath. The wash is the token
+   at full strength (in the dark theme it is already a 26% tint — halving it
+   again made it invisible), and a 2px ink edge is what reads on any page. */
 .rd-pdf-rect {
   position: absolute;
-  border: 1px solid var(--hl-yellow-ink);
+  border: 2px solid var(--hl-yellow-ink);
   border-radius: var(--radius-xs);
   background: var(--hl-yellow);
-  opacity: 0.5;
   mix-blend-mode: multiply;
   pointer-events: none;
 }

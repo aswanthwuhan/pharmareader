@@ -133,6 +133,14 @@ export const icons = {
       <path d="M8 18.5H4.5V15" />
     </>
   ),
+  // Width between two margins: not the four corners of `fit`, which is the full-screen button.
+  fitWidth: (
+    <>
+      <path d="M4.5 5.5v13M19.5 5.5v13" />
+      <path d="M8 12h8" />
+      <path d="m10.2 9.8-2.2 2.2 2.2 2.2M13.8 9.8l2.2 2.2-2.2 2.2" />
+    </>
+  ),
   textSmall: (
     <>
       <path d="M3.5 17.5 7.2 7.5l3.7 10" />

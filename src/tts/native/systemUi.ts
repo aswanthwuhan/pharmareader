@@ -8,7 +8,9 @@
  * On the web and desktop this falls back to `document.documentElement.requestFullscreen()`
  * where the browser allows it. Immersive mode is a preference, not a requirement, so nothing
  * here ever throws: a refusal (no user gesture, an iframe without `allowfullscreen`, an old
- * APK that predates the plugin) is logged and the page simply stays as it is.
+ * APK that predates the plugin) is logged and the page simply stays as it is. The call does
+ * report what happened, though: `false` means the platform refused, and the reader can then
+ * keep its own chrome on instead of leaving the user with no way back.
  */
 import { Capacitor, registerPlugin } from '@capacitor/core';
 
@@ -54,19 +56,31 @@ async function setWebFullscreen(on: boolean): Promise<void> {
  */
 let queue: Promise<void> = Promise.resolve();
 
-export async function setImmersive(on: boolean): Promise<void> {
-  const step = async (): Promise<void> => {
+/**
+ * Resolves `true` when the platform took the request and `false` when it refused it; it never
+ * rejects. A failed call is the difference between "the bars really are hidden" and "the app
+ * looks full screen but is not", which the reader has to know to stay usable.
+ */
+export async function setImmersive(on: boolean): Promise<boolean> {
+  const step = async (): Promise<boolean> => {
     try {
       if (isAndroid()) {
         await SystemUi.setImmersive({ on });
       } else {
         await setWebFullscreen(on);
       }
+      return true;
     } catch (error) {
       console.warn('[fullscreen] could not switch the immersive mode', error);
+      return false;
     }
   };
   const run = queue.then(step, step);
-  queue = run;
+  // The queue only has to know when the previous call has settled: whether it succeeded
+  // is the caller's business, not the next call's, so a refusal must not wedge the queue.
+  queue = run.then(
+    () => undefined,
+    () => undefined
+  );
   return run;
 }

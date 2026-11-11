@@ -11,7 +11,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../core/db';
 import { pushBackHandler } from '../core/backButton';
 import { getSetting, setSetting, useSetting } from '../core/settings';
-import type { BookRecord, Highlight } from '../core/types';
+import type { BookRecord, Highlight, PdfRect } from '../core/types';
 import { nativePlayback } from '../tts/native/playbackPlugin';
 import { setImmersive } from '../tts/native/systemUi';
 import { createPlayer, type ItemState, type Player } from '../tts/player';
@@ -78,6 +78,13 @@ const RATE_RESTART_MS = 350;
 /** How long the floating exit control stays visible after entering or a tap. */
 const IMMERSIVE_HINT_MS = 3000;
 const FULLSCREEN_KEY = 'reader.fullscreen';
+
+/**
+ * A sentence without page rectangles. Module level on purpose: a fresh `[]` on
+ * every render is a new prop identity, which would re-run the page overlay and
+ * its scroll-follow effect while the voice is not even reading.
+ */
+const NO_PDF_RECTS: PdfRect[] = [];
 
 /**
  * What the player calls the voice in her ear. Engine ids and class names mean
@@ -421,8 +428,12 @@ export default function ReaderView() {
     }
     // The platform bars go away with the reader's own: ask Android (or the
     // Fullscreen API on the web), and show the exit pill before the first tap.
-    // setImmersive never throws, but a broken WebView must not break reading.
-    void setImmersive(true).catch(() => {});
+    // setImmersive never throws, but a broken WebView must not break reading —
+    // and a refusal must not leave the reader chrome-less with no way back, so
+    // an explicit "no" puts the reader back to normal instead.
+    void setImmersive(true).then((ok) => {
+      if (ok === false) exitFullscreen();
+    });
     setChromeVisible(false);
     showExitHint();
     return () => {
@@ -1511,7 +1522,7 @@ export default function ReaderView() {
             docKey={book.id}
             file={book.fileBlob}
             page={pdfPage}
-            rects={reading?.pdfRects ?? []}
+            rects={reading?.pdfRects ?? NO_PDF_RECTS}
             fullscreen={fullscreen}
             onPageChange={(page) => {
               const next = Math.max(1, page);

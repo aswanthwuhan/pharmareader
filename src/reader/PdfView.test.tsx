@@ -33,6 +33,7 @@ const RECTS: PdfRect[] = [{ page: 1, x: 10, y: 20, w: 100, h: 30 }];
 
 let container: HTMLDivElement;
 let root: Root | null = null;
+const scrollTo = vi.fn();
 
 async function waitFor(check: () => boolean, label: string): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt += 1) {
@@ -47,15 +48,25 @@ async function waitFor(check: () => boolean, label: string): Promise<void> {
 async function renderView(
   rects: PdfRect[] = RECTS,
   file: Blob = new Blob(['%PDF-1.4']),
-  fullscreen = false
+  fullscreen = false,
+  docKey = 'book-1'
 ): Promise<void> {
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
+  await rerenderView(rects, file, fullscreen, docKey);
+}
+
+async function rerenderView(
+  rects: PdfRect[] = RECTS,
+  file: Blob = new Blob(['%PDF-1.4']),
+  fullscreen = false,
+  docKey = 'book-1'
+): Promise<void> {
   await act(async () => {
     root?.render(
       <PdfView
-        docKey="book-1"
+        docKey={docKey}
         file={file}
         page={1}
         rects={rects}
@@ -78,6 +89,12 @@ beforeEach(() => {
   pdf.cleanup.mockClear();
   pdf.destroy.mockClear();
   pdf.getDocument.mockClear();
+  scrollTo.mockClear();
+  Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+    configurable: true,
+    writable: true,
+    value: scrollTo,
+  });
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(
     () => ({}) as unknown as CanvasRenderingContext2D
   );
@@ -95,6 +112,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
   delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight;
+  delete (HTMLElement.prototype as { scrollTo?: unknown }).scrollTo;
   delete (window as { devicePixelRatio?: number }).devicePixelRatio;
 });
 
@@ -173,7 +191,7 @@ describe('PdfView', () => {
     expect(parseFloat(container.querySelector<HTMLElement>('.rd-pdf-rect')?.style.width ?? '')).toBeCloseTo(50);
   });
 
-  it('fits the whole page in full screen and returns to width when it leaves', async () => {
+  it('fits the whole page when it enters full screen and re-fits when it leaves', async () => {
     // Full screen: a phone-width, phone-height box, so the page must shrink to
     // the height instead of hanging off the bottom.
     Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 600 });
@@ -181,23 +199,93 @@ describe('PdfView', () => {
     const file = new Blob(['%PDF-1.4']);
 
     await renderView(RECTS, file, true);
-    // Fit width by default: 600pt page in 600px → scale 1, 2× bitmap.
-    await waitFor(() => canvas().width === 1200, 'fit-width paint in full screen');
-
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('[aria-label="Fit page"]')?.click();
-    });
-    // Height fit is 300/792 ≈ 0.379, which is smaller than the width fit.
-    await waitFor(() => canvas().width === 454, 'fit-page paint');
+    // Fit page by default: 300/792 ≈ 0.379 of a 600pt sheet, painted at 2×.
+    await waitFor(() => canvas().width === 454, 'fit-page paint in full screen');
     expect(canvas().height).toBe(600);
 
-    // Leaving full screen drops fit page: the box can only be width-fitted.
+    // The manual override still exists, in full screen as anywhere else.
     await act(async () => {
-      root?.render(
-        <PdfView docKey="book-1" file={file} page={1} rects={RECTS} onPageChange={() => undefined} />
-      );
+      container.querySelector<HTMLButtonElement>('[aria-label="Fit width"]')?.click();
     });
-    await waitFor(() => canvas().width === 1200, 'back to fit width');
+    await waitFor(() => canvas().width === 1200, 'fit-width paint');
+
+    // Leaving full screen re-fits the page for the smaller box: no button press.
+    await rerenderView(RECTS, file);
+    await waitFor(() => canvas().width === 454, 'fit page again after leaving full screen');
+    // Fit page is a control in both layouts now, not a full-screen privilege.
+    expect(container.querySelector('[aria-label="Fit page"]')).not.toBeNull();
+  });
+
+  it('fits a portrait page by height in the normal Page view, without overflow', async () => {
+    // A 600×792 pt sheet: on a phone the height is the tighter fit, and fitting
+    // only the width is what used to crop the page.
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 600 });
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 700 });
+
+    await renderView();
+    // 700/792 ≈ 0.884 → 530 CSS px wide, 700 tall, painted at 2×.
+    await waitFor(() => canvas().width === 1060, 'fit-by-height paint');
+    expect(canvas().height).toBe(1400);
+    expect(canvas().width).toBeLessThan(600 * 2);
+    expect(container.querySelector('[aria-label="Fit page"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Fit width"]')).not.toBeNull();
+  });
+
+  it('returns to fit page and 100% when the document changes', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 600 });
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 700 });
+
+    await renderView();
+    await waitFor(() => canvas().width === 1060, 'fit-page first paint');
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Fit width"]')?.click();
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')?.click();
+    });
+    await waitFor(() => canvas().width === 1440, 'fit width at 120%');
+
+    await rerenderView(RECTS, new Blob(['%PDF-1.4']), false, 'book-2');
+    await waitFor(() => canvas().width === 1060, 'the new book starts at fit page, 100%');
+  });
+
+  it('scrolls the page box to a sentence that is below the fold', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 300 });
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 200 });
+
+    // A whole page fits the box at "fit page", so nothing can be below the fold
+    // until the reader asks for a bigger page: that is when following matters.
+    await renderView([{ page: 1, x: 10, y: 700, w: 100, h: 30 }]);
+    await waitFor(() => canvas().width > 0, 'first paint');
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Fit width"]')?.click();
+    });
+    // Fit width: scale 0.5, so the line starts at 350px in a 200px box.
+    await waitFor(() => scrollTo.mock.calls.length > 0, 'scroll to the sentence');
+
+    const options = scrollTo.mock.calls.at(-1)?.[0] as ScrollToOptions;
+    // Enough to bring the line in with a margin, not yanked to the very top.
+    expect(options.top).toBeGreaterThan(200);
+    expect(options.top).toBeLessThan(350);
+    expect(options.behavior).toBe('smooth');
+  });
+
+  it('leaves a sentence that is already visible where it is', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 300 });
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 200 });
+
+    // RECTS[0] starts at y=20: with the whole page fitted into the 200px box it
+    // is already showing, so following the voice must not move anything.
+    await renderView();
+    await waitFor(() => canvas().width > 0, 'first paint');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(scrollTo).not.toHaveBeenCalled();
   });
 
   it('says the stored file is gone instead of failing inside pdf.js', async () => {

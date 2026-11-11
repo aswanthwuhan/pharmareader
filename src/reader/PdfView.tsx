@@ -51,9 +51,10 @@ export default function PdfView({ docKey, file, page, rects, onPageChange, fulls
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [pageCount, setPageCount] = useState(0);
   const [zoom, setZoom] = useState(1);
-  // How the page is fitted before `zoom`: the width by default, the whole page
-  // in full screen (where there is enough height to show it in one piece).
-  const [fit, setFit] = useState<'width' | 'page'>('width');
+  // How the page is fitted before `zoom`: the whole sheet by default, so a phone
+  // shows one complete page instead of the top of a page that hangs off the
+  // bottom. "Fit width" is the manual override for reading the print larger.
+  const [fit, setFit] = useState<'width' | 'page'>('page');
   const [width, setWidth] = useState(0);
   const [height, setHeight] = useState(0);
   const [scale, setScale] = useState(1);
@@ -180,10 +181,43 @@ export default function PdfView({ docKey, file, page, rects, onPageChange, fulls
     };
   }, []);
 
-  // Leaving full screen drops "fit page": the small box can only fit width.
+  // Fit the whole sheet again whenever the thing being fitted changes: another
+  // book, or a full-screen toggle that gives the box a different height. Zoom is
+  // relative to that fit, so it starts over with it.
   useEffect(() => {
-    if (!fullscreen) setFit((current) => (current === 'page' ? 'width' : current));
-  }, [fullscreen]);
+    setFit('page');
+    setZoom(1);
+  }, [docKey, fullscreen]);
+
+  // Follow the voice: when the spoken sentence's first line is outside the
+  // visible part of the page box, bring it into view with a margin. Only when it
+  // is out of view — a line already showing is never yanked out from under a
+  // hand that is panning the page.
+  useEffect(() => {
+    const element = wrap.current;
+    // Nothing is painted yet at the initial scale of 1 and a zero-size page:
+    // scrolling then would be undone by the first real fit a frame later.
+    if (!element || scale <= 0 || size.h <= 0) return;
+    const first = rects.find((rect) => rect.page === painted);
+    if (!first) return;
+    const margin = Math.min(48, element.clientHeight * 0.1);
+    const top = first.y * scale;
+    const bottom = top + Math.max(first.h * scale, 2);
+    const viewTop = element.scrollTop;
+    const viewHeight = element.clientHeight;
+    // A little slack either way: a line that is already showing stays where it
+    // is, so a short sentence is not scrolled twice for nothing.
+    if (top >= viewTop - 2 && bottom <= viewTop + viewHeight + 2) return;
+    const reduced =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const target = Math.max(0, top - margin);
+    if (typeof element.scrollTo === 'function') {
+      element.scrollTo({ top: target, behavior: reduced ? 'auto' : 'smooth' });
+    } else {
+      element.scrollTop = target;
+    }
+  }, [rects, scale, painted, size.h]);
 
   // Paint the page whenever the document, page, zoom or width changes.
   useEffect(() => {
@@ -214,10 +248,11 @@ export default function PdfView({ docKey, file, page, rects, onPageChange, fulls
         const availableWidth = wrap.current?.clientWidth || width;
         const availableHeight = wrap.current?.clientHeight || height;
         const widthFit = availableWidth / base.width;
-        // "Fit page" is only offered in full screen, where the wrap is tall
-        // enough for the whole sheet to be visible at once.
+        // "Fit page": the smaller of the two fits, so a portrait sheet is shown
+        // complete inside the box — on a phone the height is usually the tighter
+        // one, and fitting only the width is what cropped the page.
         const pageFit = availableHeight > 0 ? Math.min(widthFit, availableHeight / base.height) : widthFit;
-        const baseFit = fit === 'page' && fullscreen ? pageFit : widthFit;
+        const baseFit = fit === 'page' ? pageFit : widthFit;
         const viewport = pdfPage.getViewport({ scale: baseFit * zoom });
         const ratio = Math.min(window.devicePixelRatio || 1, 2);
 
@@ -406,23 +441,21 @@ export default function PdfView({ docKey, file, page, rects, onPageChange, fulls
               setZoom(1);
             }}
           >
-            <Glyph>{icons.fit}</Glyph>
+            <Glyph>{icons.fitWidth}</Glyph>
           </button>
-          {fullscreen ? (
-            <button
-              type="button"
-              className="btn btn-ghost btn-icon"
-              aria-label="Fit page"
-              title="Fit page"
-              aria-pressed={fit === 'page'}
-              onClick={() => {
-                setFit('page');
-                setZoom(1);
-              }}
-            >
-              <Glyph>{icons.page}</Glyph>
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon"
+            aria-label="Fit page"
+            title="Fit page"
+            aria-pressed={fit === 'page'}
+            onClick={() => {
+              setFit('page');
+              setZoom(1);
+            }}
+          >
+            <Glyph>{icons.page}</Glyph>
+          </button>
         </div>
       </div>
     </div>

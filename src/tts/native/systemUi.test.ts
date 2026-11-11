@@ -85,7 +85,7 @@ describe('systemUi', () => {
       const request = vi.fn(async () => undefined);
       stubRequestFullscreen(request);
 
-      await expect(setImmersive(true)).resolves.toBeUndefined();
+      await expect(setImmersive(true)).resolves.toBe(true);
       expect(request).toHaveBeenCalledTimes(1);
       expect(h.bridge.setImmersive).not.toHaveBeenCalled();
     });
@@ -93,8 +93,8 @@ describe('systemUi', () => {
     it('leaves the page alone when the browser has no Fullscreen API', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-      await expect(setImmersive(true)).resolves.toBeUndefined();
-      await expect(setImmersive(false)).resolves.toBeUndefined();
+      await expect(setImmersive(true)).resolves.toBe(true);
+      await expect(setImmersive(false)).resolves.toBe(true);
       expect(warn).not.toHaveBeenCalled();
     });
 
@@ -161,7 +161,7 @@ describe('systemUi', () => {
         throw new Error('requestFullscreen requires a user gesture');
       });
 
-      await expect(setImmersive(true)).resolves.toBeUndefined();
+      await expect(setImmersive(true)).resolves.toBe(false);
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining('[fullscreen] could not switch'),
         expect.any(Error)
@@ -175,17 +175,17 @@ describe('systemUi', () => {
         throw new Error('not in fullscreen');
       });
 
-      await expect(setImmersive(false)).resolves.toBeUndefined();
+      await expect(setImmersive(false)).resolves.toBe(false);
       expect(warn).toHaveBeenCalledTimes(1);
     });
   });
 
   describe('on Android', () => {
     it('forwards both directions to the native plugin', async () => {
-      await expect(setImmersive(true)).resolves.toBeUndefined();
+      await expect(setImmersive(true)).resolves.toBe(true);
       expect(h.bridge.setImmersive).toHaveBeenCalledWith({ on: true });
 
-      await expect(setImmersive(false)).resolves.toBeUndefined();
+      await expect(setImmersive(false)).resolves.toBe(true);
       expect(h.bridge.setImmersive).toHaveBeenLastCalledWith({ on: false });
     });
 
@@ -224,11 +224,23 @@ describe('systemUi', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       h.bridge.setImmersive.mockRejectedValueOnce(new Error('SystemUi is not implemented'));
 
-      await expect(setImmersive(true)).resolves.toBeUndefined();
+      await expect(setImmersive(true)).resolves.toBe(false);
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining('[fullscreen] could not switch'),
         expect.any(Error)
       );
+    });
+
+    it('reports a refusal as false and leaves the queue ready for the next call', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      h.bridge.setImmersive.mockRejectedValueOnce(new Error('SystemUi is not implemented'));
+
+      await expect(setImmersive(true)).resolves.toBe(false);
+      // The refusal must not count as "still entering": the next call has to go through.
+      await expect(setImmersive(false)).resolves.toBe(true);
+      expect(h.bridge.setImmersive).toHaveBeenCalledTimes(2);
+      expect(h.bridge.setImmersive).toHaveBeenLastCalledWith({ on: false });
+      expect(warn).toHaveBeenCalledTimes(1);
     });
   });
 });
