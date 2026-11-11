@@ -408,6 +408,36 @@ describe('synthesising engines', () => {
     expect(await db.audioCache.count()).toBe(3);
   });
 
+  it('keeps the engine as `this` when it renders a clip', async () => {
+    // The neural engines keep `synthesize` on the prototype and begin with
+    // `this.prepare()` (kokoro.ts) or `this.ensure()` (pocket.ts), so pulling the
+    // method off the object throws "Cannot read properties of undefined
+    // (reading 'prepare')" — the only way a network-free test can catch it is a
+    // method that is not an arrow function.
+    const engine = new FakeEngine(false);
+    engine.synthesize = async function (this: FakeEngine, text: string) {
+      await this.prepare();
+      this.synthTexts.push(text);
+      return wavBlob(8000, 16000);
+    };
+    let failure: Error | null = null;
+    const player = createPlayer({
+      ...baseOptions,
+      items: [items[0]!],
+      engine,
+      onError: (err) => (failure = err),
+    });
+
+    player.play();
+    await until(() => engine.synthTexts.length === 1 || failure !== null);
+
+    expect(failure).toBeNull();
+    expect(engine.synthTexts).toEqual(['Alpha.']);
+    const el = FakeAudio.instances[0]!;
+    await until(() => el.src.startsWith('blob:'));
+    el.finish();
+  });
+
   it('stores a real durationMs when the clip is a WAV', async () => {
     const engine = new FakeEngine(true);
     engine.synthesize = async () => wavBlob(8000, 16000); // 2 s

@@ -258,7 +258,10 @@ export function createPlayer(options: PlayerOptions): Player {
 
   /** Synthesize one sentence, retrying once when the engine cancelled it for us. */
   async function synthesizeForItem(text: string, gen: number): Promise<Blob> {
-    const synthesize = engine.synthesize!;
+    // Bound: the neural engines keep `synthesize` on the prototype and it starts
+    // with `this.prepare()` (kokoro) / `this.ensure()` (pocket), so a detached
+    // call throws "Cannot read properties of undefined (reading 'prepare')".
+    const synthesize = engine.synthesize!.bind(engine);
     const request = { voiceId: options.voiceId, rate: options.rate };
     try {
       return await synthesize(text, request);
