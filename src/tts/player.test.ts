@@ -1185,3 +1185,97 @@ describe('prefetch ahead', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Heat: a phone left listening must not render sentences nobody is waiting for,
+// and word following must not cost a second model when it cannot be seen.
+// ---------------------------------------------------------------------------
+
+describe('heat', () => {
+  it('starts no new render while paused, and starts the chain again on resume()', async () => {
+    const { engine, gates } = gatedEngine();
+    const player = createPlayer({ ...baseOptions, items: manyItems(20), engine, prefetchAhead: 5 });
+
+    player.play();
+    await until(() => gates.length === 1);
+    gates[0]!.release(); // sentence 0 plays; the chain renders sentence 1
+    await until(() => gates.length === 2);
+
+    player.pause();
+    // The render already in the engine is allowed to finish and is kept: resume
+    // replays it. What matters is that nothing new starts.
+    gates[1]!.release();
+    await delay(80);
+    expect(gates).toHaveLength(2);
+    expect(engine.synthTexts).not.toContain('Sentence 2.');
+
+    player.resume();
+    await until(() => gates.length === 3);
+    expect(gates[2]!.text).toBe('Sentence 2.');
+    player.stop();
+  });
+
+  it('stops the chain when the reader stops', async () => {
+    const { engine, gates } = gatedEngine();
+    const player = createPlayer({ ...baseOptions, items: manyItems(20), engine, prefetchAhead: 5 });
+
+    player.play();
+    await until(() => gates.length === 1);
+    gates[0]!.release();
+    await until(() => gates.length === 2);
+
+    player.stop();
+    gates[1]!.release();
+    await delay(80);
+    expect(gates).toHaveLength(2);
+  });
+
+  it('runs neither the aligner nor the word clock when the reader is not following words', async () => {
+    const engine = new FakeEngine(true);
+    engine.synthesize = async () => wavBlob(8000, 16000); // 2 s, a known length
+    wordTimingsSpy.mockClear();
+    let words = 0;
+    const player = createPlayer({
+      ...baseOptions,
+      items: [{ id: 'w1', text: 'Alpha beta gamma.' }],
+      engine,
+      wordHighlight: false,
+      onWord: () => (words += 1),
+    });
+
+    player.play();
+    const el = FakeAudio.instances[0]!;
+    await until(() => el.src.startsWith('blob:'));
+    el.currentTime = 1; // "beta" — the clock would fire if it ran
+    await delay(250);
+
+    expect(words).toBe(0);
+    // A second model on the phone is the whole point: it must not be asked.
+    expect(wordTimingsSpy).not.toHaveBeenCalled();
+    player.stop();
+  });
+
+  it('fires the word clock once per word, not on every check', async () => {
+    const engine = new FakeEngine(true);
+    engine.synthesize = async () => wavBlob(8000, 16000); // 2 s
+    const words: number[] = [];
+    const player = createPlayer({
+      ...baseOptions,
+      items: [{ id: 'w1', text: 'Alpha beta gamma.' }],
+      engine,
+      onWord: (_id, at) => words.push(at),
+    });
+
+    player.play();
+    const el = FakeAudio.instances[0]!;
+    await until(() => el.src.startsWith('blob:'));
+    await until(() => words.includes(0));
+
+    el.currentTime = 1; // half way: "beta", and stays there for many checks
+    await delay(500);
+    expect(words.filter((at) => at === 6)).toHaveLength(1);
+    // The word it left is not re-announced either.
+    expect(words.filter((at) => at === 0)).toHaveLength(1);
+    player.stop();
+  });
+});
+

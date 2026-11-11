@@ -22,6 +22,11 @@ const CACHE_LIMIT = 200;
 
 const cache = new Map<string, WordTiming[]>();
 
+/** True when the page cannot be seen (screen off, app in the background). */
+function documentHidden(): boolean {
+  return typeof document !== 'undefined' && document.visibilityState === 'hidden';
+}
+
 /**
  * Key for the in-memory cache. The player replays the same Blob, but a reloaded
  * record comes back as a new object with the same bytes, so the size, the clip
@@ -223,6 +228,10 @@ export async function wordTimings(audio: Blob, text: string, durationMs: number)
   // again would only rebuild the backlog, so the highlight runs on the estimate
   // for a while.
   if (Date.now() < backoffUntil) return estimate;
+  // Screen off or the app in the background: nobody is looking at the
+  // highlight, and a recogniser pass is the most expensive thing on the phone.
+  // The proportional estimate reads no worse than nothing until it is seen.
+  if (documentHidden()) return estimate;
   if (!(await isWhisperAvailable())) return estimate;
 
   return new Promise<WordTiming[]>((resolve) => {

@@ -74,6 +74,39 @@ describe('wordTimings', () => {
     expect(aligner.calls).toBe(0);
   });
 
+  it('estimates while the page cannot be seen, so nothing runs behind a dark screen', async () => {
+    aligner.available = true;
+    const own = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    try {
+      const timings = await wordTimings(clip(), TEXT, 2000);
+
+      expect(timings).toEqual(estimateTimings(TEXT, 2000));
+      expect(aligner.calls).toBe(0);
+      // Not cached either: a real pass can still run when the screen comes back.
+      expect(timingCacheSize()).toBe(0);
+    } finally {
+      if (own) Object.defineProperty(document, 'visibilityState', own);
+      else delete (document as unknown as Record<string, unknown>).visibilityState;
+    }
+  });
+
+  it('asks the model again once the page is visible', async () => {
+    aligner.available = true;
+    aligner.words = [
+      { text: 'Digoxin', startMs: 0, endMs: 500 },
+      { text: 'has', startMs: 500, endMs: 700 },
+      { text: 'a', startMs: 700, endMs: 780 },
+      { text: 'half', startMs: 780, endMs: 1050 },
+      { text: 'life', startMs: 1050, endMs: 1400 },
+    ];
+    expect(document.visibilityState).not.toBe('hidden');
+
+    await wordTimings(clip(), TEXT, 2600);
+
+    expect(aligner.calls).toBe(1);
+  });
+
   it('uses the recogniser when the model is installed', async () => {
     aligner.available = true;
     aligner.words = [

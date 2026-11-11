@@ -24,13 +24,21 @@ export interface PlayerOptions {
   startIndex?: number;
   voiceId?: string;
   rate: number;
-  /** How many sentences to render ahead of the one being spoken (1–50, default 10). */
+  /**
+   * How many sentences to render ahead of the one being spoken (1–20, default 3).
+   * A big look-ahead is a long synthesis burst at every chapter start.
+   */
   prefetchAhead?: number;
   /** Fired when a sentence's audio actually starts — never while it is being rendered. */
   onSentence?(id: string, index: number): void;
   onItemState?(id: string, state: ItemState): void;
   /** How many upcoming clips are already rendered and waiting. */
   onBuffer?(readyAhead: number): void;
+  /**
+   * False when the reader is not following the words. Neither the word clock nor
+   * the Whisper alignment runs then: alignment is a second model on the phone.
+   */
+  wordHighlight?: boolean;
   /** Character index into the item's `text` of the word being spoken. */
   onWord?(id: string, charIndex: number): void;
   onDone?(): void;
@@ -50,11 +58,17 @@ export interface Player {
 }
 
 /** Rendered ahead of the playing sentence before playback starts to wait. */
-const PREFETCH_AHEAD_DEFAULT = 10;
+const PREFETCH_AHEAD_DEFAULT = 3;
 const PREFETCH_AHEAD_MIN = 1;
-const PREFETCH_AHEAD_MAX = 50;
+const PREFETCH_AHEAD_MAX = 20;
 /** Object URLs kept beyond the look-ahead, for back/seek retries. */
 const URL_LRU_EXTRA = 4;
+/**
+ * How often the word clock looks at the audio position: 15 checks a second. A
+ * word lasts far longer than 66 ms, so a 60 fps loop for the whole clip only
+ * keeps the WebView's main thread awake.
+ */
+const WORD_CLOCK_MS = 66;
 
 function clampPrefetchAhead(value: number | undefined): number {
   if (value === undefined || !Number.isFinite(value)) return PREFETCH_AHEAD_DEFAULT;
@@ -119,6 +133,12 @@ export function createPlayer(options: PlayerOptions): Player {
   const { engine, items } = options;
   const canSynthesize = typeof engine.synthesize === 'function';
   const prefetchAhead = clampPrefetchAhead(options.prefetchAhead);
+  /**
+   * Word following costs a whole second model (Whisper alignment) and a clock
+   * on the main thread, so it runs only when a caller both asked for it and
+   * supplied somewhere to send the words.
+   */
+  const wordsWanted = options.wordHighlight !== false && options.onWord !== undefined;
   /** The in-memory clip cache covers the look-ahead and a little history. */
   const urlLruSize = prefetchAhead + URL_LRU_EXTRA;
 
@@ -335,6 +355,10 @@ export function createPlayer(options: PlayerOptions): Player {
    * starting N renders at once would put the sentence the reader is waiting for
    * at the back of a long queue; the chain dies with its generation on a
    * seek/stop and is restarted by the next play.
+   *
+   * It also stops outside `playing`: a paused player has no reader waiting for
+   * the next clip, so synthesising one is heat for nothing. The clip already in
+   * the engine is allowed to finish; resume() starts the chain again.
    */
   function prefetch(): void {
     if (!canSynthesize) return; // a streaming voice renders as it speaks
@@ -350,6 +374,7 @@ export function createPlayer(options: PlayerOptions): Player {
           prefetchAgain = false;
           const gen = generation;
           for (;;) {
+            if (state !== 'playing' || gen !== generation) break;
             const item = nextPrefetchItem();
             if (!item) break;
             setState(item, 'queued');
@@ -362,7 +387,7 @@ export function createPlayer(options: PlayerOptions): Player {
             }
             if (gen !== generation) break;
           }
-        } while (prefetchAgain && canSynthesize);
+        } while (prefetchAgain && state === 'playing' && canSynthesize);
       } finally {
         prefetching = false;
       }
@@ -399,24 +424,30 @@ export function createPlayer(options: PlayerOptions): Player {
     return job;
   }
 
-  /** Run `fn` on every frame, or on a slow timer where there are no frames. */
+  /**
+   * Run `fn` about every 66 ms — 15 checks a second — instead of on every frame.
+   * Word highlighting only needs to know which word is being said, and a word
+   * lasts hundreds of milliseconds; a 60 fps loop would wake the WebView main
+   * thread 60 times a second for the whole clip.
+   */
   function startClock(fn: () => void): () => void {
-    if (typeof requestAnimationFrame === 'function' && typeof cancelAnimationFrame === 'function') {
-      let frame = 0;
-      const loop = () => {
-        fn();
-        frame = requestAnimationFrame(loop);
-      };
-      frame = requestAnimationFrame(loop);
-      return () => cancelAnimationFrame(frame);
-    }
-    const timer = setInterval(fn, 100);
-    return () => clearInterval(timer);
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const loop = () => {
+      if (stopped) return;
+      fn();
+      timer = setTimeout(loop, WORD_CLOCK_MS);
+    };
+    timer = setTimeout(loop, WORD_CLOCK_MS);
+    return () => {
+      stopped = true;
+      if (timer !== undefined) clearTimeout(timer);
+    };
   }
 
   /** Fire onWord from the element clock, mapped back to the original sentence. */
   function followWords(item: Item, clip: Clip, gen: number, el: HTMLAudioElement): () => void {
-    if (!options.onWord) return () => {};
+    if (!wordsWanted) return () => {};
     const spoken = item.spoken ?? item.text;
     const durationMs = clip.durationMs || 0;
     let last = -1;
@@ -545,7 +576,7 @@ export function createPlayer(options: PlayerOptions): Player {
 
     options.onSentence?.(item.id, i);
     setState(item, 'playing');
-    if (options.onWord) {
+    if (wordsWanted) {
       // The native phone voice reports no boundaries; the web one does. Until a
       // boundary arrives, walk the sentence by elapsed time.
       timer = setInterval(() => {
@@ -562,7 +593,7 @@ export function createPlayer(options: PlayerOptions): Player {
           startedAt = Date.now();
         },
         onWord: (_id, charIndex) => {
-          if (!options.onWord) return;
+          if (!wordsWanted) return;
           // Boundary offsets index the expanded utterance; relate them to the
           // sentence the reader sees by proportion.
           emit(charAtFraction(item.text, charIndex / Math.max(1, text.length)));
@@ -666,6 +697,8 @@ export function createPlayer(options: PlayerOptions): Player {
       }
     }
     // Else: a clip is being synthesised; run() continues when the poll wakes.
+    // Pausing stopped the look-ahead chain, so it starts again from here.
+    prefetch();
   }
 
   function stop(): void {

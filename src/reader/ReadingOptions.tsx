@@ -11,15 +11,19 @@
  * behind each skipped kind) sits in a nested disclosure.
  */
 import { useSetting, setSetting } from '../core/settings';
+import { TTS_ENGINE_SETTING } from '../tts/TtsSettings';
+import { WHISPER_READY_SETTING } from '../tts/align/whisperModel';
 import {
   BRACKET_KEY,
   DEFAULT_PAUSE_MS,
   DEFAULT_SKIP,
+  HEAT_WARNING,
   PAUSE_KEY,
   PREFETCH_AHEAD_KEY,
   PREFETCH_CHOICES,
   SKIP_KEY,
   WORD_HIGHLIGHT_KEY,
+  isNeuralVoice,
   useBracketMode,
   usePrefetchAhead,
   type SkipOptions,
@@ -85,6 +89,12 @@ export default function ReadingOptions() {
   const pauseMs = useSetting<number>(PAUSE_KEY, DEFAULT_PAUSE_MS);
   const prefetchAhead = usePrefetchAhead();
   const wordHighlight = useSetting<boolean>(WORD_HIGHLIGHT_KEY, true);
+  const engine = useSetting<string>(TTS_ENGINE_SETTING, 'auto');
+  const whisperReady = useSetting<boolean>(WHISPER_READY_SETTING, false);
+
+  // The neural voices and the aligner are two models on one phone: together they
+  // are what makes it warm while listening.
+  const heatWarning = isNeuralVoice(engine) && whisperReady === true && wordHighlight;
 
   const values: Record<SwitchKey, boolean> = {
     tables,
@@ -188,7 +198,7 @@ export default function ReadingOptions() {
         </select>
         <p className="field-hint" id="rd-prefetch-hint">
           How many sentences to have ready before the voice reaches them. More avoids waiting, but uses more
-          battery and storage.
+          battery and storage — and a busy voice for longer. Three suits most books.
         </p>
       </div>
 
@@ -208,6 +218,12 @@ export default function ReadingOptions() {
           onChange={(event) => void setSetting(WORD_HIGHLIGHT_KEY, event.target.checked)}
         />
       </label>
+
+      {heatWarning && (
+        <p className="field-hint" role="note">
+          {HEAT_WARNING}
+        </p>
+      )}
 
       <details className="disc-sub">
         <summary>How this works</summary>

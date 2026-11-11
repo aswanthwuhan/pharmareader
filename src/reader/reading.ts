@@ -215,18 +215,52 @@ export const DEFAULT_PAUSE_MS = 300;
 
 /**
  * How many sentences to render ahead of the one being spoken. More saves waiting
- * after a pause or a skip, at the cost of battery and storage.
+ * after a pause or a skip, at the cost of battery and storage — and a phone that
+ * runs the voice flat out cannot cool down. Three is a sentence of slack at
+ * normal speed without the ten-sentence synthesis burst at every chapter start.
  */
 export const PREFETCH_AHEAD_KEY = 'read.prefetchAhead';
-export const DEFAULT_PREFETCH_AHEAD = 10;
-/** The choices the settings screen offers; 50 is already minutes of audio. */
-export const PREFETCH_CHOICES = [2, 5, 10, 20, 50] as const;
+export const DEFAULT_PREFETCH_AHEAD = 3;
+/** The choices the settings screen offers; 20 is already minutes of audio. */
+export const PREFETCH_CHOICES = [2, 3, 5, 10, 20] as const;
+/** Largest look-ahead the player will honour, whatever was stored. */
+export const PREFETCH_AHEAD_MAX = 20;
 
-/** Live look-ahead size, ignoring a stored value the picker does not offer. */
+/**
+ * The look-ahead to actually use. A choice the picker offers is kept as saved;
+ * a value from before the choices changed (50 was offered) keeps its intent up
+ * to the new ceiling rather than snapping back to the default.
+ */
+export function clampPrefetchAhead(stored: unknown): number {
+  if (typeof stored !== 'number' || !Number.isFinite(stored)) return DEFAULT_PREFETCH_AHEAD;
+  const value = Math.trunc(stored);
+  if ((PREFETCH_CHOICES as readonly number[]).includes(value)) return value;
+  if (value > PREFETCH_AHEAD_MAX) return PREFETCH_AHEAD_MAX;
+  return DEFAULT_PREFETCH_AHEAD;
+}
+
+/** Live look-ahead size, clamped to a value the picker can show. */
 export function usePrefetchAhead(): number {
   const stored = useSetting<number>(PREFETCH_AHEAD_KEY, DEFAULT_PREFETCH_AHEAD);
-  return (PREFETCH_CHOICES as readonly number[]).includes(stored) ? stored : DEFAULT_PREFETCH_AHEAD;
+  return clampPrefetchAhead(stored);
 }
+
+/** The two engines that run a model on the phone rather than the system voice. */
+export const NEURAL_ENGINES = ['kokoro', 'pocket'] as const;
+
+/** True when the engine setting names an on-device neural voice. */
+export function isNeuralVoice(engine: unknown): boolean {
+  // `auto` (the default) picks a downloaded neural voice whenever one is ready,
+  // which is exactly when the warning matters; only the phone voice is exempt.
+  return engine !== 'system';
+}
+
+/**
+ * Shown wherever the neural voices and the Whisper aligner meet: the two models
+ * run side by side and that is what makes the phone warm.
+ */
+export const HEAT_WARNING =
+  'Word-by-word highlighting runs a second model next to the voice. Together they keep the phone busy and it can get warm. Turn word highlight off, or use the phone voice, to keep it cool.';
 
 export function isBracketMode(value: unknown): value is BracketMode {
   return value === 'pause' || value === 'announce' || value === 'read' || value === 'skip';

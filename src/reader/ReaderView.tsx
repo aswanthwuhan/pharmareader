@@ -624,6 +624,8 @@ export default function ReaderView() {
       voiceId: voiceRef.current || undefined,
       rate: rateRef.current,
       prefetchAhead: prefetchRef.current,
+      // Highlight off: no Whisper pass and no word clock behind a word nobody sees.
+      wordHighlight: wordRef.current,
       // Fires only when this sentence's audio actually starts (B1).
       onSentence: (id) => {
         if (mine !== generation.current) return;

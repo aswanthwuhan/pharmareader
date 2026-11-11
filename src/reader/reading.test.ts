@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { Block, Chapter, Sentence } from '../core/types';
 import {
+  DEFAULT_PREFETCH_AHEAD,
   DEFAULT_SKIP,
+  HEAT_WARNING,
+  PREFETCH_AHEAD_MAX,
+  PREFETCH_CHOICES,
+  clampPrefetchAhead,
   isBracketMode,
+  isNeuralVoice,
   isSkipped,
   planChapter,
   planSelection,
@@ -194,5 +200,45 @@ describe('bracket setting', () => {
   it('lets the stored mode win over the old switch', () => {
     expect(resolveBracketMode('read', true)).toBe('read');
     expect(resolveBracketMode('announce', true)).toBe('announce');
+  });
+});
+
+describe('look-ahead', () => {
+  it('prepares three sentences by default, and still offers the smaller choices', () => {
+    expect(DEFAULT_PREFETCH_AHEAD).toBe(3);
+    expect(PREFETCH_CHOICES).toContain(3);
+    expect(PREFETCH_CHOICES[0]).toBe(2);
+    // The 50-sentence burst is gone: a phone rendering ten minutes of audio at
+    // chapter start is the hottest the pipeline ever gets.
+    expect(PREFETCH_CHOICES).not.toContain(50);
+  });
+
+  it('keeps a saved choice and pulls an old one back into the range', () => {
+    for (const choice of PREFETCH_CHOICES) expect(clampPrefetchAhead(choice)).toBe(choice);
+    // Someone who chose 50 keeps the largest count still on the menu instead of
+    // dropping back to the default.
+    expect(clampPrefetchAhead(50)).toBe(PREFETCH_AHEAD_MAX);
+    expect(PREFETCH_AHEAD_MAX).toBe(20);
+    // Anything that is not a choice on the menu is the default.
+    expect(clampPrefetchAhead(undefined)).toBe(DEFAULT_PREFETCH_AHEAD);
+    expect(clampPrefetchAhead(Number.NaN)).toBe(DEFAULT_PREFETCH_AHEAD);
+    expect(clampPrefetchAhead('10')).toBe(DEFAULT_PREFETCH_AHEAD);
+    expect(clampPrefetchAhead(7)).toBe(DEFAULT_PREFETCH_AHEAD);
+    expect(clampPrefetchAhead(-3)).toBe(DEFAULT_PREFETCH_AHEAD);
+  });
+});
+
+describe('heat warning', () => {
+  it('names the engines that run a model on the phone', () => {
+    expect(isNeuralVoice('kokoro')).toBe(true);
+    expect(isNeuralVoice('pocket')).toBe(true);
+    expect(isNeuralVoice('system')).toBe(false);
+    expect(isNeuralVoice('auto')).toBe(true);
+    expect(isNeuralVoice(undefined)).toBe(true);
+  });
+
+  it('says what to do about the two models', () => {
+    expect(HEAT_WARNING).toContain('runs a second model next to the voice');
+    expect(HEAT_WARNING).toContain('Turn word highlight off');
   });
 });

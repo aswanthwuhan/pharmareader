@@ -2,6 +2,8 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { db } from '../core/db';
+import { TTS_ENGINE_SETTING } from '../tts/TtsSettings';
+import { WHISPER_READY_SETTING } from '../tts/align/whisperModel';
 import {
   BRACKET_KEY,
   DEFAULT_PAUSE_MS,
@@ -59,6 +61,13 @@ function pressed(label: string): boolean {
 
 async function stored(key: string): Promise<unknown> {
   return (await db.settings.get(key))?.value;
+}
+
+/** Let Dexie's live query deliver a settings change to React. */
+async function flush(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  });
 }
 
 beforeEach(async () => {
@@ -193,5 +202,57 @@ describe('ReadingOptions', () => {
       select.dispatchEvent(new Event('change', { bubbles: true }));
     });
     await waitFor(async () => (await stored(PREFETCH_AHEAD_KEY)) === 20, 'prefetch ahead stored');
+  });
+
+  it('shows the 50-sentence look-ahead of an older install as the largest offered', async () => {
+    await db.settings.put({ key: PREFETCH_AHEAD_KEY, value: 50 });
+    await render();
+
+    // The live query lands a moment after the first paint.
+    await waitFor(
+      () => (container.querySelector('#rd-prefetch') as HTMLSelectElement).value === '20',
+      'the old 50 shown as 20',
+    );
+  });
+
+  it('warns about heat only when the neural voice, the aligner and word highlight run together', async () => {
+    const warned = () => (container.textContent ?? '').includes('runs a second model next to the voice');
+
+    // The phone voice with the aligner installed: one model on the phone, no warning.
+    await db.settings.put({ key: TTS_ENGINE_SETTING, value: 'system' });
+    await db.settings.put({ key: WHISPER_READY_SETTING, value: true });
+    await render();
+    expect(warned()).toBe(false);
+
+    // The on-device voice is the second model: now they run together.
+    await db.settings.put({ key: TTS_ENGINE_SETTING, value: 'kokoro' });
+    await flush();
+    expect(warned()).toBe(true);
+
+    // The phone voice is one of the two ways out the warning offers.
+    await db.settings.put({ key: TTS_ENGINE_SETTING, value: 'system' });
+    await flush();
+    expect(warned()).toBe(false);
+
+    await db.settings.put({ key: TTS_ENGINE_SETTING, value: 'kokoro' });
+    await flush();
+    expect(warned()).toBe(true);
+
+    // Nothing downloaded: word highlighting is an estimate, not a model.
+    await db.settings.put({ key: WHISPER_READY_SETTING, value: false });
+    await flush();
+    expect(warned()).toBe(false);
+
+    await db.settings.put({ key: WHISPER_READY_SETTING, value: true });
+    await flush();
+    expect(warned()).toBe(true);
+
+    // The other way out: stop following words.
+    await act(async () => {
+      box('Highlight the word being spoken').click();
+    });
+    await waitFor(async () => (await stored(WORD_HIGHLIGHT_KEY)) === false, 'word highlight off');
+    await flush();
+    expect(warned()).toBe(false);
   });
 });

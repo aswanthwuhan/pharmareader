@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { db } from '../../core/db';
 import { setSetting, useSetting } from '../../core/settings';
+import {
+  HEAT_WARNING,
+  WORD_HIGHLIGHT_KEY,
+  isNeuralVoice,
+} from '../../reader/reading';
+import { TTS_ENGINE_SETTING } from '../TtsSettings';
 import { resetDownload, startDownload, useDownload, type DownloadState } from '../downloads';
 import { copyText } from '../neural/clipboard';
 import { describeAlignError, type AlignErrorInfo } from './alignError';
@@ -14,6 +20,7 @@ import {
   prepareWhisper,
   resetWhisperWorker,
 } from './whisper';
+import { WHISPER_READY_SETTING } from './whisperModel';
 
 /** Last measured speed: model time, end-to-end time, and the clip it ran on. */
 export const WHISPER_SPEED_SETTING = 'align.whisper.speed';
@@ -80,6 +87,9 @@ export default function AlignModelPanel() {
   const [measuring, setMeasuring] = useState(false);
   const [measureError, setMeasureError] = useState<string | null>(null);
   const speed = useSetting<SpeedRecord | null>(WHISPER_SPEED_SETTING, null);
+  const whisperReady = useSetting<boolean>(WHISPER_READY_SETTING, false);
+  const engine = useSetting<string>(TTS_ENGINE_SETTING, 'auto');
+  const wordHighlight = useSetting<boolean>(WORD_HIGHLIGHT_KEY, true);
 
   useEffect(() => {
     let alive = true;
@@ -152,6 +162,10 @@ export default function AlignModelPanel() {
   const state = panelState(download, available, failure);
   const busy = state.kind === 'downloading' || measuring;
   const chip = chipFor(state);
+  // The disk check is the truth; the setting only covers the moment before it
+  // answers, so the warning does not flash off and on in Settings.
+  const alignerOnPhone = state.kind === 'ready' || (state.kind === 'loading' && whisperReady === true);
+  const heatWarning = alignerOnPhone && isNeuralVoice(engine) && wordHighlight;
 
   return (
     <section className={styles.block} aria-labelledby="align-whisper-title">
@@ -188,6 +202,18 @@ export default function AlignModelPanel() {
         </span>
         <span className={styles.size}>~{WHISPER_SIZE_MB} MB · use Wi-Fi</span>
       </div>
+
+      {heatWarning && (
+        <div className="banner banner-warning" role="note">
+          {/* Same warning triangle the model banners use: fill and icon, no new colours. */}
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7">
+            <path d="M12 3.8 2.7 19.4h18.6L12 3.8Z" />
+            <path d="M12 9.6v4.2" />
+            <path d="M12 16.6h.01" />
+          </svg>
+          <p>{HEAT_WARNING}</p>
+        </div>
+      )}
 
       {state.kind === 'unsupported' && (
         <p className={styles.hint}>

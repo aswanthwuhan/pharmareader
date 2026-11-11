@@ -3,6 +3,9 @@ import 'fake-indexeddb/auto';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { db } from '../../core/db';
+import { WORD_HIGHLIGHT_KEY } from '../../reader/reading';
+import { TTS_ENGINE_SETTING } from '../TtsSettings';
 import { resetDownload } from '../downloads';
 import AlignModelPanel, { WHISPER_DOWNLOAD_ID } from './AlignModelPanel';
 
@@ -32,7 +35,7 @@ vi.mock('../neural/clipboard', () => ({ copyText: () => Promise.resolve(true) })
 let root: Root | null = null;
 let container: HTMLDivElement;
 
-beforeEach(() => {
+beforeEach(async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement('div');
   document.body.append(container);
@@ -42,6 +45,8 @@ beforeEach(() => {
   whisper.fail = false;
   whisper.prepares = 0;
   resetDownload(WHISPER_DOWNLOAD_ID);
+  // Settings are shared by the whole file, so each test starts from the defaults.
+  await db.settings.bulkDelete([TTS_ENGINE_SETTING, WORD_HIGHLIGHT_KEY]);
 });
 
 afterEach(async () => {
@@ -131,5 +136,39 @@ describe('AlignModelPanel', () => {
     expect(text).toContain('Not available here');
     expect(text).toContain('words are highlighted by an estimate');
     expect(button('Download')).toBeUndefined();
+  });
+
+  it('warns about heat when an on-device voice and word highlight run together', async () => {
+    whisper.available = true;
+    await db.settings.bulkPut([
+      { key: TTS_ENGINE_SETTING, value: 'kokoro' },
+      { key: WORD_HIGHLIGHT_KEY, value: true },
+    ]);
+    const text = await renderPanel();
+
+    expect(text).toContain('Ready');
+    expect(text).toContain('runs a second model next to the voice');
+    expect(container.querySelector('.banner.banner-warning')).not.toBeNull();
+  });
+
+  it('keeps quiet on the phone voice', async () => {
+    whisper.available = true;
+    await db.settings.put({ key: TTS_ENGINE_SETTING, value: 'system' });
+    const text = await renderPanel();
+
+    expect(text).toContain('Ready');
+    expect(text).not.toContain('runs a second model next to the voice');
+  });
+
+  it('keeps quiet when word highlight is switched off', async () => {
+    whisper.available = true;
+    await db.settings.bulkPut([
+      { key: TTS_ENGINE_SETTING, value: 'kokoro' },
+      { key: WORD_HIGHLIGHT_KEY, value: false },
+    ]);
+    const text = await renderPanel();
+
+    expect(text).toContain('Ready');
+    expect(text).not.toContain('runs a second model next to the voice');
   });
 });
