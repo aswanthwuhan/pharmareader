@@ -358,6 +358,11 @@ svg {
 .page {
   max-width: var(--app-max);
   margin: 0 auto;
+  /* Most pages are a one-column grid. An `auto` column grows to its widest
+     unbreakable child (a long book title set on one line), and the whole page
+     then runs off the side of a phone; this column can never be wider than the
+     screen. No effect on a page that is not a grid. */
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .page + .page {

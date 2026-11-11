@@ -394,7 +394,12 @@ export default function LibraryPage() {
           <p className="app-bar-sub">{countSub}</p>
         </div>
         <div className="app-bar-actions">
-          <button type="button" className="btn btn-primary" onClick={() => fileInput.current?.click()} disabled={busy}>
+          <button
+            type="button"
+            className={continueBook ? 'btn btn-secondary' : 'btn btn-primary'}
+            onClick={() => fileInput.current?.click()}
+            disabled={busy}
+          >
             Import
           </button>
           <input

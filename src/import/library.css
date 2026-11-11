@@ -168,7 +168,7 @@
 
 .lib-pct {
   color: var(--muted);
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-xs);
   font-weight: var(--fw-semibold);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
@@ -234,6 +234,10 @@
 }
 
 .lib-backup .banner-title a {
+  /* A text link is 19px tall; the padding makes it a thumb-sized target without moving the line. */
+  display: inline-block;
+  margin: calc(var(--space-3) * -1) 0;
+  padding: var(--space-3) 0;
   color: inherit;
   text-decoration: underline;
   text-underline-offset: 2px;
