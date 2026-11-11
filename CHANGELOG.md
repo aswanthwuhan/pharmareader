@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.3 — 2026-11-11
+Installs over 0.3.2 without losing data.
+
+**New — a cooler on-device voice (Android)**
+- A lighter INT8 Kokoro model: a 126 MB download instead of 334 MB, and about a third of the memory. Same voices. Settings → On-device voice models → Kokoro offers it; your current voice keeps working until the new one has played once, and only then can the old 334 MB files be deleted.
+- Threads: 2 by default (recommended), 1 for the coolest phone, 4 with a warning that the phone gets warmer.
+
+**Fixed — heat while listening**
+- Pausing no longer keeps preparing sentences in the background.
+- "Prepare ahead" defaults to 3 sentences instead of 10.
+- With word highlighting off, or the screen off, the word-alignment model no longer runs; the word timer checks 15 times a second instead of 60.
+- A warning when word highlighting runs next to a downloaded voice, since the two together keep the phone busy.
+
+**Fixed — PDF page view**
+- The whole page fits the screen, the view follows the sentence being read, and the highlight is clearly visible in dark mode.
+- "Fit width" has its own icon, so it is no longer mistaken for the Full screen button.
+
+**Fixed — browser**
+- The Kokoro voice failed to load in the browser ("Cannot read properties of undefined (reading 'onnx')").
+
 ## 0.3.2 — 2026-11-11
 Installs over 0.3.1 without losing data.
 
