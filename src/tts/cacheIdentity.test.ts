@@ -15,6 +15,20 @@ describe('cacheVoiceId', () => {
     expect(await cacheVoiceId({ cacheVariant: () => undefined }, 'af_heart')).toBe('af_heart');
   });
 
+  it('hands the requested voice to the engine, in front of its variant', async () => {
+    // The neural engines keep their own voice choice in their own setting, so the
+    // variant has to resolve it exactly as `synthesize()` does — from the request when
+    // there is one. Playback and the pre-render both go through this one helper, which
+    // is what keeps their keys identical.
+    const variant = (requested?: string) => `says-${requested ?? 'the-saved-voice'}@q8`;
+    expect(await cacheVoiceId({ cacheVariant: variant }, 'af_heart')).toBe(
+      'af_heart@says-af_heart@q8'
+    );
+    expect(await cacheVoiceId({ cacheVariant: variant }, undefined)).toBe(
+      '@says-the-saved-voice@q8'
+    );
+  });
+
   it('gives the same sentence different keys at q8 and fp32', async () => {
     // The bug this fixes: the precision was not in the key, so clips rendered with
     // the garbled int8 weights kept playing after switching to fp32.

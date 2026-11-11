@@ -102,6 +102,22 @@ class PocketEngine implements TtsEngine {
     }
   }
 
+  /**
+   * A Pocket clip is identified by the voice it was rendered in: the same sentence in
+   * another voice is another clip, so a voice change must not replay the old one.
+   *
+   * The library's voice list only exists once the model has loaded, so the name here is
+   * the saved (or requested) one rather than `voiceRef()`'s fallback: the panel only
+   * stores a name it was given, and an empty setting means the first built-in voice —
+   * one clip, whatever that voice is called. If a saved name ever dropped out of the
+   * library's list, its clips would be rendered again in the first voice under a new
+   * key: extra work, never a replay in the wrong voice.
+   */
+  async cacheVariant(voiceId?: string): Promise<string> {
+    const saved = voiceId ?? (await getSetting<string>(VOICE_SETTING, ''));
+    return saved || 'default';
+  }
+
   private async load(): Promise<PocketTTS> {
     const epoch = this.epoch;
     const tts = new PocketTTS({

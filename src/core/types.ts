@@ -218,9 +218,12 @@ export interface TtsEngine {
   /** Optional: render to audio blob (for cache/pre-render). */
   synthesize?(text: string, opts: { voiceId?: string; rate: number }): Promise<Blob>;
   /**
-   * Optional: extra audio-cache identity for a choice that changes the sound without
-   * changing the voice id — Kokoro's weight precision (fp32 vs the int8 q8 build).
-   * Absent or undefined: the voice id alone identifies the clip.
+   * Optional: the identity of the audio this engine will produce beyond the voice id
+   * passed to it — the voice it will actually speak with (Kokoro and Pocket keep their
+   * own choice in their own setting, so the id in the request may be none of their
+   * voices) and Kokoro's weight precision (fp32 vs the int8 q8 build).
+   * `voiceId` is the voice the caller asked for, so the engine can resolve it exactly as
+   * `synthesize()` does. Absent or undefined: the voice id alone identifies the clip.
    */
-  cacheVariant?(): string | undefined | Promise<string | undefined>;
+  cacheVariant?(voiceId?: string): string | undefined | Promise<string | undefined>;
 }

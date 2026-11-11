@@ -3,12 +3,16 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_KOKORO_DTYPE,
+  DEFAULT_KOKORO_VOICE,
   KOKORO_DTYPE_SETTING,
   detectDevice,
   kokoroEngine,
   resetKokoroEngine,
+  setKokoroVoice,
   usableDevice,
 } from './kokoro';
+import { cacheKey } from '../cache';
+import { cacheVoiceId } from '../cacheIdentity';
 import { setSetting } from '../../core/settings';
 import { setModelReady } from './models';
 import type { KokoroRequest, KokoroResponse } from './kokoroProtocol';
@@ -243,7 +247,7 @@ describe('weight precision', () => {
   it('reports the loaded precision, so the audio cache identity follows the weights', async () => {
     await setSetting(KOKORO_DTYPE_SETTING, 'q8');
     // Nothing loaded yet: the saved choice is what a clip would be rendered with.
-    expect(await kokoroEngine.cacheVariant?.()).toBe('q8');
+    expect(await kokoroEngine.cacheVariant?.()).toBe('af_heart@q8');
 
     const preparing = kokoroEngine.prepare();
     await waitFor(() => FakeWorker.instances.length === 1);
@@ -255,11 +259,11 @@ describe('weight precision', () => {
     // A setting change only takes effect on the next load, and until then the clips
     // still come from q8: the loaded precision must win over the saved one.
     await setSetting(KOKORO_DTYPE_SETTING, 'fp32');
-    expect(await kokoroEngine.cacheVariant?.()).toBe('q8');
+    expect(await kokoroEngine.cacheVariant?.()).toBe('af_heart@q8');
 
     // A reload picks fp32 up and with it a different cache identity.
     resetKokoroEngine();
-    expect(await kokoroEngine.cacheVariant?.()).toBe('fp32');
+    expect(await kokoroEngine.cacheVariant?.()).toBe('af_heart@fp32');
   });
 
   it('keeps the in-flight precision when the setting changes during the download', async () => {
@@ -274,11 +278,11 @@ describe('weight precision', () => {
     await waitFor(() => worker.posted.length > 0);
 
     await setSetting(KOKORO_DTYPE_SETTING, 'fp32');
-    expect(await kokoroEngine.cacheVariant?.()).toBe('q8');
+    expect(await kokoroEngine.cacheVariant?.()).toBe('af_heart@q8');
 
     worker.reply({ type: 'ready', voices: ['af_heart'] });
     await preparing;
-    expect(await kokoroEngine.cacheVariant?.()).toBe('q8');
+    expect(await kokoroEngine.cacheVariant?.()).toBe('af_heart@q8');
   });
 
   it('goes back to reading the setting after a failed load', async () => {
@@ -293,7 +297,76 @@ describe('weight precision', () => {
     await expect(failed).rejects.toThrow('no available backend found');
 
     await setSetting(KOKORO_DTYPE_SETTING, 'fp32');
-    expect(await kokoroEngine.cacheVariant?.()).toBe('fp32');
+    expect(await kokoroEngine.cacheVariant?.()).toBe('af_heart@fp32');
+  });
+});
+
+describe('voice identity', () => {
+  beforeEach(async () => {
+    // `voiceIds` is whatever the worker's ready message listed, and it survives a reset
+    // (the real worker always lists the same 28 voices). Load it once with the voices
+    // these tests use, so a saved voice is a voice the engine actually has.
+    resetKokoroEngine();
+    const preparing = kokoroEngine.prepare();
+    await waitFor(() => FakeWorker.instances.length === 1);
+    const worker = lastWorker();
+    await waitFor(() => worker.posted.length > 0);
+    worker.reply({ type: 'ready', voices: ['af_heart', 'af_bella', 'am_adam'] });
+    await preparing;
+  });
+
+  afterEach(async () => {
+    // Both live in fake-indexeddb for the whole file.
+    await setKokoroVoice(DEFAULT_KOKORO_VOICE);
+    await setSetting(KOKORO_DTYPE_SETTING, DEFAULT_KOKORO_DTYPE);
+  });
+
+  it('names the voice it will speak with, not the phone voice in the request', async () => {
+    await setKokoroVoice('af_bella');
+    expect(await kokoroEngine.cacheVariant?.()).toBe('af_bella@fp32');
+
+    await setKokoroVoice('am_adam');
+    expect(await kokoroEngine.cacheVariant?.()).toBe('am_adam@fp32');
+  });
+
+  it('gives the same sentence a different key after a voice change', async () => {
+    // The bug: the reader hands every engine the phone voice, so the key held no trace
+    // of the Kokoro voice and changing it replayed the cached sentences in the old one.
+    const key = async (): Promise<string> =>
+      cacheKey('Paracetamol 500 mg.', 'kokoro', await cacheVoiceId(kokoroEngine, undefined), 1);
+
+    await setKokoroVoice('af_heart');
+    const heart = await key();
+    expect(await key()).toBe(heart); // same voice and precision: the clip is still valid
+
+    await setKokoroVoice('am_adam');
+    expect(await key()).not.toBe(heart);
+  });
+
+  it('falls back to the first voice for an id it does not have, as synthesize does', async () => {
+    // "en-US-language" is a phone voice id, not a Kokoro one: synthesize silently uses
+    // voiceIds[0], so the key must say that voice rather than claim the phone voice.
+    await setKokoroVoice('af_heart');
+    expect(await kokoroEngine.cacheVariant?.('en-US-language')).toBe('af_heart@fp32');
+  });
+
+  it('asks the worker for the voice the cache identity names', async () => {
+    // Keying `af_bella@fp32` is only correct if the clip really is af_bella audio.
+    await setKokoroVoice('af_bella');
+    const rendering = kokoroEngine.synthesize!('Paracetamol.', { rate: 1 });
+    const worker = lastWorker();
+    await waitFor(() => worker.posted.some((message) => message.type === 'speak'));
+
+    const speak = worker.posted.find((message) => message.type === 'speak');
+    expect(speak).toMatchObject({ voice: 'af_bella' });
+    worker.reply({
+      type: 'result',
+      id: speak?.type === 'speak' ? speak.id : 0,
+      audio: new Float32Array([0.1, -0.1]),
+      sampleRate: 24000,
+    });
+    await expect(rendering).resolves.toBeInstanceOf(Blob);
+    expect(await kokoroEngine.cacheVariant?.()).toBe('af_bella@fp32');
   });
 });
 

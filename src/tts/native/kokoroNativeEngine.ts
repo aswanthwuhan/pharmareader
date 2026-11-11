@@ -268,7 +268,9 @@ class KokoroNativeEngine implements TtsEngine {
     if (!trimmed) throw new Error('Nothing to synthesise.');
     const result = await Kokoro.synthesize({
       text: trimmed,
-      sid: sidFromVoiceId(opts.voiceId),
+      // Same voice resolution as speak()/measure(): without the saved speaker this path
+      // — the one the reader plays cached audio from — ignored the voice setting.
+      sid: sidFromVoiceId(opts.voiceId ?? (await voiceSetting())),
       speed: clampSpeed(opts.rate),
       threads: await threadsSetting(),
       model: await modelSetting(),
@@ -277,6 +279,19 @@ class KokoroNativeEngine implements TtsEngine {
       throw new Error(result.cancelled ? 'Kokoro synthesis was cancelled.' : 'Kokoro returned no audio.');
     }
     return base64ToWavBlob(result.wavBase64);
+  }
+
+  /**
+   * The cache identity of a native clip: the speaker and the model build. int8 and fp32
+   * are different weights, so a clip from one must not be replayed after switching to
+   * the other; the speaker is resolved exactly as `synthesize()` resolves it. The build
+   * is the saved choice rather than the one the plugin may have substituted for a build
+   * that is not downloaded — that can only re-render a clip needlessly, never replay one
+   * in another voice.
+   */
+  async cacheVariant(voiceId?: string): Promise<string> {
+    const sid = sidFromVoiceId(voiceId ?? (await voiceSetting()));
+    return `${sid}@${await modelSetting()}`;
   }
 
   /** Speak the sentences in order, synthesising the next chunk during playback. */

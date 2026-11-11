@@ -10,12 +10,17 @@ import {
   pocketEngine,
   resetPocketEngine,
 } from './pocket';
+import { cacheKey } from '../cache';
+import { cacheVoiceId } from '../cacheIdentity';
+import { setSetting } from '../../core/settings';
 
 /** Hoisted state shared with the pocket-tts-js mock. */
 const lib = vi.hoisted(() => ({
   instance: null as null | { options: Record<string, unknown> },
   stopped: false,
   destroyed: 0,
+  /** Voice names the engine asked the library to load, in order. */
+  voices: [] as string[],
   /** How many generate() calls were in flight at once (the library allows one). */
   active: 0,
   maxActive: 0,
@@ -25,7 +30,9 @@ const lib = vi.hoisted(() => ({
 vi.mock('pocket-tts-js', () => {
   class PocketTTS {
     ready = false;
-    predefinedVoices = ['alba'];
+    // Two voices, first != last: a single-element list cannot tell "loaded the
+    // requested voice" from "fell back to the first one".
+    predefinedVoices = ['alba', 'cosette'];
     sampleRate = 24000;
     options: Record<string, unknown>;
 
@@ -41,6 +48,7 @@ vi.mock('pocket-tts-js', () => {
     }
 
     async loadVoice(name: string): Promise<string> {
+      lib.voices.push(name);
       return name;
     }
 
@@ -105,6 +113,7 @@ beforeEach(() => {
   lib.instance = null;
   lib.stopped = false;
   lib.destroyed = 0;
+  lib.voices = [];
   lib.active = 0;
   lib.maxActive = 0;
   lib.empty = false;
@@ -224,5 +233,46 @@ describe('PocketEngine', () => {
     await expect(pocketEngine.isReady()).resolves.toBe(true);
     await setModelReady('pocket', false);
     await expect(pocketEngine.isReady()).resolves.toBe(false);
+  });
+});
+
+describe('voice identity', () => {
+  const VOICE_KEY = 'tts.pocket.voice';
+
+  afterEach(async () => {
+    // The settings row lives in fake-indexeddb for the whole file; '' means "unset".
+    await setSetting(VOICE_KEY, '');
+  });
+
+  it('names the voice it will speak with, and a requested voice wins', async () => {
+    expect(await pocketEngine.cacheVariant?.()).toBe('default');
+    await setSetting(VOICE_KEY, 'alba');
+    expect(await pocketEngine.cacheVariant?.()).toBe('alba');
+    // The settings panel measures with the engine's own voice; that request decides.
+    expect(await pocketEngine.cacheVariant?.('cosette')).toBe('cosette');
+  });
+
+  it('gives the same sentence a different key after a voice change', async () => {
+    // The bug: the key carried the phone voice, so switching the Pocket voice replayed
+    // the cached sentences in the old one.
+    const key = async (): Promise<string> =>
+      cacheKey('Metformin 500 mg.', 'pocket', await cacheVoiceId(pocketEngine, undefined), 1);
+
+    await setSetting(VOICE_KEY, 'alba');
+    const alba = await key();
+    expect(await key()).toBe(alba); // same voice: the clip is still valid
+
+    await setSetting(VOICE_KEY, 'cosette');
+    expect(await key()).not.toBe(alba);
+  });
+
+  it('renders in the voice the cache identity names', async () => {
+    // Keying `cosette` is only correct if the clip really is cosette — and `alba` is
+    // the list's first voice, so `voiceRef()`'s fallback cannot pass this test.
+    await setSetting(VOICE_KEY, 'cosette');
+    await pocketEngine.synthesize!('Metformin.', { rate: 1 });
+
+    expect(lib.voices).toEqual(['cosette']);
+    expect(await pocketEngine.cacheVariant?.()).toBe('cosette');
   });
 });

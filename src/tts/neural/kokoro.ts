@@ -124,14 +124,18 @@ class KokoroEngine implements TtsEngine {
 
   /**
    * The web build's cache identity is the voice *and* the weight precision: the same
-   * sentence at q8 and fp32 is different audio, so switching precision must not
-   * replay clips made with the other one.
+   * sentence is different audio in another voice or at another precision, so changing
+   * either must not replay clips made with the other.
    *
-   * The loaded precision wins over the setting: the setting only takes effect on the
-   * next load, and until then the clips still come from the old weights.
+   * Both are resolved exactly as `synthesize()` resolves them — `voice()` applies the
+   * saved voice and the same fallback when the requested id is not a Kokoro voice — so
+   * the key cannot name a voice the clip is not spoken in. The loaded precision wins
+   * over the setting: the setting only takes effect on the next load, and until then
+   * the clips still come from the old weights.
    */
-  async cacheVariant(): Promise<string> {
-    return this.precision();
+  async cacheVariant(voiceId?: string): Promise<string> {
+    const voice = await this.voice(voiceId);
+    return `${voice}@${await this.precision()}`;
   }
 
   /**

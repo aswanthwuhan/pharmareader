@@ -1,7 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { db } from '../../core/db';
+import { setSetting } from '../../core/settings';
+import { cacheKey } from '../cache';
+import { cacheVoiceId } from '../cacheIdentity';
 import {
   base64ToWavBlob,
   DEFAULT_KOKORO_SID,
+  KOKORO_MODEL_SETTING,
+  KOKORO_VOICE_SETTING,
   kokoroNativeEngine,
   sidFromVoiceId,
 } from './kokoroNativeEngine';
@@ -49,6 +55,42 @@ describe('sidFromVoiceId', () => {
   it('clamps ids into the range the model can serve', () => {
     expect(sidFromVoiceId('-5')).toBe(0);
     expect(sidFromVoiceId('9999')).toBe(103);
+  });
+});
+
+describe('cache identity', () => {
+  beforeEach(async () => {
+    await db.settings.clear();
+  });
+
+  it('keys a clip by the speaker it will use and the weights it comes from', async () => {
+    expect(await kokoroNativeEngine.cacheVariant?.()).toBe('3@int8');
+    await setSetting(KOKORO_VOICE_SETTING, '11');
+    expect(await kokoroNativeEngine.cacheVariant?.()).toBe('11@int8');
+    await setSetting(KOKORO_MODEL_SETTING, 'fp32');
+    expect(await kokoroNativeEngine.cacheVariant?.()).toBe('11@fp32');
+    // The settings panel measures with an explicit speaker: that request decides.
+    expect(await kokoroNativeEngine.cacheVariant?.('7')).toBe('7@fp32');
+  });
+
+  it('gives the same sentence a different key after a speaker change', async () => {
+    // The phone voice used to be the only voice in the key, so a Kokoro speaker change
+    // replayed the cached sentences in the old one.
+    const key = async (): Promise<string> =>
+      cacheKey('Amlodipine 5 mg.', 'kokoro', await cacheVoiceId(kokoroNativeEngine, undefined), 1);
+
+    await setSetting(KOKORO_VOICE_SETTING, '3');
+    const heart = await key();
+    expect(await key()).toBe(heart); // same speaker and build: the clip is still valid
+
+    await setSetting(KOKORO_VOICE_SETTING, '11');
+    expect(await key()).not.toBe(heart);
+  });
+
+  it('falls back like synthesize for a speaker id it cannot read', async () => {
+    await setSetting(KOKORO_VOICE_SETTING, '11');
+    // "en-US-language" is a phone voice, not a Kokoro speaker: synthesize uses af_heart.
+    expect(await kokoroNativeEngine.cacheVariant?.('en-US-language')).toBe('3@int8');
   });
 });
 

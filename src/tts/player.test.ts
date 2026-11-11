@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../core/db';
 import type { SpeakEvents, TtsCapabilities, TtsEngine } from '../core/types';
-import { invalidate } from './lexicon';
+import { cacheKey, getAudio, putAudio } from './cache';
+import { expand, invalidate } from './lexicon';
+import { runPrerender } from './neural/prerenderCore';
 import { createPlayer } from './player';
 
 // Word alignment is a Whisper request on a phone; the player must skip it for a
@@ -500,6 +502,40 @@ describe('synthesising engines', () => {
     await until(() => secondEl.src.startsWith('blob:'));
 
     expect(engine.synthTexts).toHaveLength(2);
+    second.stop();
+  });
+
+  it('plays the clip the chapter pre-render stored, and renders again after a voice change', async () => {
+    // r-q8: the key held the phone voice, so switching the Kokoro voice replayed the
+    // clip rendered in the old one. Pre-render and playback must also agree, or the
+    // clips the pre-render filled the cache with would never be found.
+    const engine = new FakeEngine(true);
+    engine.id = 'kokoro';
+    let voice = 'af_heart';
+    engine.cacheVariant = (voiceId?: string) => `${voiceId ?? voice}@fp32`;
+
+    const report = await runPrerender(engine, [items[0]!], { rate: 1 }, undefined, {
+      expand,
+      cacheKey,
+      getAudio,
+      putAudio,
+    });
+    expect(report).toMatchObject({ synthesised: 1, failed: 0 });
+
+    const first = createPlayer({ ...baseOptions, items: [items[0]!], engine, voiceId: undefined });
+    first.play();
+    const firstEl = FakeAudio.instances[0]!;
+    await until(() => firstEl.src.startsWith('blob:'));
+    // One render, from the pre-render: playback found its clip under the same key.
+    expect(engine.synthTexts).toHaveLength(1);
+    first.stop();
+
+    voice = 'am_adam';
+    const second = createPlayer({ ...baseOptions, items: [items[0]!], engine, voiceId: undefined });
+    second.play();
+    const secondEl = FakeAudio.instances[1]!;
+    await until(() => secondEl.src.startsWith('blob:'));
+    await until(() => engine.synthTexts.length === 2);
     second.stop();
   });
 

@@ -2,7 +2,9 @@
  * Audio cache contract: hash-addressed pre-rendered speech in IndexedDB.
  *
  * Key = SHA-256(text + engine + voice + rate). The voice field carries the engine's
- * cache variant when it has one (Kokoro's weight precision, see `cacheVoiceId`).
+ * cache variant when it has one: the voice the engine will really speak with (each
+ * neural engine keeps its own choice in its own setting) and, for Kokoro, the weight
+ * precision — see `cacheVoiceId`.
  * The text is the lexicon-expanded sentence, so a rule that changes how a sentence
  * is said changes its key and misses the old entry; a rule that does not touch the
  * sentence keeps it.

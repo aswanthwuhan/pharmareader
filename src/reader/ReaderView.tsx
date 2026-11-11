@@ -102,6 +102,16 @@ function engineName(info: EngineInfo | null): string {
 }
 
 /**
+ * The voice to ask the engine for. The phone-voice setting belongs to the system engine
+ * alone: Kokoro and Pocket keep their own choice in their own setting, so handing them a
+ * phone voice only made them fall back to their first voice — and keyed their cached
+ * audio by a voice they were not speaking in.
+ */
+function engineVoiceId(info: EngineInfo, systemVoice: string): string | undefined {
+  return info.engine.id === 'system' ? systemVoice || undefined : undefined;
+}
+
+/**
  * Reading position lives in settings, not in the book record: a book carries
  * its parsed document (tens of MB on a textbook) and rewriting it every few
  * seconds while playing would re-serialise that whole record. `books.lastPos`
@@ -627,7 +637,7 @@ export default function ReaderView() {
       engine: info.engine,
       items,
       startIndex,
-      voiceId: voiceRef.current || undefined,
+      voiceId: engineVoiceId(info, voiceRef.current),
       rate: rateRef.current,
       prefetchAhead: prefetchRef.current,
       // Highlight off: no Whisper pass and no word clock behind a word nobody sees.
@@ -1095,7 +1105,7 @@ export default function ReaderView() {
       const report = await prerenderChapter(
         info.engine,
         items,
-        { voiceId: voiceRef.current || undefined, rate: rateRef.current, signal: controller.signal },
+        { voiceId: engineVoiceId(info, voiceRef.current), rate: rateRef.current, signal: controller.signal },
         (p) => setProgress({ done: p.done, total: p.total })
       );
       if (!report.aborted) {

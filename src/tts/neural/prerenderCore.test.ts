@@ -226,14 +226,18 @@ describe('runPrerender', () => {
   });
 
   it('puts the engine cache variant in the key, matching playback', async () => {
-    // Kokoro's precision changes the sound, so the pre-render must key the same way
-    // the player does or playback would never find these clips.
-    const engine = { ...fakeEngine(), id: 'kokoro' as const, cacheVariant: () => 'q8' };
+    // Kokoro's voice and precision change the sound, so the pre-render must key the same
+    // way the player does or playback would never find these clips.
+    const variant = vi.fn(() => 'q8');
+    const engine = { ...fakeEngine(), id: 'kokoro' as const, cacheVariant: variant };
     const cacheKey = vi.fn(async () => 'key');
 
     await runPrerender(engine, [items[0]!], { voiceId: 'af_heart', rate: 1 }, undefined, fakeDeps({ cacheKey }));
 
     expect(cacheKey).toHaveBeenCalledWith('expanded:one', 'kokoro', 'af_heart@q8', 1);
+    // The engine resolves the voice it will really speak with from this, exactly as
+    // `synthesize()` gets it — the player passes the same request voice.
+    expect(variant).toHaveBeenCalledWith('af_heart');
   });
 
   it('refuses engines that cannot synthesize', async () => {

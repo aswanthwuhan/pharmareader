@@ -20,6 +20,7 @@ const playerMock = vi.hoisted(() => {
     items: { id: string; text: string; spoken?: string }[];
     startIndex: number;
     rate: number;
+    voiceId?: string;
     onSentence?(id: string, index?: number): void;
     onItemState?(id: string, state: string): void;
     onBuffer?(readyAhead: number): void;
@@ -55,13 +56,17 @@ const playerMock = vi.hoisted(() => {
 
 vi.mock('../tts/player', () => ({ createPlayer: playerMock.createPlayer }));
 
+// Which engine the reader resolves. The voice-id tests below switch this to a
+// neural engine to prove the phone voice is not handed to it.
+const registryMock = vi.hoisted(() => ({ engineId: 'system' as 'system' | 'kokoro' }));
+
 vi.mock('../tts/registry', () => ({
   ENGINE_SETTING: 'tts.engine',
   describeEngine: async () => ({
     preferred: true,
     engine: {
-      id: 'system',
-      label: 'System voices',
+      id: registryMock.engineId,
+      label: registryMock.engineId === 'system' ? 'System voices' : 'Kokoro',
       capabilities: { streaming: true, prerender: false, wordBoundaries: true, needsDownload: false },
       isReady: async () => true,
       prepare: async () => undefined,
@@ -281,6 +286,7 @@ beforeEach(async () => {
   await db.delete();
   await db.open();
   playerMock.calls.length = 0;
+  registryMock.engineId = 'system';
   playbackMock.start.mockClear();
   playbackMock.setState.mockClear();
   playbackMock.stop.mockClear();
@@ -376,6 +382,43 @@ describe('ReaderView reflow', () => {
 
     expect(playerMock.calls.length).toBe(1);
     expect(playerMock.calls[0]?.played).toBe(1);
+  });
+
+  // The phone-voice setting belongs to the system engine alone. Handing it to a
+  // neural engine made that engine fall back to its first voice, and keyed its
+  // cached clips by a voice it never spoke in — so changing the Kokoro (or
+  // Pocket) voice replayed clips rendered in the old one.
+  describe('the voice handed to the engine', () => {
+    it('hands the phone voice to the system engine', async () => {
+      await db.books.put(makeBook());
+      await db.settings.put({ key: 'tts.voice.system', value: 'en-US-language' });
+      await renderReader();
+      await waitForEngine();
+
+      await act(async () => {
+        playButton()?.click();
+      });
+      await waitFor(() => playerMock.calls.length === 1, 'player created');
+
+      expect(playerMock.calls[0]?.voiceId).toBe('en-US-language');
+    });
+
+    it('leaves a neural engine to its own voice', async () => {
+      registryMock.engineId = 'kokoro';
+      await db.books.put(makeBook());
+      await db.settings.put({ key: 'tts.voice.system', value: 'en-US-language' });
+      await renderReader();
+      await waitForEngine();
+
+      await act(async () => {
+        playButton()?.click();
+      });
+      await waitFor(() => playerMock.calls.length === 1, 'player created');
+
+      // No phone voice: kokoroEngine names the voice it speaks in from its own
+      // setting, and that name is what keys the clip.
+      expect(playerMock.calls[0]?.voiceId).toBeUndefined();
+    });
   });
 
   it('saves the reading position in settings, not by rewriting the book', async () => {
