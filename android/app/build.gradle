@@ -33,8 +33,8 @@ android {
         applicationId "com.aurapharmlab.pharmareader"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 8
-        versionName "0.3.3"
+        versionCode 9
+        versionName "0.3.4"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         // sherpa-onnx ships x86/x86_64 ONNX runtime builds too, but release only ever runs
         // on a real phone: dropping the emulator ABIs saves ~70 MB of APK. Debug adds

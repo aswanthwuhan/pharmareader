@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.4 — 2026-11-11
+Installs over 0.3.3 without losing data.
+
+**Fixed — two-column PDFs**
+- Shaded boxes and panels that span both columns (Katzung's "Example" boxes, for instance) are now read whole, between the text above and the text below, instead of the voice jumping back and forth between the columns.
+- Equations and their numbers, like "(9)", are read where they are printed, not at the end of a column.
+- A table that fills the page is read row by row.
+- The column gutter is learned once for the whole book instead of page by page, so the order no longer changes from page to page.
+
+**New — per-book column setting**
+- Library → a book's More actions → **Columns**: Auto, One column or Two columns. Changing it re-reads the book, and the setting is kept in backups.
+
+**New — PDF page view Layout button**
+- **Layout** shows the page as numbered boxes in reading order, so you can see how the text will be read.
+- **Fix order**: tap the blocks in the order you want them read, then Save.
+
+**Fixed — browser voices**
+- The Kokoro and Pocket voices failed to load in the browser ("Cannot read properties of undefined (reading 'prepare')" and "(reading 'ensure')").
+- Kokoro in the browser now defaults to the full-quality fp32 model (about 320 MB). The small q8 model sounded garbled and is labelled lower quality. Clips are re-made after switching.
+- Your chosen Kokoro or Pocket voice is now the one you hear. When a phone voice was also set, these voices fell back to their first voice, and after changing voice, sentences already prepared kept playing in the old one. On Android, the downloaded Kokoro voice also uses the speaker you picked. Sentences already prepared with a downloaded voice are prepared once more after this update.
+
 ## 0.3.3 — 2026-11-11
 Installs over 0.3.2 without losing data.
 
