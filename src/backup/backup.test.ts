@@ -330,6 +330,23 @@ describe('importBackup: round trip', () => {
     expect(await db.books.get('b2')).not.toHaveProperty('layout');
   });
 
+  it("keeps a PDF's column choice, and does not give one to a book that has none", async () => {
+    await db.books.put({ ...book('b1'), columns: 2 });
+    await db.books.put(book('b2'));
+
+    const blob = await exportBackup({ includeBooks: false });
+    const files = await openZip(blob);
+    expect(readJson<Record<string, unknown>>(files, 'data/books/b1.json')).toMatchObject({ columns: 2 });
+
+    await clearAll();
+    await importBackup(blob, 'replace');
+
+    expect((await db.books.get('b1'))?.columns).toBe(2);
+    // No choice stored means "detect": the restore must not make the book look
+    // as if the reader had picked one, or Re-analyse would read it differently.
+    expect(await db.books.get('b2')).not.toHaveProperty('columns');
+  });
+
   it('restores a card with its fsrs state and a highlight with its note', async () => {
     await seedLibrary();
     const blob = await exportBackup({ includeBooks: false });

@@ -1,6 +1,6 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { db, newId } from '../core/db';
-import type { BookRecord, DocFormat, ParsedDoc } from '../core/types';
+import type { BookRecord, ColumnMode, DocFormat, ParsedDoc } from '../core/types';
 import { normaliseText } from './blocks';
 import { parseHtmlDocument } from './html';
 import { parseMarkdown } from './md';
@@ -309,6 +309,17 @@ type Position = { chapterId: string; sentenceId: string };
 /** Where ReaderView keeps the position it opens a book at (it prefers this over `books.lastPos`). */
 const readerPosKey = (bookId: string) => `reader.lastPos.${bookId}`;
 
+/** A PDF book, with the checks every re-read shares. */
+async function pdfBook(bookId: string): Promise<BookRecord> {
+  const book = await db.books.get(bookId);
+  if (!book) throw new Error('That book is no longer in the library.');
+  if (book.format !== 'pdf') {
+    throw new Error('Only PDFs have a layout to detect; other formats are read from their own structure.');
+  }
+  if (fileMissing(book)) throw new Error(MISSING_FILE_MESSAGE);
+  return book;
+}
+
 /**
  * Re-read a PDF already in the library with the current layout settings, and
  * carry the reader's highlights, bookmarks and position across.
@@ -321,19 +332,50 @@ const readerPosKey = (bookId: string) => `reader.lastPos.${bookId}`;
  * transaction, so a killed app leaves either the old book or the new one.
  */
 export async function reanalyseBook(bookId: string, onProgress?: (note: string) => void): Promise<ReanalyseResult> {
-  const book = await db.books.get(bookId);
-  if (!book) throw new Error('That book is no longer in the library.');
-  if (book.format !== 'pdf') {
-    throw new Error('Only PDFs have a layout to detect; other formats are read from their own structure.');
-  }
-  if (fileMissing(book)) throw new Error(MISSING_FILE_MESSAGE);
+  const book = await pdfBook(bookId);
+  // A book the reader fixed the columns of keeps that choice when the whole
+  // library is re-analysed (Settings → Re-analyse).
+  return reparseBook(book, book.columns ?? 'auto', undefined, onProgress);
+}
 
+/**
+ * Read one book again with the reader's own column layout, and remember the
+ * choice on the book so every later read keeps it.
+ *
+ * `'auto'` puts the book back to detection; `1` and `2` override it. The setting
+ * is written in the same transaction as the new text, so a failed re-read leaves
+ * the book — and its column setting — exactly as they were.
+ */
+export async function setBookColumns(
+  bookId: string,
+  columns: ColumnMode,
+  onProgress?: (note: string) => void,
+): Promise<void> {
+  const book = await pdfBook(bookId);
+  await reparseBook(book, columns, columns, onProgress);
+}
+
+/**
+ * The one re-read path. `saveColumns` is written on the book when set;
+ * Re-analyse leaves it out because the stored value is what it just read with.
+ */
+async function reparseBook(
+  book: BookRecord,
+  columns: ColumnMode,
+  saveColumns: ColumnMode | undefined,
+  onProgress?: (note: string) => void,
+): Promise<ReanalyseResult> {
   onProgress?.('Opening the saved file');
   const { parsePdf } = await import('./pdf');
-  const parsed = await parsePdf(await book.fileBlob.arrayBuffer(), book.title, (done, total, phase) => {
-    if (done !== total && done % 10 !== 0) return;
-    onProgress?.(phase === 'layout' ? `Analysing layout: page ${done} of ${total}` : `Reading text: page ${done} of ${total}`);
-  });
+  const parsed = await parsePdf(
+    await book.fileBlob.arrayBuffer(),
+    book.title,
+    (done, total, phase) => {
+      if (done !== total && done % 10 !== 0) return;
+      onProgress?.(phase === 'layout' ? `Analysing layout: page ${done} of ${total}` : `Reading text: page ${done} of ${total}`);
+    },
+    { columns },
+  );
   if (!parsed.doc.chapters.length) throw new Error('No readable text found in this file.');
 
   const before = sentenceIndex(book.parsed);
@@ -359,7 +401,7 @@ export async function reanalyseBook(bookId: string, onProgress?: (note: string) 
   };
 
   await db.transaction('rw', [db.books, db.highlights, db.bookmarks, db.settings], async () => {
-    for (const highlight of await db.highlights.where('bookId').equals(bookId).toArray()) {
+    for (const highlight of await db.highlights.where('bookId').equals(book.id).toArray()) {
       const ids = matchRun(highlight.sentenceIds, before, after);
       if (ids.length) result.highlightsKept += 1;
       else result.highlightsUnlinked += 1;
@@ -368,19 +410,24 @@ export async function reanalyseBook(bookId: string, onProgress?: (note: string) 
       }
     }
 
-    for (const bookmark of await db.bookmarks.where('bookId').equals(bookId).toArray()) {
+    for (const bookmark of await db.bookmarks.where('bookId').equals(book.id).toArray()) {
       const place = relocate(bookmark.sentenceId, before, after);
       if (place.exact) result.bookmarksKept += 1;
       else result.bookmarksMoved += 1;
       await db.bookmarks.update(bookmark.id, { chapterId: place.sentence.chapterId, sentenceId: place.sentence.id });
     }
 
-    const saved = (await db.settings.get(readerPosKey(bookId)))?.value as Partial<Position> | undefined;
+    const saved = (await db.settings.get(readerPosKey(book.id)))?.value as Partial<Position> | undefined;
     if (typeof saved?.chapterId === 'string' && typeof saved.sentenceId === 'string') {
-      await db.settings.put({ key: readerPosKey(bookId), value: moved(saved as Position) });
+      await db.settings.put({ key: readerPosKey(book.id), value: moved(saved as Position) });
     }
 
-    await db.books.update(bookId, { parsed: parsed.doc, lastPos: moved(book.lastPos), layout: parsed.layout });
+    await db.books.update(book.id, {
+      parsed: parsed.doc,
+      lastPos: moved(book.lastPos),
+      layout: parsed.layout,
+      ...(saveColumns === undefined ? {} : { columns: saveColumns }),
+    });
   });
 
   return result;

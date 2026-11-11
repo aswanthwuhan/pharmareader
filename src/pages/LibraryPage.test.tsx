@@ -4,8 +4,8 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installBackBridge } from '../core/backButton';
 import { db } from '../core/db';
-import type { BookRecord } from '../core/types';
-import { deleteBook } from '../import';
+import type { BookRecord, ColumnMode } from '../core/types';
+import { deleteBook, setBookColumns } from '../import';
 import LibraryPage from './LibraryPage';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -17,6 +17,7 @@ vi.mock('../import', () => ({
   importFileDetailed: vi.fn(async () => []),
   importText: vi.fn(async () => ({ bookId: 'x', title: 'x', format: 'txt', warnings: [] })),
   importUrl: vi.fn(async () => ({ bookId: 'x', title: 'x', format: 'html', warnings: [] })),
+  setBookColumns: vi.fn(async () => undefined),
 }));
 vi.mock('../tts/ModelStatusBanner', () => ({ default: () => null }));
 
@@ -113,8 +114,32 @@ function sheetAction(label: string): HTMLButtonElement | undefined {
   );
 }
 
+/** What the sheet's column picker must offer, in order. */
+const COLUMN_CHOICES: { value: ColumnMode; label: string }[] = [
+  { value: 'auto', label: 'Auto' },
+  { value: 1, label: 'One column' },
+  { value: 2, label: 'Two columns' },
+];
+
+function columnsControl(): HTMLSelectElement | null {
+  return container.querySelector<HTMLSelectElement>('.lib-columns select');
+}
+
+async function chooseColumns(value: string): Promise<void> {
+  const select = columnsControl();
+  if (!select) throw new Error('column control missing');
+  await act(async () => {
+    // React tracks the select's value; going through the native setter makes the
+    // change event carry the new value it compares against.
+    const setValue = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+    setValue?.call(select, value);
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
 beforeEach(async () => {
   vi.mocked(deleteBook).mockClear();
+  vi.mocked(setBookColumns).mockClear();
   await db.delete();
   await db.open();
   container = document.createElement('div');
@@ -359,6 +384,89 @@ describe('library: row actions', () => {
     } finally {
       dispose();
     }
+  });
+});
+
+describe('library: a PDF book\'s columns', () => {
+  it('offers the three column choices, labelled, for a PDF only', async () => {
+    await db.books.put(makeBook({ format: 'pdf' }));
+    await renderLibrary();
+    await openMenu();
+
+    const select = columnsControl();
+    if (!select) throw new Error('column control missing');
+    const label = container.querySelector(`label[for="${select.id}"]`);
+    expect(label?.textContent).toBe('Columns');
+    expect([...select.options].map((option) => ({ value: option.value, label: option.textContent }))).toEqual(
+      COLUMN_CHOICES.map((choice) => ({ value: String(choice.value), label: choice.label })),
+    );
+    expect(select.value).toBe('auto');
+    expect(container.querySelector('.lib-columns .field-hint')?.textContent).toBe(
+      'Use Two if the voice jumps between columns; One for single-column books.',
+    );
+    // The column picker comes before the two actions, so Tab reaches it first.
+    expect(select.compareDocumentPosition(container.querySelector('.sheet-actions')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('shows the stored choice and reads the book again with a new one', async () => {
+    await db.books.put(makeBook({ format: 'pdf', columns: 1 }));
+    let finish = (): void => {};
+    vi.mocked(setBookColumns).mockImplementationOnce(async (_id, _columns, onProgress) => {
+      onProgress?.('Analysing layout: page 10 of 20');
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    });
+    await renderLibrary();
+    await openMenu();
+    expect(columnsControl()?.value).toBe('1');
+
+    await chooseColumns('2');
+
+    expect(setBookColumns).toHaveBeenCalledTimes(1);
+    expect(setBookColumns).toHaveBeenCalledWith('book-1', 2, expect.any(Function));
+    // Busy while the book is being re-read, with the parser's note and no second change possible.
+    expect(columnsControl()?.value).toBe('2');
+    expect(columnsControl()?.disabled).toBe(true);
+    await waitFor(
+      () => container.querySelector('.lib-columns-note')?.textContent === 'Reading the book again — Analysing layout: page 10 of 20…',
+      'progress note',
+    );
+
+    await act(async () => {
+      finish();
+    });
+    await waitFor(() => columnsControl()?.disabled === false, 'the control re-enabled');
+    expect(container.querySelector('.lib-columns-error')).toBeNull();
+  });
+
+  it('puts the choice back and says why when the book cannot be re-read', async () => {
+    await db.books.put(makeBook({ format: 'pdf' }));
+    vi.mocked(setBookColumns).mockRejectedValueOnce(
+      new Error('The original file is no longer available — re-import it to use Page view and Re-analyse'),
+    );
+    await renderLibrary();
+    await openMenu();
+
+    await chooseColumns('2');
+
+    await waitFor(() => container.querySelector('.lib-columns-error') !== null, 'error message');
+    expect(container.querySelector('.lib-columns-error')?.getAttribute('role')).toBe('alert');
+    expect(container.querySelector('.lib-columns-error')?.textContent).toBe(
+      'Could not change the columns: The original file is no longer available — re-import it to use Page view and Re-analyse',
+    );
+    // Nothing was stored, so the picker shows what the book still is.
+    expect(columnsControl()?.value).toBe('auto');
+    expect(columnsControl()?.disabled).toBe(false);
+  });
+
+  it('has no column control for a book that is not a PDF', async () => {
+    await db.books.put(makeBook());
+    await renderLibrary();
+    await openMenu();
+
+    expect(container.querySelector('.lib-columns')).toBeNull();
+    expect(columnsControl()).toBeNull();
   });
 });
 

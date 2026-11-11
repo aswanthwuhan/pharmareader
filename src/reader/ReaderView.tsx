@@ -59,6 +59,7 @@ import {
   type FlatSentence,
   type Pos,
 } from './sentences';
+import { pageBlocks, pageOrderChanged, saveReorderedPage } from './blockOrder';
 import './reader.css';
 
 // pdfjs is only needed for a PDF book in page mode; never load it sooner.
@@ -252,6 +253,11 @@ export default function ReaderView() {
 
   /** The first sentence printed on each PDF page, for page-button stepping. */
   const pages = useMemo(() => (index ? firstPosOnPages(index) : new Map<number, Pos>()), [index]);
+  /**
+   * The blocks printed on the page in view, in the order the document reads
+   * them now: what page view shows, and what the reader can rearrange by hand.
+   */
+  const layoutBlocks = useMemo(() => (book ? pageBlocks(book.parsed, pdfPage) : []), [book, pdfPage]);
   const isPdf = book?.parsed.format === 'pdf';
   const pageOfCursor = reading?.pdfRects?.[0]?.page ?? pdfPage;
 
@@ -983,6 +989,33 @@ export default function ReaderView() {
   }
 
   /**
+   * Store a new reading order for the page in view.
+   *
+   * `books.parsed` is the one copy the page, the player and the page numbers
+   * read, so the document the saver hands back goes straight into the loaded
+   * book — a stale copy would show, and play, the old order again. Sentences
+   * only move between block slots: their ids stay, so the cursor follows its own
+   * id and the reader stays on the words they were reading.
+   */
+  async function savePageOrder(ids: string[]): Promise<void> {
+    if (!book) return;
+    const parsed = await saveReorderedPage(book.id, pdfPage, ids);
+    if (!parsed) throw new Error('This book is no longer in the library.');
+    setBook((previous) => (previous ? { ...previous, parsed } : previous));
+    const moved = readingId ? indexBook(parsed).byId.get(readingId) : undefined;
+    if (moved) setCursor(moved);
+    // Plans are built per chapter and cached: the cached one would spell out the
+    // old order for the rest of this chapter.
+    planCache.current.clear();
+    // A player that is already running holds the old queue, so it would go on
+    // reading the sentences in the order just corrected. Stop it instead (as a
+    // page turn does): Play then starts again from the cursor, from a plan built
+    // out of this document. Only when the page's order really moved — a Save
+    // that leaves it as it was must not interrupt what is playing.
+    if (pageOrderChanged(book.parsed, parsed, pdfPage) && playStateRef.current !== 'idle') releasePlayer();
+  }
+
+  /**
    * B3: one page (PDF) or one screen (text) at a time. In text view the cursor
    * and any playback move to the first sentence of the new screen.
    */
@@ -1526,6 +1559,8 @@ export default function ReaderView() {
             page={pdfPage}
             rects={reading?.pdfRects ?? NO_PDF_RECTS}
             fullscreen={fullscreen}
+            layoutBlocks={layoutBlocks}
+            onSaveOrder={savePageOrder}
             onPageChange={(page) => {
               const next = Math.max(1, page);
               setPdfPage(next);

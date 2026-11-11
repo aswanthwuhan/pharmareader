@@ -6,6 +6,12 @@
  * exported to a backup zip, so no class instances or functions here.
  */
 
+// Type-only: the layout code owns the union, and a book records the same three
+// choices. The import is erased, so this file still has no runtime dependency.
+import type { ColumnMode } from '../import/layout/assign';
+
+export type { ColumnMode };
+
 /** Source file format of an imported document. */
 export type DocFormat = 'pdf' | 'epub' | 'docx' | 'txt' | 'md' | 'html';
 
@@ -92,6 +98,11 @@ export interface BookRecord {
    * the text heuristics alone. Absent on books imported before this was recorded.
    */
   layout?: 'model' | 'heuristic';
+  /**
+   * PDFs only: how the page's columns are read. Absent means `'auto'` — books
+   * imported before this could be chosen keep detecting the columns.
+   */
+  columns?: ColumnMode;
 }
 
 /** A user highlight over one or more sentences. */

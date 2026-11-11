@@ -1,5 +1,8 @@
 import type { Block, Chapter, PdfRect, Sentence } from '../core/types';
 import { normaliseText } from './blocks';
+// Type-only: `assign.ts` reads pdf.js boxes, and this module must stay
+// importable (and testable) without pdf.js.
+import type { ColumnMode, PanelRect } from './layout/assign';
 import { segmentText } from './segment';
 
 /**
@@ -60,37 +63,211 @@ export function itemsToLines(items: PdfTextItem[]): PdfLine[] {
 }
 
 /**
+ * How a page's columns are read: `auto` splits when the text shows a gutter,
+ * `1` never splits, `2` always does (at the page middle when nothing better is
+ * known). Pages are read one way per document, so pdf.ts decides this.
+ */
+
+/** The vertical whitespace corridor between two columns of text. */
+export interface Gutter {
+  start: number;
+  end: number;
+}
+
+export interface LineOptions {
+  /** Boxes painted across both columns; each becomes a band of its own. */
+  panels?: readonly PanelRect[];
+  /** Corridor to split at. Omitted: detect one on this page. */
+  gutter?: Gutter | null;
+  columns?: ColumnMode;
+}
+
+/** The corridor this page's text is laid out around, if it shows one. */
+export function pageGutter(items: PdfTextItem[], pageWidth: number): Gutter | null {
+  return detectGutter(groupRows(items), pageWidth);
+}
+
+/**
  * Lines in reading order. Most PDFs are a single column, and `itemsToLines`
  * is already right for them. A journal page holds two columns side by side:
  * reading its rows in y order splices the columns into each other sentence by
  * sentence. Detect the vertical gutter and read each column to its bottom
  * before starting the next one.
+ *
+ * A boxed panel (a shaded sidebar, a case-study box, a figure in a frame) has
+ * its own two columns, so nothing above it may be spliced with anything inside
+ * or below it: its top and bottom edges end the band.
  */
-export function itemsToPageLines(items: PdfTextItem[], pageWidth: number): PdfLine[] {
+export function itemsToPageLines(items: PdfTextItem[], pageWidth: number, options: LineOptions = {}): PdfLine[] {
   const rows = groupRows(items);
-  const gutter = detectGutter(rows, pageWidth);
+  const columns = options.columns ?? 'auto';
+  if (columns === 1) return rows.map(makeLine);
+
+  // A gutter found for the whole document beats this page's own: a page whose
+  // first lines are too short to break in the middle still sits in the same two
+  // columns as its neighbours (see `documentGutter`).
+  const gutter =
+    options.gutter ??
+    detectGutter(rows, pageWidth) ??
+    (columns === 2 ? { start: pageWidth / 2 - 1, end: pageWidth / 2 + 1 } : null);
   if (!gutter) return rows.map(makeLine);
 
+  const rules: ColumnRules = {
+    middle: (gutter.start + gutter.end) / 2,
+    // A row is a band of its own only when its line reaches a quarter into the
+    // right column. A left-column line whose last word overhangs the corridor
+    // by a point or two is still a left-column line, and splicing it with the
+    // right column is exactly the interleaving this function exists to avoid.
+    reach: gutter.end + Math.max(0, pageWidth - gutter.end) * 0.25,
+    gap: Math.max(6, (gutter.end - gutter.start) * 0.6),
+    corridor: gutter,
+  };
+
   const lines: PdfLine[] = [];
+  for (const chunk of panelChunks(rows, options.panels ?? [])) {
+    // A table's cells line up in more than two columns, so the widest space in it
+    // is the gap between two cells, not a corridor between columns of text.
+    // Splitting there would read every row as its left cells and then its right
+    // ones; a table is read row by row, as it is printed.
+    if (rowsLookLikeTable(chunk.rows, pageWidth)) {
+      lines.push(...chunk.rows.map(makeLine));
+      continue;
+    }
+    // Inside a panel the two halves are the panel's own columns, so a wide row
+    // there cannot be a sentence the panel interrupted.
+    readColumns(chunk.rows, lines, rules, chunk.panel === null);
+  }
+  return lines;
+}
+
+/**
+ * True when these rows are a table: three or more left edges carry at least half
+ * of them. A two-column page has two such edges however its paragraphs indent,
+ * and a figure's labels repeat no edge down every row, so neither passes for a
+ * table however many short pieces of text they scatter.
+ */
+function rowsLookLikeTable(rows: readonly PdfTextItem[][], pageWidth: number): boolean {
+  if (rows.length < 4) return false;
+
+  // One vote per row: a cell and a superscript beside it mark the same column.
+  const tolerance = Math.max(6, pageWidth * 0.01);
+  const edges: { x: number; rows: Set<number> }[] = [];
+  rows.forEach((row, index) => {
+    for (const item of row) {
+      let edge = edges.find((candidate) => Math.abs(candidate.x - item.x) <= tolerance / 2);
+      if (!edge) {
+        edge = { x: item.x, rows: new Set<number>() };
+        edges.push(edge);
+      }
+      edge.rows.add(index);
+    }
+  });
+
+  const strong = edges.filter((edge) => edge.rows.size * 2 >= rows.length);
+  return strong.length > 2;
+}
+
+interface ColumnRules {
+  /** Where a row's items are split into left and right. */
+  middle: number;
+  /** A row has to reach this far right to be a full-width line. */
+  reach: number;
+  /** Items closer than this belong to the same run of the line. */
+  gap: number;
+  /** The empty corridor between the columns. */
+  corridor: Gutter;
+}
+
+/**
+ * The runs of a row's items, joined where the gap is no wider than a word
+ * space. A line's words often arrive as separate items; the two columns' lines
+ * at the same height stay separate because the corridor between them is wider.
+ * An item starting well inside the previous one is not its continuation either
+ * (kerning overlaps a run by a point or two at most).
+ */
+function mergedRuns(row: readonly PdfTextItem[], gap: number): [number, number][] {
+  const spans = row.map((item) => [item.x, item.x + item.w] as [number, number]).sort((a, b) => a[0] - b[0]);
+  const runs: [number, number][] = [];
+  for (const [start, end] of spans) {
+    const last = runs[runs.length - 1];
+    const join = last ? start - last[1] : Infinity;
+    if (last && join <= gap && join >= -1) last[1] = Math.max(last[1], end);
+    else runs.push([start, end]);
+  }
+  return runs;
+}
+
+/**
+ * True when a row is one full-width line: a run of it starts left of the
+ * corridor and reaches a quarter into the right column. Splitting at a single
+ * item would miss the line whose first words are separate items and whose long
+ * run begins right of the corridor's middle.
+ *
+ * A row also ends in a run that crosses the corridor when the page only looks
+ * two-column: a one-column list leaves a corridor between its number and its
+ * text, and the text run then starts left of that corridor and runs past it. In
+ * a real two-column row the rightmost run is the right column's line, which
+ * starts at the far edge of the corridor instead.
+ */
+function rowCrosses(row: readonly PdfTextItem[], rules: ColumnRules): boolean {
+  const runs = mergedRuns(row, rules.gap);
+  if (runs.some(([start, end]) => start < rules.middle && end > rules.reach)) return true;
+  if (runs.length < 2) return false;
+  const [start, end] = runs[runs.length - 1];
+  return start < rules.corridor.start && end > rules.corridor.end;
+}
+
+/** True when the row's first run starts left of the corridor and ends past it. */
+function rowStartsWide(row: readonly PdfTextItem[], rules: ColumnRules): boolean {
+  const [start, end] = mergedRuns(row, rules.gap)[0];
+  return start < rules.middle && end > rules.corridor.end;
+}
+
+interface PanelChunk {
+  /** The panel these rows sit inside, or null for the page body. */
+  panel: PanelRect | null;
+  rows: PdfTextItem[][];
+}
+
+/** Rows cut into runs that belong to the same panel (or to none). */
+function panelChunks(rows: PdfTextItem[][], panels: readonly PanelRect[]): PanelChunk[] {
+  if (!panels.length) return [{ panel: null, rows }];
+
+  const chunks: PanelChunk[] = [];
+  for (const row of rows) {
+    const y = row.reduce((sum, item) => sum + item.y + item.h / 2, 0) / row.length;
+    const panel = panels.find((rect) => y >= rect.y && y <= rect.y + rect.h) ?? null;
+    const last = chunks[chunks.length - 1];
+    if (last && last.panel === panel) last.rows.push(row);
+    else chunks.push({ panel, rows: [row] });
+  }
+  return chunks;
+}
+
+/** One band of rows: the left column down to its bottom, then the right one. */
+function readColumns(rows: PdfTextItem[][], out: PdfLine[], rules: ColumnRules, sentencesContinue: boolean): void {
+  const { middle } = rules;
   let left: PdfLine[] = [];
   let right: PdfLine[] = [];
-  const middle = (gutter.start + gutter.end) / 2;
 
   const flushBand = () => {
-    lines.push(...left, ...right);
+    out.push(...left, ...right);
     left = [];
     right = [];
   };
 
-  for (const row of rows) {
-    // A title or figure caption spanning the gutter splits the page into bands:
-    // columns above it, then the wide line, then columns below it. Testing only
-    // "reaches into the gutter" would also catch a left-column line whose last
-    // word overhangs a point or two, and splicing that with the right column is
-    // exactly the interleaving this function exists to avoid.
-    if (row.some((item) => item.x < middle && item.x + item.w > gutter.end)) {
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    // A row whose first run already runs past the corridor may still be a
+    // full-width line that stops short of a quarter into the right column (a
+    // caption's last, short line). With no left-column line above it there is no
+    // column for it to overhang, so it is a band line. Two columns never do
+    // this: their left line stops at the corridor.
+    const crossing = rowCrosses(row, rules) || (left.length === 0 && rowStartsWide(row, rules));
+
+    if (crossing && !(sentencesContinue && splitsSentence(rows, i, left, rules))) {
       flushBand();
-      lines.push(makeLine(row));
+      out.push(makeLine(row));
       continue;
     }
 
@@ -99,14 +276,99 @@ export function itemsToPageLines(items: PdfTextItem[], pageWidth: number): PdfLi
     if (leftItems.length) left.push(makeLine(leftItems));
     if (rightItems.length) right.push(makeLine(rightItems));
   }
-  flushBand();
 
-  return lines;
+  flushBand();
 }
 
-interface Gutter {
-  start: number;
-  end: number;
+/**
+ * True when flushing this wide row would cut a sentence in two: the left column
+ * stops mid-sentence above it and resumes with a lower-case word below it.
+ * Justified lines occasionally push a word past the corridor, and such a row is
+ * still part of its column — a title never resumes a sentence.
+ */
+function splitsSentence(rows: PdfTextItem[][], index: number, left: PdfLine[], rules: ColumnRules): boolean {
+  const last = left[left.length - 1];
+  if (!last || SENTENCE_END.test(last.text.trimEnd())) return false;
+
+  for (let i = index + 1; i < rows.length; i++) {
+    const row = rows[i];
+    // Another full-width line under this one means the wide row belongs to a
+    // full-width block (a caption, a heading), and no column resumes under it.
+    if (rowCrosses(row, rules) || rowStartsWide(row, rules)) return false;
+    const leftItems = row.filter((item) => item.x + item.w / 2 < rules.middle);
+    if (!leftItems.length) continue;
+    return /^[a-z]/.test(makeLine(leftItems).text.trimStart());
+  }
+  return false;
+}
+
+/** A line that a reader would see end (a stop, a colon, a bracket, a quote). */
+const SENTENCE_END = /[.!?:;)\u201d"]$/;
+
+/**
+ * The gutter a book's pages mostly share. A page whose own text is too thin to
+ * show a corridor is still read in the book's two columns, so long as a real
+ * majority of the text pages showed it — a handful of pages cannot speak for
+ * the file.
+ */
+export function documentGutter(gutters: readonly (Gutter | null)[], textPages: number): Gutter | null {
+  const found = gutters.filter((gutter): gutter is Gutter => gutter !== null);
+  if (!found.length) return null;
+  if (found.length < 3 && found.length < textPages / 2) return null;
+  return {
+    start: median(found.map((gutter) => gutter.start)),
+    end: median(found.map((gutter) => gutter.end)),
+  };
+}
+
+/**
+ * True when the page's rows mostly run down the corridor's columns instead of
+ * across it. Text running up to both edges of a corridor cannot tell a
+ * two-column page from a one-column page whose lines happen to be cut by it:
+ * a full-width line also abuts both sides. The shape of the rows can.
+ */
+export function pageRunsInColumns(items: readonly PdfTextItem[], gutter: Gutter): boolean {
+  const rows = groupRows(items);
+  if (!rows.length) return false;
+
+  const gap = Math.max(6, (gutter.end - gutter.start) * 0.6);
+  let across = 0;
+  for (const row of rows) {
+    if (mergedRuns(row, gap).some(([start, end]) => start < gutter.start && end > gutter.end)) across++;
+  }
+  return across * 2 < rows.length;
+}
+
+/**
+ * Text runs right up to both edges of `gutter` — the test that keeps a figure's
+ * white space from passing as a corridor. Used page by page, and by pdf.ts to
+ * decide whether an otherwise gutterless page can take the book's gutter.
+ */
+export function gutterHasTextOnBothSides(
+  items: readonly PdfTextItem[],
+  gutter: Gutter,
+  width: number,
+  minimum = 3,
+): boolean {
+  const near = Math.max(8, width * 0.02);
+  const leftItems = items.filter((item) => item.x + item.w <= gutter.start + 2);
+  const rightItems = items.filter((item) => item.x >= gutter.end - 2);
+  // A corridor between two columns has a column's measure on each side of it. A
+  // bullet is 6 pt wide and its line starts just right of it: that gap is between
+  // a marker and its text, and splitting there reads every bullet of the page
+  // before any of its lines (the NMC one-column guidelines do exactly this).
+  // The whole run has to be that wide, not one item: a justified line's last item
+  // is often a short word, and its page is still two columns.
+  const measure = width * 0.15;
+  const gap = Math.max(6, (gutter.end - gutter.start) * 0.6);
+  const runs = groupRows(items).flatMap((row) => mergedRuns(row, gap));
+  const leftAbuts = runs.some(
+    ([start, end]) => end <= gutter.start + 2 && end >= gutter.start - near && end - start >= measure,
+  );
+  const rightAbuts = runs.some(
+    ([start, end]) => start >= gutter.end - 2 && start <= gutter.end + near && end - start >= measure,
+  );
+  return leftItems.length >= minimum && rightItems.length >= minimum && leftAbuts && rightAbuts;
 }
 
 /**
@@ -170,14 +432,8 @@ function detectGutter(rows: PdfTextItem[][], width: number): Gutter | null {
   // Require real text on both sides, otherwise a figure's white space looks like
   // a gutter. A two-column row usually holds items from both columns, so count
   // items rather than rows, and require them to run right up to the corridor.
-  const items = rows.flat();
-  const near = Math.max(8, width * 0.02);
-  const leftItems = items.filter((item) => item.x + item.w <= gutter.start + 2);
-  const rightItems = items.filter((item) => item.x >= gutter.end - 2);
-  const leftAbuts = leftItems.some((item) => item.x + item.w >= gutter.start - near);
-  const rightAbuts = rightItems.some((item) => item.x <= gutter.end + near);
   const enough = Math.max(3, Math.floor(rows.length * 0.1));
-  return leftItems.length >= enough && rightItems.length >= enough && leftAbuts && rightAbuts ? gutter : null;
+  return gutterHasTextOnBothSides(rows.flat(), gutter, width, enough) ? gutter : null;
 }
 
 /** Gaps between neighbouring items that sit in the middle half of the page. */
@@ -195,7 +451,7 @@ function middleGaps(row: PdfTextItem[], width: number, minimum: number): [number
 }
 
 /** Items grouped into rows by baselines, ordered top to bottom. */
-function groupRows(items: PdfTextItem[]): PdfTextItem[][] {
+function groupRows(items: readonly PdfTextItem[]): PdfTextItem[][] {
   const sorted = items.filter((item) => item.str.trim()).sort((a, b) => a.y - b.y || a.x - b.x);
   const rows: PdfTextItem[][] = [];
   let group: PdfTextItem[] = [];

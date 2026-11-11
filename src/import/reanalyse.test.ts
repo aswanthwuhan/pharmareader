@@ -2,14 +2,15 @@ import { Blob as NodeBlob } from 'node:buffer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../core/db';
 import type { Block, Highlight, ParsedDoc } from '../core/types';
-import { importFileDetailed, reanalyseBook } from './index';
+import { importFileDetailed, reanalyseBook, setBookColumns } from './index';
 import type { PdfParseResult } from './pdf';
 
 // The parser is replaced so each case decides what "the new layout" looks like.
-const next = vi.hoisted(() => ({ result: null as unknown, bytes: 0 }));
+const next = vi.hoisted(() => ({ result: null as unknown, bytes: 0, options: null as unknown }));
 vi.mock('./pdf', () => ({
-  parsePdf: async (data: ArrayBuffer) => {
+  parsePdf: async (data: ArrayBuffer, _title: string, _onProgress?: unknown, options?: unknown) => {
     next.bytes = data.byteLength;
+    next.options = options;
     return next.result;
   },
 }));
@@ -35,6 +36,7 @@ function doc(chapters: Record<string, string[][]>): ParsedDoc {
 
 function parsesTo(parsed: ParsedDoc, layout: PdfParseResult['layout'] = 'heuristic'): void {
   next.result = { doc: parsed, charsPerPage: 900, pageCount: 2, layout, modelPages: layout === 'model' ? 1 : 0 };
+  next.options = null;
 }
 
 async function addBook(parsed: ParsedDoc, extra: Record<string, unknown> = {}): Promise<void> {
@@ -154,6 +156,93 @@ describe('reanalyseBook', () => {
 
     expect(result.layout).toBe('model');
     expect((await db.books.get('book'))?.layout).toBe('model');
+  });
+
+  it('re-reads a book whose columns the reader chose with that choice', async () => {
+    await addBook(doc({ Intro: [['One.']] }), { columns: 1 });
+    parsesTo(doc({ Intro: [['One.']] }));
+
+    await reanalyseBook('book');
+
+    expect(next.options).toEqual({ columns: 1 });
+    // The choice is the reader's and stays theirs; re-analysis does not clear it.
+    expect((await db.books.get('book'))?.columns).toBe(1);
+  });
+
+  it('lets the parser detect the columns of a book that has no choice stored', async () => {
+    await addBook(doc({ Intro: [['One.']] }));
+    parsesTo(doc({ Intro: [['One.']] }));
+
+    await reanalyseBook('book');
+
+    expect(next.options).toEqual({ columns: 'auto' });
+    // Nothing was chosen, so nothing is stored: the book keeps detecting.
+    expect((await db.books.get('book'))?.columns).toBeUndefined();
+  });
+});
+
+describe('setBookColumns', () => {
+  it('stores the choice and re-reads the book with it', async () => {
+    await addBook(doc({ Intro: [['One.', 'Two.']] }));
+    parsesTo(doc({ Intro: [['One.'], ['Two.']] }));
+
+    await setBookColumns('book', 2);
+
+    expect(next.options).toEqual({ columns: 2 });
+    expect((await db.books.get('book'))?.columns).toBe(2);
+    // And the book itself was replaced, not only the setting around it.
+    expect((await db.books.get('book'))?.parsed.chapters[0]?.blocks).toHaveLength(2);
+  });
+
+  it("carries the reader's marks and position across the new columns", async () => {
+    await addBook(doc({ Intro: [['One.', 'Two.', 'Three.']] }), {
+      lastPos: { chapterId: 'ch-0', sentenceId: '0-0-2' },
+    });
+    await db.highlights.add(highlight('h', ['0-0-1'], 'Two.'));
+    parsesTo(doc({ Intro: [['One.', 'Two.'], ['Three.']] }));
+
+    await setBookColumns('book', 1);
+
+    // "Two." keeps its place in the first block; "Three." moved to the second one.
+    expect((await db.highlights.get('h'))?.sentenceIds).toEqual(['0-0-1']);
+    expect((await db.books.get('book'))?.lastPos).toEqual({ chapterId: 'ch-0', sentenceId: '0-1-0' });
+  });
+
+  it('refuses a format that has no columns', async () => {
+    await db.books.add({
+      id: 'notes',
+      title: 'Notes',
+      format: 'txt',
+      addedAt: 1,
+      fileBlob: new NodeBlob(['notes']) as unknown as Blob,
+      parsed: { ...doc({ Notes: [['One.']] }), format: 'txt' },
+      topicIds: [],
+    });
+
+    await expect(setBookColumns('notes', 2)).rejects.toThrow(/Only PDFs/);
+
+    expect((await db.books.get('notes'))?.columns).toBeUndefined();
+  });
+
+  it('leaves the stored choice alone when the book cannot be re-read', async () => {
+    await addBook(doc({ Intro: [['One.']] }), { columns: 1 });
+    // A parse that finds no text: the column setting must not change either.
+    next.result = {
+      doc: { title: 'Paper', format: 'pdf', chapters: [] },
+      charsPerPage: 0,
+      pageCount: 0,
+      layout: 'heuristic',
+      modelPages: 0,
+    };
+    next.options = null;
+
+    await expect(setBookColumns('book', 2)).rejects.toThrow(/No readable text/);
+
+    expect((await db.books.get('book'))?.columns).toBe(1);
+  });
+
+  it('says so when the book is gone', async () => {
+    await expect(setBookColumns('gone', 2)).rejects.toThrow(/no longer in the library/);
   });
 });
 

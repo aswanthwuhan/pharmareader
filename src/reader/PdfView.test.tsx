@@ -2,6 +2,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PdfRect } from '../core/types';
+import type { PageBlock } from './blockOrder';
 
 const pdf = vi.hoisted(() => {
   const cancel = vi.fn();
@@ -30,6 +31,12 @@ const { default: PdfView } = await import('./PdfView');
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const RECTS: PdfRect[] = [{ page: 1, x: 10, y: 20, w: 100, h: 30 }];
+
+/** A page's blocks, as ReaderView hands them over. */
+const BLOCKS: PageBlock[] = [
+  { chapterIndex: 0, blockIndex: 0, blockId: 'b1', kind: 'p', order: 1, box: { x: 10, y: 20, w: 100, h: 30 } },
+  { chapterIndex: 0, blockIndex: 1, blockId: 'b2', kind: 'h', order: 2, box: { x: 10, y: 60, w: 100, h: 20 } },
+];
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -298,5 +305,58 @@ describe('PdfView', () => {
     expect(banner).toContain('re-import it to use Page view and Re-analyse');
     // pdf.js would only say "The PDF file is empty, size zero bytes".
     expect(pdf.getDocument).not.toHaveBeenCalled();
+  });
+
+  it('opens the reading-order bar under the page on the very first toggle', async () => {
+    const onSaveOrder = vi.fn(async () => undefined);
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(
+        <PdfView
+          docKey="book-1"
+          file={new Blob(['%PDF-1.4'])}
+          page={1}
+          rects={RECTS}
+          onPageChange={() => undefined}
+          fullscreen={false}
+          layoutBlocks={BLOCKS}
+          onSaveOrder={onSaveOrder}
+        />
+      );
+    });
+    await waitFor(() => canvas().width > 0, 'first paint');
+
+    // The bar is the row right after the page box, and it is out of the way —
+    // no empty row costing the page column its gap — while the overlay is off.
+    const bar = container.querySelector('.rd-pdf-wrap')?.nextElementSibling as HTMLElement;
+    expect(bar).toBeInstanceOf(HTMLElement);
+    expect(bar.hidden).toBe(true);
+    expect(container.querySelectorAll('[data-block-id]')).toHaveLength(0);
+
+    const layoutButton = Array.from(container.querySelectorAll('button')).find(
+      (candidate) => candidate.textContent?.trim() === 'Layout'
+    );
+    await act(async () => layoutButton?.click());
+    await waitFor(() => container.querySelectorAll('[data-block-id]').length === BLOCKS.length, 'the page boxes');
+
+    // The host is only known once its ref has run. Read during the render that
+    // opens the overlay it is still null, and the bar would be drawn inside the
+    // page box instead of under it — over the words still to be tapped.
+    expect(bar.hidden).toBe(false);
+    expect(bar.textContent).toContain('Fix order');
+    expect(container.querySelector('.rd-pdf-page')?.textContent).not.toContain('Fix order');
+    expect(layoutButton?.getAttribute('aria-expanded')).toBe('true');
+
+    // And the wiring through to the saver: tap the second block, then save.
+    const panelButton = (label: string): HTMLButtonElement | undefined =>
+      Array.from(bar.querySelectorAll('button')).find((candidate) => candidate.textContent?.trim() === label);
+    await act(async () => panelButton('Fix order')?.click());
+    const page = container.querySelector('.rd-pdf-page');
+    await act(async () => page?.querySelectorAll<HTMLButtonElement>('button[data-block-id]')[1]?.click());
+    await act(async () => panelButton('Save')?.click());
+
+    expect(onSaveOrder).toHaveBeenCalledWith(['b2', 'b1']);
   });
 });

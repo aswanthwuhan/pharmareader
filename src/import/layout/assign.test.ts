@@ -126,6 +126,26 @@ describe('orderRegions', () => {
     ]);
   });
 
+  it('keeps the right column when a left-column line overhangs the gutter', () => {
+    // A line set a few points wider than its column — a display equation, a rule —
+    // reaches past the right column's edge. That edge falls inside the left
+    // column's span, and the right column's own edge must still start a column:
+    // otherwise the whole page reads row by row, which is the bug this fixes.
+    const boxes = [
+      box('text', 40, 100, 240, 200),
+      box('text', 320, 100, 240, 200),
+      box('text', 40, 320, 290, 100), // 40..330, over the gutter and past 320
+      box('text', 320, 320, 240, 100),
+    ];
+
+    expect(orderRegions(boxes, 600).map((region) => `${region.x}:${region.y}`)).toEqual([
+      '40:100',
+      '40:320',
+      '320:100',
+      '320:320',
+    ]);
+  });
+
   it('reads two columns across a wide gutter, with a centred title above them first', () => {
     const boxes = [
       box('text', 360, 150, 200, 500),
@@ -283,5 +303,231 @@ describe('layoutParagraphs', () => {
       'p:last paragraph',
       'footer:12',
     ]);
+  });
+});
+
+describe('orderRegions: panels', () => {
+  it('reads what is above a panel, then the panel column by column, then the page below it', () => {
+    // A panel is painted, not inferred: the caller passes its top and bottom edges
+    // as cuts, and the page is read in three bands instead of two columns.
+    const boxes = [
+      box('text', 20, 20, 180, 60),
+      box('text', 210, 20, 180, 60),
+      box('paragraph_title', 30, 120, 150, 16), // the panel's title bar
+      box('text', 30, 150, 150, 90), // the panel's left column
+      box('text', 220, 150, 150, 90), // the panel's right column
+      box('text', 20, 300, 180, 80),
+      box('text', 210, 300, 180, 80),
+    ];
+
+    expect(orderRegions(boxes, 400, { cuts: [110, 260] }).map((region) => `${region.label}:${region.x}:${region.y}`)).toEqual([
+      'text:20:20',
+      'text:210:20',
+      'paragraph_title:30:120',
+      'text:30:150',
+      'text:220:150',
+      'text:20:300',
+      'text:210:300',
+    ]);
+  });
+
+  it('puts a region in the band its middle falls in, so a cut cannot drag down what lies above it', () => {
+    const boxes = [
+      box('text', 20, 20, 180, 40), // wholly above the cut
+      box('text', 210, 20, 180, 40), // the right column, above the cut too
+      box('text', 20, 90, 180, 60), // starts above the cut, sits mostly below it
+    ];
+
+    expect(orderRegions(boxes, 400, { cuts: [110] }).map((region) => `${region.x}:${region.y}`)).toEqual([
+      '20:20',
+      '210:20',
+      '20:90',
+    ]);
+  });
+});
+
+describe('orderRegions: a formula inside a column', () => {
+  it('keeps a centred formula and its right-aligned number in the column they are set in', () => {
+    // An equation set in the middle of the right column, its number flush with the
+    // column's right edge, and left-column text standing beside both: the formula
+    // and the number are the right column's, not two columns of their own.
+    const boxes = [
+      box('text', 20, 100, 180, 80), // the left column, beside the equation
+      box('text', 210, 100, 180, 40), // the right column, above the equation
+      box('formula', 250, 150, 100, 30), // centred in the right column
+      box('text', 370, 160, 18, 10), // "(9)", right-aligned in the right column
+      box('text', 210, 200, 180, 40), // the right column, below the equation
+    ];
+
+    expect(orderRegions(boxes, 400).map((region) => `${region.label}:${region.x}:${region.y}`)).toEqual([
+      'text:20:100',
+      'text:210:100',
+      'formula:250:150',
+      'text:370:160',
+      'text:210:200',
+    ]);
+  });
+});
+
+describe('orderRegions: what may cut the page into bands', () => {
+  it('does not let a paragraph of a wide right-hand column cut the page', () => {
+    // A margin column of short labels beside a wide column of text: the text is
+    // 76% of the whole text block, wide enough for the old "70% of the extent"
+    // rule, but it starts in the right column and covers no gutter, so it is a
+    // paragraph of that column and not a divider.
+    const boxes = [
+      box('text', 40, 100, 90, 200),
+      box('text', 40, 400, 90, 100),
+      box('paragraph_title', 160, 90, 120, 14),
+      box('text', 160, 110, 390, 120),
+      box('text', 160, 300, 390, 80),
+    ];
+
+    expect(orderRegions(boxes, 600).map((region) => `${region.label}:${region.x}:${region.y}`)).toEqual([
+      'text:40:100',
+      'text:40:400',
+      'paragraph_title:160:90',
+      'text:160:110',
+      'text:160:300',
+    ]);
+  });
+
+  it('lets a title that crosses the gutter cut the page, and reads it first', () => {
+    const boxes = [
+      box('paragraph_title', 40, 20, 520, 16), // starts in the left column, over 25% into the right
+      box('text', 40, 100, 90, 200),
+      box('paragraph_title', 160, 90, 120, 14),
+      box('text', 160, 110, 390, 120),
+    ];
+
+    expect(orderRegions(boxes, 600).map((region) => `${region.label}:${region.x}:${region.y}`)).toEqual([
+      'paragraph_title:40:20',
+      'text:40:100',
+      'paragraph_title:160:90',
+      'text:160:110',
+    ]);
+  });
+});
+
+describe('orderRegions: a sentence that runs across a band edge', () => {
+  const page = { width: 400, height: 800 };
+
+  it('does not cut the page where the sentence above continues in lower case below', () => {
+    const items_ = [
+      ...items(['the', 'dosing', 'rate'], 20, 100, 60), // ends mid-sentence
+      ...items(['important', 'clearance', 'parameter'], 210, 100, 60),
+      ...items(['the', 'target', 'concentration'], 20, 230, 60), // starts in lower case
+      ...items(['is', 'printed', 'here'], 20, 170, 60),
+    ];
+    const boxes = [
+      box('text', 20, 92, 180, 60),
+      box('text', 210, 92, 180, 60),
+      box('text', 20, 162, 300, 50), // wide, and the model thinks it spans both columns
+      box('text', 20, 222, 180, 60),
+    ];
+
+    const paragraphs = layoutParagraphs(1, page.width, page.height, items_, boxes, { pitch: 20, measure: 180 });
+
+    // The wide region is the middle of one sentence, so the left column is read to
+    // its foot before the right column starts.
+    expect(paragraphs.map((paragraph) => paragraph.text)).toEqual([
+      'the dosing rate',
+      'is printed here',
+      'the target concentration',
+      'important clearance parameter',
+    ]);
+  });
+
+  it('does cut the page when the sentence above it ends', () => {
+    const items_ = [
+      ...items(['the', 'dosing', 'rate.'], 20, 100, 60),
+      ...items(['important', 'clearance', 'parameter'], 210, 100, 60),
+      ...items(['the', 'target', 'concentration'], 20, 230, 60),
+      ...items(['is', 'printed', 'here'], 20, 170, 60),
+    ];
+    const boxes = [
+      box('text', 20, 92, 180, 60),
+      box('text', 210, 92, 180, 60),
+      box('text', 20, 162, 300, 50),
+      box('text', 20, 222, 180, 60),
+    ];
+
+    const paragraphs = layoutParagraphs(1, page.width, page.height, items_, boxes, { pitch: 20, measure: 180 });
+
+    expect(paragraphs.map((paragraph) => paragraph.text)).toEqual([
+      'the dosing rate.',
+      'important clearance parameter',
+      'is printed here',
+      'the target concentration',
+    ]);
+  });
+});
+
+describe('orderRegions: the caller says how many columns there are', () => {
+  const boxes = [
+    box('text', 20, 100, 180, 40), // left column, first paragraph
+    box('text', 210, 120, 180, 40), // right column, first paragraph
+    box('text', 20, 200, 180, 40), // left column, second paragraph
+    box('text', 210, 220, 180, 40),
+  ];
+
+  it('reads one column straight down, ignoring the columns the boxes suggest', () => {
+    expect(orderRegions(boxes, 400, { columns: 1 }).map((region) => `${region.x}:${region.y}`)).toEqual([
+      '20:100',
+      '210:120',
+      '20:200',
+      '210:220',
+    ]);
+  });
+
+  it('reads two columns to their feet across the gutter it is given', () => {
+    expect(
+      orderRegions(boxes, 400, { columns: 2, gutter: { start: 200, end: 210 } }).map((region) => `${region.x}:${region.y}`),
+    ).toEqual(['20:100', '20:200', '210:120', '210:220']);
+  });
+
+  it('falls back to the page middle when it is given no gutter', () => {
+    const straddling = [box('text', 20, 60, 180, 30), box('text', 210, 60, 180, 30), box('text', 20, 200, 180, 30)];
+
+    expect(orderRegions(straddling, 400, { columns: 2 }).map((region) => `${region.x}:${region.y}`)).toEqual([
+      '20:60',
+      '20:200',
+      '210:60',
+    ]);
+  });
+
+  it('still lets a figure that crosses both columns cut the page', () => {
+    // Told the page has two columns, a full-width figure is not a box of one of
+    // them: it interrupts both, so it is a band. Read by its middle it would land
+    // in the left column and be read after the text below it.
+    const boxes = [
+      box('text', 40, 100, 240, 200),
+      box('text', 320, 100, 240, 200),
+      box('figure', 40, 320, 520, 200),
+      box('text', 40, 540, 240, 200),
+      box('text', 320, 540, 240, 200),
+    ];
+
+    expect(
+      orderRegions(boxes, 600, { columns: 2, gutter: { start: 280, end: 320 } }).map(
+        (region) => `${region.label}:${region.x}:${region.y}`,
+      ),
+    ).toEqual(['text:40:100', 'text:320:100', 'figure:40:320', 'text:40:540', 'text:320:540']);
+  });
+
+  it('reads a single-column page straight down when a gutter and two columns are passed anyway', () => {
+    // The caller measured a gutter that the page does not have — a book-wide
+    // default. Forcing two columns must not reorder the one column: a paragraph
+    // that reaches across the middle is still read where it starts.
+    const boxes = [
+      box('paragraph_title', 220, 100, 160, 14),
+      box('text', 105, 150, 390, 80),
+      box('text', 105, 240, 100, 12), // a short line, left-aligned
+      box('text', 105, 260, 390, 80),
+    ];
+
+    expect(
+      orderRegions(boxes, 600, { columns: 2, gutter: { start: 260, end: 300 } }).map((region) => `${region.y}`),
+    ).toEqual(['100', '150', '240', '260']);
   });
 });

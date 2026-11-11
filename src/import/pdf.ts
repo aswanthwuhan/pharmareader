@@ -7,25 +7,32 @@ import workerUrl from './pdfWorker?worker&url';
 import type { ParsedDoc } from '../core/types';
 import { getSetting } from '../core/settings';
 import { normaliseText } from './blocks';
-import { layoutParagraphs } from './layout/assign';
+import { layoutParagraphs, type AssignOptions } from './layout/assign';
 import { createLayoutDetector, type PageLayoutDetector } from './layout/detector';
 import { LAYOUT_MODEL } from './layout/model';
 import type { LayoutBox } from './layout/engine';
 import {
   chaptersFromPages,
   classifyParagraphs,
+  documentGutter,
   dropPageFurniture,
+  gutterHasTextOnBothSides,
   itemsToPageLines,
   lineMetrics,
   linesToParagraphs,
   needsModelLayout,
+  pageGutter,
+  pageRunsInColumns,
   stitchPages,
   typicalPitch,
   type ChapterStart,
+  type Gutter,
   type PdfPage,
   type PdfParagraph,
   type PdfTextItem,
 } from './pdfLayout';
+import type { ColumnMode, PanelRect } from './layout/assign';
+import { pagePanels } from './panels';
 
 GlobalWorkerOptions.workerSrc ||= workerUrl;
 
@@ -56,11 +63,21 @@ export interface PdfParseResult {
   modelNote?: string;
 }
 
+export interface PdfParseOptions {
+  /**
+   * How many columns the pages have. Left alone, a gutter is looked for and
+   * used when the text shows one.
+   */
+  columns?: ColumnMode;
+}
+
 export async function parsePdf(
   data: ArrayBuffer,
   fallbackTitle: string,
   onProgress?: (done: number, total: number, phase?: 'text' | 'layout') => void,
+  options: PdfParseOptions = {},
 ): Promise<PdfParseResult> {
+  const columns = options.columns ?? 'auto';
   const loadingTask = getDocument({ data: new Uint8Array(data) });
   let detector: PageLayoutDetector | null = null;
 
@@ -70,6 +87,8 @@ export async function parsePdf(
     const pages: PdfPage[] = [];
     const pageItems: PdfTextItem[][] = [];
     const pageBoxes: LayoutBox[][] = [];
+    const pagePanelList: PanelRect[][] = [];
+    const pageGutters: (Gutter | null)[] = [];
     let modelNote: string | undefined;
     try {
       detector = await layoutDetector();
@@ -113,7 +132,11 @@ export async function parsePdf(
         });
       }
 
-      const pageLines = itemsToPageLines(items, viewport.width);
+      // Boxed panels are painted graphics, so they have to be read before
+      // `cleanup` drops the page's operator list.
+      const panels = await pagePanels(page, viewport, items);
+      const gutter = columns === 1 ? null : pageGutter(items, viewport.width);
+      const pageLines = itemsToPageLines(items, viewport.width, { panels, gutter, columns });
       const sheet: PdfPage = { width: viewport.width, height: viewport.height, lines: pageLines };
 
       if (detector && needsModelLayout(sheet)) {
@@ -135,6 +158,8 @@ export async function parsePdf(
 
       pages.push(sheet);
       pageItems.push(items);
+      pagePanelList.push(panels);
+      pageGutters.push(gutter);
       page.cleanup();
       // One page at a time, so a long paper never blocks the caller for the whole
       // run and the UI can show where it has got to.
@@ -144,6 +169,29 @@ export async function parsePdf(
     const modelStayed = detector !== null;
     detector?.dispose();
     detector = null;
+
+    // A page whose own text is too thin to show a corridor is still read in the
+    // book's two columns, so long as the book mostly showed one and this page
+    // has text running up to both edges of it.
+    const textPages = pageItems.filter((items) => items.length > 0).length;
+    const bookGutter = documentGutter(pageGutters, textPages);
+    if (bookGutter) {
+      pages.forEach((page, index) => {
+        if (pageGutters[index]) return;
+        const items = pageItems[index];
+        // A figure or a full-page table has no text beside the corridor, and
+        // splitting it there would cut it in two.
+        if (columns !== 2 && !gutterHasTextOnBothSides(items, bookGutter, page.width)) return;
+        // A one-column page's full-width lines also run up to both edges of a
+        // corridor; only a page whose rows mostly run along it reads in columns.
+        if (columns !== 2 && !pageRunsInColumns(items, bookGutter)) return;
+        page.lines = itemsToPageLines(items, page.width, {
+          panels: pagePanelList[index],
+          gutter: bookGutter,
+          columns,
+        });
+      });
+    }
 
     const clean = dropPageFurniture(pages);
     const metrics = clean.map((page) => lineMetrics(page.lines));
@@ -161,8 +209,18 @@ export async function parsePdf(
       const kept = new Set(page.lines.flatMap((line) => line.items));
       const items = pageItems[index].filter((item) => kept.has(item));
 
+      // The band the page was read in, so the model's boxes follow the same
+      // panels, columns and gutter the text layout did.
+      const modelOptions: AssignOptions = {
+        pitch,
+        measure,
+        panels: pagePanelList[index],
+        columns,
+        gutter: pageGutters[index] ?? bookGutter ?? undefined,
+      };
+
       const laidOut = boxes.length
-        ? layoutParagraphs(pageNumber, page.width, page.height, items, boxes, { pitch, measure })
+        ? layoutParagraphs(pageNumber, page.width, page.height, items, boxes, modelOptions)
         : [];
 
       paragraphs.push(

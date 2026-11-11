@@ -18,6 +18,8 @@ import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import workerUrl from '../import/pdfWorker?worker&url';
 import { MISSING_FILE_MESSAGE, fileMissing } from '../import';
 import type { PdfRect } from '../core/types';
+import type { PageBlock } from './blockOrder';
+import LayoutOverlay from './LayoutOverlay';
 import { Glyph, icons } from './Icon';
 
 GlobalWorkerOptions.workerSrc ||= workerUrl;
@@ -32,6 +34,16 @@ interface Props {
   onPageChange(page: number): void;
   /** Full screen offers "fit page" as well, for seeing a whole figure at once. */
   fullscreen?: boolean;
+  /**
+   * The blocks printed on this page, for the reading-order overlay. Empty means
+   * there is no order to show: the Layout button stays out of the bar.
+   */
+  layoutBlocks?: PageBlock[];
+  /**
+   * Store a new order for this page. The reader owns the book record and
+   * reloads it, so page view only hands the ids over.
+   */
+  onSaveOrder?(ids: string[]): Promise<void>;
 }
 
 const ZOOM_MIN = 0.6;
@@ -47,7 +59,16 @@ function touchDistance(touches: ArrayLike<{ clientX: number; clientY: number }>)
   return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
 }
 
-export default function PdfView({ docKey, file, page, rects, onPageChange, fullscreen = false }: Props) {
+export default function PdfView({
+  docKey,
+  file,
+  page,
+  rects,
+  onPageChange,
+  fullscreen = false,
+  layoutBlocks = [],
+  onSaveOrder,
+}: Props) {
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [pageCount, setPageCount] = useState(0);
   const [zoom, setZoom] = useState(1);
@@ -61,8 +82,15 @@ export default function PdfView({ docKey, file, page, rects, onPageChange, fulls
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // The reading-order overlay is an inspection tool, not a preference: it is
+  // off whenever page view opens, and it is never stored.
+  const [layout, setLayout] = useState(false);
 
   const wrap = useRef<HTMLDivElement>(null);
+  /** Where the reading-order bar mounts: under the page, never over it. State,
+      not a ref, because the overlay needs the element as a prop: a ref read
+      during render is still null the first time the bar is asked for. */
+  const [readingOrderBar, setReadingOrderBar] = useState<HTMLDivElement | null>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const renderTask = useRef<{ cancel(): void; promise: Promise<unknown> } | null>(null);
   const shownPage = useRef<{ num: number; page: PDFPageProxy } | null>(null);
@@ -377,8 +405,20 @@ export default function PdfView({ docKey, file, page, rects, onPageChange, fulls
                   />
                 ))
             : null}
+          {scale > 0 && layout && onSaveOrder ? (
+            <LayoutOverlay
+              blocks={layoutBlocks}
+              scale={scale}
+              onSave={onSaveOrder}
+              panelHost={readingOrderBar}
+            />
+          ) : null}
         </div>
       </div>
+
+      {/* `hidden` while the overlay is off: an empty row in the page column
+          still costs the column's gap and would shorten every page. */}
+      <div ref={setReadingOrderBar} hidden={!layout} />
 
       {error ? (
         <div className="banner banner-error rd-error" role="alert">
@@ -413,6 +453,18 @@ export default function PdfView({ docKey, file, page, rects, onPageChange, fulls
             <Glyph>{icons.forward}</Glyph>
           </button>
         </div>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          aria-expanded={layout}
+          title="Reading order"
+          onClick={() => setLayout((value) => !value)}
+          // Nothing to show on a page without blocks, but a toggle that is
+          // already on has to stay tappable or it can never be turned off.
+          disabled={!onSaveOrder || (!layout && layoutBlocks.length === 0)}
+        >
+          Layout
+        </button>
         <div className="rd-pdf-zoom" role="group" aria-label="Zoom">
           <button
             type="button"

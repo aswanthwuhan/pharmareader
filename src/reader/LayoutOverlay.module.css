@@ -1,0 +1,159 @@
+/* Reading order over the page.
+   The page image, the page's own box and the design tokens come from reader.css
+   and styles.css; this file only draws the block outlines, their number badges
+   and the one control bar. Colours are tokens so the bar follows the theme; the
+   outlines sit on the printed page, which stays light in dark mode too, so they
+   take a thin dark edge as well as their colour. */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  /* Every touch belongs to the page until the reader asks for the overlay to be
+     a control; the bar turns its own touches back on. */
+  pointer-events: none;
+}
+
+.layer {
+  position: absolute;
+  inset: 0;
+}
+
+.box {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  border: 2px solid currentColor;
+  border-radius: var(--radius-xs);
+  /* A dark hairline under the colour: the ink tokens flip with the theme and a
+     pale one must still read against the bright page. */
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.28);
+  /* A tint, never a wash: the printed words have to stay readable under it.
+     A browser without color-mix drops the declaration and keeps the outline. */
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  font: inherit;
+  text-align: left;
+  pointer-events: none;
+}
+
+/* Fix mode: the outlines become the tap targets. */
+.tappable {
+  pointer-events: auto;
+  cursor: pointer;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.tappable:focus-visible {
+  outline: 2px solid var(--focus-color);
+  outline-offset: 2px;
+}
+
+/* A block nobody has tapped yet: it still ends the order, so it stays visible. */
+.idle {
+  border-style: dashed;
+  opacity: 0.55;
+}
+
+/* The reading-order number. Inside the top-left corner, so a block at the page
+   edge keeps it on the page instead of under the viewport edge. */
+.badge {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: currentColor;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A tapped block's number is the new order, and reads as the filled mark. The
+   fill needs the block's own ink as a concrete token: `currentColor` on the
+   background would resolve to the badge's own colour and vanish. */
+.tappable .badge {
+  background: var(--badge-ink);
+  color: var(--surface);
+}
+
+/* The four kinds, in the app's own page-marking colours. Each names its ink
+   twice: once for the outline, once for the filled number badge. */
+.body {
+  color: var(--info);
+  --badge-ink: var(--info);
+}
+
+.heading {
+  color: var(--hl-pink-ink);
+  --badge-ink: var(--hl-pink-ink);
+}
+
+.media {
+  color: var(--hl-green-ink);
+  --badge-ink: var(--hl-green-ink);
+}
+
+.other {
+  color: var(--muted);
+  --badge-ink: var(--muted);
+}
+
+/* The bar is mounted under the page (PdfView gives it a host there), so it
+   never covers the words that still have to be tapped. */
+.panel {
+  /* When there is no host the bar is a child of the overlay, which lets every
+     touch through: without this its own buttons would be dead. */
+  pointer-events: auto;
+  display: grid;
+  gap: var(--space-2);
+  margin-block: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  color: var(--text);
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.note {
+  flex: 1 1 12em;
+  margin: 0;
+  font-size: var(--fs-2xs);
+  line-height: var(--lh-snug);
+  color: var(--muted);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+  color: var(--text);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+  color: var(--danger);
+}

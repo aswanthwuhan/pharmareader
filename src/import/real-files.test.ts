@@ -32,6 +32,10 @@ const sample = (name: string) => resolve(SAMPLES, name);
 const REAL_PDF = sample('bjp-bee-venom.pdf'); // 15 pp, two columns, CC BY (PMC6240132)
 const SINGLE_COLUMN_PDF = sample('piezo1-pharmacology.pdf'); // 34 pp, one column (PMC7618196)
 const NMC_PDF = fixture('nmc-md-pharmacology.pdf'); // 12 pp, one column, 12 pt on a 20.6 pt step
+// A textbook chapter in two parts: shaded panels, figures and tables across the
+// columns. Not redistributable, so the tests skip when the files are absent.
+const KATZUNG_A = sample('katzung-ch03.pdf'); // 10 pp, "Part 01"
+const KATZUNG_B = sample('katzung-ch03b.pdf'); // 5 pp, "Part 02"
 
 function read(path: string): ArrayBuffer {
   const bytes = readFileSync(path);
@@ -404,5 +408,101 @@ describe.skipIf(!existsSync(REAL_PDF))('heuristic layout (no model installed)', 
     expect(kinds.filter((kind) => kind === 'caption').length).toBeGreaterThan(3);
     // Body text must not be mistaken for a table.
     expect(kinds.filter((kind) => kind === 'table')).toHaveLength(0);
+  });
+});
+
+/** Index of the first sentence whose text starts with `prefix`. */
+function sentenceIndex(sentences: string[], prefix: string): number {
+  const index = sentences.findIndex((sentence) => sentence.startsWith(prefix));
+  expect(index, `no sentence starts with "${prefix}"`).toBeGreaterThanOrEqual(0);
+  return index;
+}
+
+/**
+ * Whether a page reads column-major: every sentence that sits wholly in its left
+ * column comes before every sentence that sits wholly in its right one. Lines
+ * that span both columns (running heads, wide tables) say nothing either way.
+ */
+function columnMajorOnPage(sentences: string[], doc: ParsedDoc, page: number): boolean {
+  const rects = doc.chapters.flatMap((chapter) =>
+    chapter.blocks.flatMap((block) => block.sentences.map((sentence) => sentence.pdfRects ?? [])),
+  );
+  const left: number[] = [];
+  const right: number[] = [];
+
+  sentences.forEach((_, index) => {
+    const own = rects[index];
+    if (!own.length || own.some((rect) => rect.page !== page)) return;
+    const sides = own.map((rect) => (rect.x + rect.w <= 306 ? 'L' : rect.x >= 306 ? 'R' : 'S'));
+    if (sides.includes('S')) return;
+    (sides.every((side) => side === 'L') ? left : right).push(index);
+  });
+
+  return left.length > 0 && right.length > 0 && Math.max(...left) < Math.min(...right);
+}
+
+describe.skipIf(!existsSync(KATZUNG_B))('heuristic layout: Katzung chapter 3, part 02', () => {
+  it('reads a shaded panel in its own band, not as the page columns', { timeout: 120_000 }, async () => {
+    const parsed = await parsePdf(read(KATZUNG_B), 'katzung');
+    const sentences = allSentences(parsed.doc);
+
+    // The page's recorded order: the top of both columns, the panel's title, its
+    // two inner columns, then the sections below it. A panel read as page
+    // columns puts "The Target Concentration Strategy" after the right block.
+    const order = [
+      sentenceIndex(sentences, 'Diseases may modify all of these parameters'),
+      sentenceIndex(sentences, 'The Target Concentration Strategy'),
+      sentenceIndex(sentences, 'Recognition of the essential role'),
+      sentenceIndex(sentences, 'Choose the target concentration, TC.'),
+      sentenceIndex(sentences, 'Repeat steps 3'),
+      sentenceIndex(sentences, 'Pharmacokinetic Variables'),
+      sentenceIndex(sentences, 'At present, there is no reliable marker'),
+    ];
+
+    expect(order).toEqual([...order].sort((left, right) => left - right));
+  });
+});
+
+describe.skipIf(!existsSync(KATZUNG_A))('heuristic layout: Katzung chapter 3, part 01', () => {
+  it('reads the boxed case study in its own band before the body', { timeout: 120_000 }, async () => {
+    const parsed = await parsePdf(read(KATZUNG_A), 'katzung');
+    const sentences = allSentences(parsed.doc);
+
+    // The case study is a panel across both columns with two inner halves. Its
+    // right half used to be read after the whole left column of the page.
+    const heading = sentenceIndex(sentences, 'C A S E S T U D Y');
+    const firstHalf = sentenceIndex(sentences, 'An 85-year-old, 60-kg woman');
+    const secondHalf = sentences.findIndex((sentence) => sentence.includes('fibrillation is 1 mg/mL'));
+    const body = sentenceIndex(sentences, 'The goal of therapeutics');
+
+    expect(secondHalf).toBeGreaterThan(firstHalf);
+    expect(secondHalf).toBeLessThan(body);
+    expect(firstHalf).toBeGreaterThan(heading);
+  });
+
+  it('reads the nine-column table row by row, not its left cells then its right ones', { timeout: 120_000 }, async () => {
+    const parsed = await parsePdf(read(KATZUNG_A), 'katzung');
+    const sentences = allSentences(parsed.doc);
+
+    // Table 3–1 is nine columns of cells on pages 3 and 4. Split at the page's
+    // widest space between cells, every row loses its target and toxic
+    // concentrations to the end of the page: "Acyclovir" then comes before the
+    // "15 mg/L" of the row above it.
+    const row = sentences.find((sentence) => sentence.includes('Acetaminophen'));
+    expect(row).toBeDefined();
+    expect(row).toContain('88');
+    expect(row).toContain('15 mg/L');
+    expect(row).toContain('>300 mg/L');
+    expect(row!.indexOf('Acyclovir')).toBeGreaterThan(row!.indexOf('>300 mg/L'));
+  });
+
+  it('still reads each body page down its left column before its right', { timeout: 120_000 }, async () => {
+    const parsed = await parsePdf(read(KATZUNG_A), 'katzung');
+    const sentences = allSentences(parsed.doc);
+
+    // Pages 1 and 2 are the case study and the figure: their panels are bands.
+    for (const page of [5, 6, 7, 8, 9, 10]) {
+      expect(columnMajorOnPage(sentences, parsed.doc, page), `page ${page} jumped columns`).toBe(true);
+    }
   });
 });

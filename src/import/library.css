@@ -184,6 +184,34 @@
   overflow-wrap: anywhere;
 }
 
+/* --- A PDF's column choice ------------------------------------------------ */
+/* Sits between the sheet's description and its actions, so the pick reads as a
+   setting of that book rather than as a second dialog. */
+.lib-columns {
+  margin-top: var(--space-4);
+}
+
+.lib-columns-note,
+.lib-columns-error {
+  display: block;
+  margin-top: var(--space-2);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+}
+
+/* Same spinner and inline layout as the import status line, so "the book is
+   being read again" looks like one kind of work wherever it happens. */
+.lib-columns-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+}
+
+.lib-columns-error {
+  color: var(--danger);
+}
+
 /* --- Loading -------------------------------------------------------------- */
 .lib-skeleton .lib-row {
   padding: var(--space-4) 0;

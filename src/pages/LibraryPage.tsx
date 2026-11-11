@@ -4,10 +4,10 @@ import { Link, useNavigate } from 'react-router-dom';
 import { db } from '../core/db';
 import { pushBackHandler } from '../core/backButton';
 import { setSetting, useSetting } from '../core/settings';
-import type { BookRecord } from '../core/types';
+import type { BookRecord, ColumnMode } from '../core/types';
 import { checkForUpdate, dismissUpdate, type UpdateRelease } from '../core/updateCheck';
 import { APP_VERSION } from '../core/version';
-import { deleteBook, importFileDetailed, importText, importUrl } from '../import';
+import { deleteBook, importFileDetailed, importText, importUrl, setBookColumns } from '../import';
 import '../import/library.css';
 import { LAST_BOOK_KEY, type LastBook } from '../reader/lastBook';
 import ModelStatusBanner from '../tts/ModelStatusBanner';
@@ -28,6 +28,13 @@ const FORMAT_LABEL: Record<BookRecord['format'], string> = {
   md: 'MD',
   html: 'HTML',
 };
+
+/** A PDF's column choice, in the order the sheet offers it. */
+const COLUMN_OPTIONS: { value: ColumnMode; label: string }[] = [
+  { value: 'auto', label: 'Auto' },
+  { value: 1, label: 'One column' },
+  { value: 2, label: 'Two columns' },
+];
 
 /** An import note, split so the banner can lead with the file it belongs to. */
 type Warning = { file: string; message: string; scanned: boolean };
@@ -131,6 +138,9 @@ function CloseIcon() {
 /**
  * The row's "more" sheet, which is also the delete confirmation: a row menu
  * that opened a second dialog would be two sheets for one decision.
+ *
+ * A PDF also gets its column layout here. Pages whose two columns read out of
+ * order are re-read with the reader's pick, without leaving the library.
  */
 function BookActionsSheet({
   book,
@@ -143,11 +153,26 @@ function BookActionsSheet({
 }) {
   const titleId = useId();
   const descId = useId();
+  const columnsId = useId();
   const cancelRef = useRef<HTMLButtonElement>(null);
   const deleteRef = useRef<HTMLButtonElement>(null);
+  const columnsRef = useRef<HTMLSelectElement>(null);
+  // The stored choice, mirrored here so the control follows the pick while the
+  // book is re-read; the book row itself is a stale copy from the library list.
+  const [columns, setColumns] = useState<ColumnMode>(book.columns ?? 'auto');
+  const [columnsBusy, setColumnsBusy] = useState(false);
+  const [columnsNote, setColumnsNote] = useState<string | null>(null);
+  const [columnsError, setColumnsError] = useState<string | null>(null);
   // Mount-only effect: the latest callbacks, without re-running focus on every render.
-  const cancelRefFn = useRef(onCancel);
-  cancelRefFn.current = onCancel;
+  // While the book is being re-read the sheet stays open, so a failure is still
+  // on screen to be read instead of reported to a sheet that has gone.
+  const busyRef = useRef(false);
+  busyRef.current = columnsBusy;
+  const close = () => {
+    if (!busyRef.current) onCancel();
+  };
+  const cancelRefFn = useRef(close);
+  cancelRefFn.current = close;
 
   useEffect(() => {
     cancelRef.current?.focus();
@@ -156,10 +181,10 @@ function BookActionsSheet({
         cancelRefFn.current();
         return;
       }
-      // Two buttons: Tab and Shift+Tab wrap inside the sheet instead of walking
-      // into the page behind it.
+      // Tab and Shift+Tab wrap inside the sheet instead of walking into the page
+      // behind it; the column control, when the book is a PDF, is the first stop.
       if (event.key !== 'Tab') return;
-      const first = cancelRef.current;
+      const first = columnsRef.current ?? cancelRef.current;
       const last = deleteRef.current;
       if (!first || !last) return;
       if (event.shiftKey && document.activeElement === first) {
@@ -183,18 +208,75 @@ function BookActionsSheet({
     };
   }, []);
 
+  async function changeColumns(value: string): Promise<void> {
+    const next: ColumnMode = value === '2' ? 2 : value === '1' ? 1 : 'auto';
+    if (next === columns) return;
+    const previous = columns;
+    setColumns(next);
+    setColumnsBusy(true);
+    setColumnsNote(null);
+    setColumnsError(null);
+    try {
+      await setBookColumns(book.id, next, (note) => setColumnsNote(note));
+    } catch (error) {
+      // Nothing was written: the book still has the layout it was read with.
+      setColumns(previous);
+      setColumnsError(errorMessage(error));
+    } finally {
+      setColumnsBusy(false);
+      setColumnsNote(null);
+    }
+  }
+
   return (
     <>
-      <div className="sheet-backdrop" onClick={onCancel} />
+      <div className="sheet-backdrop" onClick={close} />
       <div className="sheet" role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descId}>
         <h2 id={titleId} className="sheet-title lib-sheet-title">
           {book.title}
         </h2>
+        {book.format === 'pdf' && (
+          <div className="field lib-columns">
+            <label className="field-label" htmlFor={columnsId}>
+              Columns
+            </label>
+            <select
+              ref={columnsRef}
+              id={columnsId}
+              className="input"
+              value={columns}
+              disabled={columnsBusy}
+              onChange={(event) => void changeColumns(event.target.value)}
+            >
+              {COLUMN_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <span className="field-hint">
+              Use Two if the voice jumps between columns; One for single-column books.
+            </span>
+            {columnsBusy && (
+              <span className="lib-columns-note" role="status" aria-live="polite">
+                <span className="lib-spinner" aria-hidden="true" />
+                {columnsNote ? `Reading the book again — ${columnsNote}…` : 'Reading the book again…'}
+              </span>
+            )}
+            {columnsError && (
+              <span className="lib-columns-error" role="alert">
+                Could not change the columns: {columnsError}
+              </span>
+            )}
+          </div>
+        )}
+        {/* The warning describes Delete book, so it sits directly above the two
+            actions — the column setting above it is not about deleting. */}
         <p className="muted" id={descId}>
           Its highlights, bookmarks and cards go with it.
         </p>
         <div className="sheet-actions">
-          <button ref={cancelRef} type="button" className="btn btn-secondary" onClick={onCancel}>
+          <button ref={cancelRef} type="button" className="btn btn-secondary" onClick={close} disabled={columnsBusy}>
             Cancel
           </button>
           <button ref={deleteRef} type="button" className="btn btn-danger" onClick={onDelete}>

@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   chaptersFromPages,
   classifyParagraphs,
+  documentGutter,
   dropPageFurniture,
   itemsToLines,
   itemsToPageLines,
   needsModelLayout,
+  pageGutter,
+  pageRunsInColumns,
   pagesToParagraphs,
   rectsForRange,
   stitchPages,
@@ -56,15 +59,104 @@ describe('itemsToPageLines', () => {
 
   it('keeps a full-width title between the columns of its band', () => {
     const items = twoColumns(20);
+    // The column stops at the end of a sentence above a title, as a real one
+    // does; its last line also overhangs the corridor without reaching across it.
+    items[18] = item('left9 is over.', 40, 100 + 9 * 14, 320);
     items.push(item('A full width title', 40, 233, 520));
 
     const texts = itemsToPageLines(items, 600).map((current) => current.text);
     const title = texts.indexOf('A full width title');
 
-    const band = (rows: number[]) => [...rows.map((row) => `left${row}`), ...rows.map((row) => `right${row}`)];
+    const band = (rows: number[]) => [
+      ...rows.map((row) => (row === 9 ? 'left9 is over.' : `left${row}`)),
+      ...rows.map((row) => `right${row}`),
+    ];
     // Rows above the title: the whole left column, then the whole right one.
     expect(texts.slice(0, title)).toEqual(band([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]));
     expect(texts.slice(title + 1)).toEqual(band([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]));
+  });
+
+  it('keeps the short last line of a full-width block whole', () => {
+    const items = twoColumns(10);
+    // A caption block below the columns: two lines reach the right margin, the
+    // last one stops short of the right column's body (bjp-bee-venom p12). No
+    // left column runs above it, so it cannot be a column line overhanging.
+    items.push(
+      item('Figure 7', 42, 300, 42),
+      item('a caption line that fills the width', 42, 324, 510),
+      item('the caption tail', 42, 348, 280),
+      item(' ends here.', 320, 348, 50),
+    );
+
+    const texts = itemsToPageLines(items, 600).map((current) => current.text);
+
+    expect(texts).toContain('the caption tail ends here.');
+    expect(texts).not.toContain('the caption tail');
+  });
+
+  it('reads a table row by row, not its left cells then its right ones', () => {
+    // A full-page table: every row starts a cell at each of these five edges, so
+    // the page has five columns of cells rather than two columns of text. The
+    // widest space between cells is a real corridor with a wide cell on each side
+    // of it, so the page is otherwise read as two columns. Split there and every
+    // row reads as its left cells and then its right ones, with the header cells
+    // reordered with them; a table is read row by row, as it is printed.
+    const items: PdfTextItem[] = [];
+    for (let row = 0; row < 20; row++) {
+      for (let column = 0; column < 5; column++) {
+        items.push(item(`r${row}c${column}`, 40 + column * 122, 100 + row * 14, 110));
+      }
+    }
+
+    const texts = itemsToPageLines(items, 700).map((current) => current.text);
+
+    expect(texts[0]).toBe('r0c0 r0c1 r0c2 r0c3 r0c4');
+    expect(texts[19]).toBe('r19c0 r19c1 r19c2 r19c3 r19c4');
+  });
+
+  it('still reads a two-column page whose paragraphs start at two indents', () => {
+    // Only two edges carry most rows here, so the page is text in two columns and
+    // an indented first line must not pass for a table's extra column.
+    const items: PdfTextItem[] = [];
+    for (let row = 0; row < 20; row++) {
+      items.push(item(`left${row}`, row % 3 === 0 ? 56 : 40, 100 + row * 14, 240), item(`right${row}`, 320, 100 + row * 14, 240));
+    }
+
+    const texts = itemsToPageLines(items, 600).map((current) => current.text);
+
+    expect(texts.slice(0, 20)).toEqual(Array.from({ length: 20 }, (_, row) => `left${row}`));
+    expect(texts.slice(20)).toEqual(Array.from({ length: 20 }, (_, row) => `right${row}`));
+  });
+
+  it('finds no corridor between a list marker and the line it marks', () => {
+    // A one-column page of bulleted paragraphs: the markers sit 12 pt left of the
+    // text, and that gap is not a column gutter. Taken for one, the page reads
+    // every bullet first and then all of its lines (the NMC guidelines do this).
+    const items: PdfTextItem[] = [];
+    for (let row = 0; row < 20; row++) {
+      items.push(item('\u2022', 144, 100 + row * 18, 6), item(`bulleted line ${row}`, 162, 100 + row * 18, 320));
+    }
+
+    expect(pageGutter(items, 600)).toBeNull();
+    const texts = itemsToPageLines(items, 600).map((current) => current.text);
+    expect(texts[0]).toBe('\u2022 bulleted line 0');
+    expect(texts[19]).toBe('\u2022 bulleted line 19');
+  });
+
+  it('reads a list line whose text starts right of the corridor in one line', () => {
+    // A one-column list: the number is its own item and the text begins just
+    // right of the corridor the page shows between them. One item crosses that
+    // corridor, so the row is a line, not two column halves.
+    const items: PdfTextItem[] = [];
+    for (let row = 0; row < 20; row++) {
+      items.push(item(`left column ${row}`, 90, 100 + row * 14, 190), item(`right ${row}`, 330, 100 + row * 14, 230));
+    }
+    items.push(item('12.', 90, 60, 15), item('Clinical pharmacology', 126, 60, 110));
+
+    const texts = itemsToPageLines(items, 600).map((current) => current.text);
+
+    expect(texts).toContain('12. Clinical pharmacology');
+    expect(texts).not.toContain('12.');
   });
 
   it('leaves a single-column page in top-to-bottom order', () => {
@@ -79,6 +171,186 @@ describe('itemsToPageLines', () => {
     const items = Array.from({ length: 20 }, (_, row) => item(`centred ${row}`, 200, 100 + row * 14, 200));
 
     expect(itemsToPageLines(items, 600)).toHaveLength(20);
+  });
+
+  it('reads a boxed panel in bands of its own', () => {
+    const items: PdfTextItem[] = [];
+    const band = (label: string, y: number) => {
+      for (let row = 0; row < 4; row++) {
+        items.push(item(`${label} left ${row}`, 40, y + row * 14, 240));
+        items.push(item(`${label} right ${row}`, 320, y + row * 14, 240));
+      }
+    };
+    band('above', 100);
+    band('panel', 165);
+    band('below', 270);
+
+    const texts = itemsToPageLines(items, 600, { panels: [{ x: 40, y: 150, w: 520, h: 110 }] }).map(
+      (current) => current.text,
+    );
+    // Without the panel the left column runs from the top of the page to the
+    // bottom, mixing the panel's two halves into the page's two columns.
+    expect(itemsToPageLines(items, 600).map((current) => current.text).slice(0, 5)).toEqual([
+      'above left 0',
+      'above left 1',
+      'above left 2',
+      'above left 3',
+      'panel left 0',
+    ]);
+
+    expect(texts.slice(0, 8)).toEqual([
+      'above left 0',
+      'above left 1',
+      'above left 2',
+      'above left 3',
+      'above right 0',
+      'above right 1',
+      'above right 2',
+      'above right 3',
+    ]);
+    expect(texts.slice(8, 12)).toEqual(['panel left 0', 'panel left 1', 'panel left 2', 'panel left 3']);
+    expect(texts.slice(12, 16)).toEqual(['panel right 0', 'panel right 1', 'panel right 2', 'panel right 3']);
+    expect(texts.slice(16)[0]).toBe('below left 0');
+  });
+
+  it('keeps a line that only overhangs the gutter inside its column', () => {
+    const items: PdfTextItem[] = [];
+    for (let row = 0; row < 20; row++) {
+      items.push(item(`left ${row}`, 40, 100 + row * 20, 240), item(`right ${row}`, 320, 100 + row * 20, 240));
+    }
+    // A justified line whose last word runs 20 pt past the corridor: a quarter
+    // into the right column would be needed for it to be a full-width line.
+    items.push(item('left overhang', 40, 110, 300));
+
+    const texts = itemsToPageLines(items, 600).map((current) => current.text);
+    expect(texts.indexOf('left overhang')).toBe(1);
+    expect(texts.indexOf('left 19')).toBeLessThan(texts.indexOf('right 0'));
+  });
+
+  it('reads a continuing sentence down its own column past a wide line', () => {
+    const items: PdfTextItem[] = [];
+    for (let row = 0; row < 16; row++) {
+      items.push(item(`left ${row}`, 40, 100 + row * 20, 240), item(`right ${row}`, 320, 100 + row * 20, 240));
+    }
+    // The left column stops mid-sentence above the wide line and resumes with a
+    // lower-case word under it: the line is the tail of that sentence.
+    items[14] = item('metabolism for most drugs', 40, 240, 240);
+    items[16] = item('hepatic clearance also depends', 40, 260, 240);
+    items.push(item('the wide line that only just crosses', 40, 250, 520));
+
+    const texts = itemsToPageLines(items, 600).map((current) => current.text);
+    // The left column runs on: the sentence under the wide line is still read
+    // before anything in the right column.
+    expect(texts.indexOf('hepatic clearance also depends')).toBe(8);
+    expect(texts.indexOf('hepatic clearance also depends')).toBeLessThan(texts.indexOf('right 0'));
+
+    // End the sentence above the wide line and the same row is a band again.
+    items[14] = item('metabolism for most drugs.', 40, 240, 240);
+    const ended = itemsToPageLines(items, 600).map((current) => current.text);
+    expect(ended.indexOf('right 0')).toBe(8);
+    expect(ended.indexOf('metabolism for most drugs.')).toBe(7);
+  });
+
+  it('leaves a two-column page in row order when the caller says one column', () => {
+    const texts = itemsToPageLines(twoColumns(4), 600, { columns: 1 }).map((current) => current.text);
+
+    expect(texts).toEqual(['left0 right0', 'left1 right1', 'left2 right2', 'left3 right3']);
+  });
+
+  it('splits in the middle when the caller says two columns and no corridor shows', () => {
+    // Four rows: too few for the page to show a corridor of its own.
+    const texts = itemsToPageLines(twoColumns(4), 600, { columns: 2 }).map((current) => current.text);
+
+    expect(texts).toEqual(['left0', 'left1', 'left2', 'left3', 'right0', 'right1', 'right2', 'right3']);
+  });
+
+  it('keeps a row whose last run starts right of the corridor in one line', () => {
+    // A list line on a page whose corridor sits left of centre: the number and
+    // first words are separate items, and the long run begins right of the
+    // corridor's middle. No single item crosses it, but the row does.
+    const items = [
+      item('9.', 90, 71, 9),
+      item(' Perform', 126, 71, 40),
+      item(' in vivo', 168, 71, 33),
+      item(' experiments to study the effect', 204, 71, 311),
+      item('10. Continue', 90, 85, 120),
+    ];
+
+    const texts = itemsToPageLines(items, 612, { gutter: { start: 161, end: 180 } }).map(
+      (current) => current.text,
+    );
+
+    expect(texts).toEqual(['9. Perform in vivo experiments to study the effect', '10. Continue']);
+  });
+
+  it('tells a two-column page from a one-column page abutting the same corridor', () => {
+    const oneColumn = Array.from({ length: 10 }, (_, row) => item(`full width line ${row}`, 42, 100 + row * 20, 520));
+    const gutter = { start: 280, end: 310 };
+
+    // Full-width lines touch both sides of the corridor, so abutting text alone
+    // cannot say the page reads in its columns.
+    expect(pageRunsInColumns(oneColumn, gutter)).toBe(false);
+    expect(pageRunsInColumns(twoColumns(10), gutter)).toBe(true);
+    // A minority of full-width titles does not stop a two-column page.
+    expect(pageRunsInColumns([...twoColumns(10), item('A full width title', 40, 60, 520)], gutter)).toBe(true);
+  });
+
+  it('splits at the corridor it is given, not the one it would find', () => {
+    // The corridor sits left of every column edge, so every item belongs to the
+    // right column and the page reads in row order: true only when the given one
+    // is the corridor that was used.
+    const texts = itemsToPageLines(twoColumns(4), 600, { gutter: { start: 20, end: 40 } }).map(
+      (current) => current.text,
+    );
+
+    expect(texts).toEqual(['left0 right0', 'left1 right1', 'left2 right2', 'left3 right3']);
+  });
+});
+
+describe('pageGutter', () => {
+  const columns = (rows: number): PdfTextItem[] =>
+    Array.from({ length: rows }, (_, row) => [
+      item(`left ${row}`, 40, 100 + row * 20, 240),
+      item(`right ${row}`, 320, 100 + row * 20, 240),
+    ]).flat();
+
+  it('finds the corridor between two columns', () => {
+    const gutter = pageGutter(columns(20), 600);
+
+    expect(gutter).not.toBeNull();
+    expect(gutter!.start).toBeGreaterThan(260);
+    expect(gutter!.end).toBeLessThan(340);
+  });
+
+  it('finds nothing on a page whose text sits on one side', () => {
+    // A figure's white space leaves one empty run, but no text fills the other
+    // column: a corridor needs text on both sides of it.
+    const items = Array.from({ length: 20 }, (_, row) => item(`left ${row}`, 40, 100 + row * 20, 240));
+
+    expect(pageGutter(items, 600)).toBeNull();
+  });
+});
+
+describe('documentGutter', () => {
+  const corridor = (start: number, end: number) => ({ start, end });
+
+  it('takes the middle of the corridors the pages showed', () => {
+    expect(documentGutter([corridor(280, 320), corridor(282, 318), corridor(290, 310), null, null], 5)).toEqual({
+      start: 282,
+      end: 318,
+    });
+  });
+
+  it('stays out of it when only a few pages showed a corridor', () => {
+    expect(documentGutter([corridor(280, 320), corridor(282, 318), null, null, null], 10)).toBeNull();
+  });
+
+  it('trusts two pages of three', () => {
+    expect(documentGutter([corridor(280, 320), corridor(282, 318), null], 3)).not.toBeNull();
+  });
+
+  it('returns nothing when no page showed one', () => {
+    expect(documentGutter([null, null], 2)).toBeNull();
   });
 });
 

@@ -12,11 +12,38 @@ interface OwnedRegion extends LayoutBox {
   items: PdfTextItem[];
 }
 
+/** A panel drawn on the page (a clinical box, a worked example), in pt from the top-left. */
+export interface PanelRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** How many columns the page has: as many as the boxes show, or the caller's word. */
+export type ColumnMode = 'auto' | 1 | 2;
+
 export interface AssignOptions {
   /** Body leading of the page (pt); 0 means "too sparse to measure". */
   pitch: number;
   /** Full-width line of the page (pt); 0 means "use the page width". */
   measure: number;
+  /** Panels drawn on the page: what is inside one is read before the flow around it. */
+  panels?: PanelRect[];
+  /** The page's column count, when the caller knows better than the boxes. */
+  columns?: ColumnMode;
+  /** The page's gutter (pt), when the caller can measure it. */
+  gutter?: { start: number; end: number };
+}
+
+/** What the caller knows about the page that the boxes alone do not tell. */
+interface PageLayout {
+  /** Horizontal lines that end a band: each panel's top and bottom edge. */
+  cuts?: number[];
+  columns?: ColumnMode;
+  gutter?: { start: number; end: number };
+  /** Regions that look like dividers but continue a sentence: never a band edge. */
+  nonSpanning?: LayoutBox[];
 }
 
 /**
@@ -63,10 +90,15 @@ export function layoutParagraphs(
     });
   }
 
-  const ordered = orderRegions(
-    owned.filter((region) => region.items.length > 0),
-    pageWidth,
-  );
+  const filled = owned.filter((region) => region.items.length > 0);
+  const ordered = orderRegions(filled, pageWidth, {
+    // A panel is a band of its own: what is printed above it, the panel, and what
+    // is printed below it are read in that order, not left column then right.
+    cuts: (options.panels ?? []).flatMap((panel) => [panel.y, panel.y + panel.h]),
+    columns: options.columns,
+    gutter: options.gutter,
+    nonSpanning: continuingRegions(filled, pageWidth, pitch),
+  });
 
   const paragraphs: PdfParagraph[] = [];
 
@@ -198,41 +230,77 @@ function nearestRegion(regions: OwnedRegion[], item: PdfTextItem, pageWidth: num
 /**
  * Reading order of regions. The model we ship gives boxes and classes but no
  * order, and sorting by y splices a two-column page into alternating columns, so
- * order by band first: full-width regions (a title, a figure legend) cut the page
- * into bands, and each band is read column by column.
+ * order by band first: full-width regions (a title, a figure legend) and the
+ * caller's cuts (a panel's top and bottom) divide the page into bands, and each
+ * band is read column by column.
  */
-export function orderRegions<T extends LayoutBox>(boxes: T[], pageWidth: number): T[] {
-  // Measured against the text block, not the sheet: a single column with wide
-  // margins is under 70% of the page, and treating its paragraphs as columns
-  // sends a centred heading to the end of the page.
+export function orderRegions<T extends LayoutBox>(boxes: T[], pageWidth: number, layout: PageLayout = {}): T[] {
   const flow = boxes.filter((box) => !FURNITURE.has(box.label));
   const extent = flow.length
     ? Math.max(...flow.map((box) => box.x + box.w)) - Math.min(...flow.map((box) => box.x))
     : pageWidth;
-  const spanning = (box: LayoutBox) => box.w >= Math.min(pageWidth, extent) * 0.7;
-  const bands = boxes
-    .filter(spanning)
-    .map((box) => box.y)
-    .sort((a, b) => a - b);
+  // Column edges are taken from the boxes that are plainly not spanning, so the
+  // gutter is measured on the text and not on a line that straddles it.
+  const narrow = flow.filter((box) => box.w < Math.min(pageWidth, extent) * 0.7);
+  const columns = columnsOf(narrow, pageWidth, layout.gutter);
+  const flat = new Set(layout.nonSpanning ?? []);
+
+  const spanning = (box: LayoutBox): boolean => {
+    if (flat.has(box)) return false;
+    // Measured against the text block, not the sheet: a single column with wide
+    // margins is under 70% of the page, and treating its paragraphs as columns
+    // sends a centred heading to the end of the page.
+    if (!columns.separate) return box.w >= Math.min(pageWidth, extent) * 0.7;
+    // 70% of the text is not enough once there are columns: a left-column
+    // paragraph that overhangs the gutter is still a paragraph of that column. A
+    // divider starts in the left column and reaches a quarter of the way into the
+    // right one. Where it starts matters too: a left column's text can overhang
+    // the gutter, and a box of the right column starts at the gutter's end.
+    const startsLeft = box.x <= Math.min(columns.gutterStart, columns.gutterEnd - columns.tolerance / 2);
+    return startsLeft && box.x + box.w >= columns.gutterEnd + columns.rightWidth * 0.25;
+  };
+
+  const bands = [...boxes.filter(spanning).map((box) => box.y), ...(layout.cuts ?? [])].sort((a, b) => a - b);
+  const mode = layout.columns ?? 'auto';
+  const split = layout.gutter ? (layout.gutter.start + layout.gutter.end) / 2 : pageWidth / 2;
 
   const key = (box: LayoutBox): [number, number, number, number] => {
     // Headers and footers sit outside the flow whatever their geometry says.
     if (box.label === 'page_header' || box.label === 'header') return [-1, 0, box.y, box.x];
     if (FURNITURE.has(box.label)) return [Number.MAX_SAFE_INTEGER, 0, box.y, box.x];
 
-    const band = bands.filter((top) => top <= box.y + 0.5).length;
+    // The caller has measured one column: nothing else may cut the page.
+    if (mode === 1) return [0, 0, box.y, box.x];
+    // A band ends at a boundary, and a region belongs to the band its middle falls
+    // in: a panel's top edge cuts between the rows above it, and its bottom edge
+    // must not drag down a region that starts above it but sits mostly below.
+    const band = bands.filter((top) => top <= box.y + box.h / 2).length;
     // A region that spans the band is its own band: read it before the columns
-    // beside it, which can only be above or below it.
+    // beside it, which can only be above or below it. That holds however many
+    // columns the caller says the page has: a title or a figure across the gutter
+    // interrupts both columns, it does not become a box of the left one.
     if (spanning(box)) return [band, -1, box.y, box.x];
-    return [band, columnOf(box, flow.filter((other) => !spanning(other)), pageWidth), box.y, box.x];
+    // The caller has measured two: the gutter says which side a region is on.
+    if (mode === 2) return [band, box.x + box.w / 2 < split ? 0 : 1, box.y, box.x];
+    return [band, columnOf(box, columns), box.y, box.x];
   };
 
-  return [...boxes].sort((a, b) => {
-    const [bandA, columnA, yA, xA] = key(a);
-    const [bandB, columnB, yB, xB] = key(b);
-    // Within a column a row reads left to right, whichever box starts a hair higher.
-    return bandA - bandB || columnA - columnB || (sameRow(a, b, pageWidth) ? xA - xB : yA - yB || xA - xB);
-  });
+  // Each key is measured once: sorting calls the comparator many times, and a key
+  // costs a band count and a column lookup.
+  const keyed = boxes.map((box) => ({ box, key: key(box) }));
+
+  return keyed
+    .sort((a, b) => {
+      const [bandA, columnA, yA, xA] = a.key;
+      const [bandB, columnB, yB, xB] = b.key;
+      // Within a column a row reads left to right, whichever box starts a hair higher.
+      return (
+        bandA - bandB ||
+        columnA - columnB ||
+        (sameRow(a.box, b.box, pageWidth) ? xA - xB : yA - yB || xA - xB)
+      );
+    })
+    .map((entry) => entry.box);
 }
 
 /**
@@ -248,13 +316,27 @@ function sameRow(a: LayoutBox, b: LayoutBox, pageWidth: number): boolean {
 
 const FURNITURE = new Set(['page_header', 'header', 'page_footer', 'footer', 'number']);
 
+/** The page's columns: their left edges and the x-range the text at each covers. */
+interface Columns {
+  edges: number[];
+  spans: { left: number; right: number }[];
+  /** Slack of the edge clustering (pt). */
+  tolerance: number;
+  /** True when the page has two columns or more, or the caller said where the gutter is. */
+  separate: boolean;
+  /** Right edge of the left column's text, left edge of the right column's. */
+  gutterStart: number;
+  gutterEnd: number;
+  rightWidth: number;
+}
+
 /**
- * Column index of a box, by clustering the left edges of the narrow regions. A
- * left edge only starts a column when something stands beside it: a centred
- * heading or an indented line has an edge of its own but nothing to its left on
- * the same rows, and it belongs to the column it sits in.
+ * The page's columns, by clustering the left edges of the narrow regions. A left
+ * edge only starts a column when something stands beside it: a centred heading or
+ * an indented line has an edge of its own but nothing to its left on the same
+ * rows, and it belongs to the column it sits in.
  */
-function columnOf(box: LayoutBox, narrow: LayoutBox[], pageWidth: number): number {
+function columnsOf(narrow: LayoutBox[], pageWidth: number, given?: { start: number; end: number }): Columns {
   const tolerance = Math.max(10, pageWidth * 0.04);
   // Two boxes on one line of type are a row (a form field and its value, a
   // number and its heading), not two columns: only stacked text proves a column.
@@ -285,17 +367,106 @@ function columnOf(box: LayoutBox, narrow: LayoutBox[], pageWidth: number): numbe
       (other) =>
         region.x - (other.x + other.w) <= Math.max(tolerance, Math.min(other.w, region.w) / 4),
     );
-  const columns: number[] = [];
+
+  const edges: number[] = [];
+  const spans: { left: number; right: number }[] = [];
   let last = -Infinity;
   for (const region of [...narrow].sort((a, b) => a.x - b.x)) {
     const edge = Math.round(region.x);
     if (edge - last <= tolerance) continue;
-    if (columns.length && !beside(region) && !columnOfRows(region)) continue;
-    columns.push(edge);
+    // Inside a column already found: a centred formula, an equation number set at
+    // the column's right edge. That is the column's own text, not a column of its
+    // own, however much text from the column beside it stands on the same rows.
+    // The whole box has to be inside the column: a line of the left column that
+    // overhangs the gutter must not swallow the right column's own left edge.
+    if (
+      spans.some(
+        (span) => region.x >= span.left - tolerance / 2 && region.x + region.w <= span.right + tolerance / 2,
+      )
+    ) {
+      continue;
+    }
+    if (edges.length && !beside(region) && !columnOfRows(region)) continue;
+    const own = narrow.filter((other) => Math.abs(other.x - edge) <= tolerance / 2);
+    edges.push(edge);
+    spans.push({
+      left: Math.min(...own.map((other) => other.x)),
+      right: Math.max(...own.map((other) => other.x + other.w)),
+    });
     last = edge;
   }
-  const own = columns.filter((edge) => edge <= box.x + tolerance / 2).length - 1;
+
+  const gutterStart = given?.start ?? spans[0]?.right ?? 0;
+  const gutterEnd = given?.end ?? edges[1] ?? pageWidth;
+  const rightWidth = spans[1] ? Math.max(spans[1].right, gutterEnd) - gutterEnd : Math.max(pageWidth - gutterEnd, 0);
+  return { edges, spans, tolerance, separate: edges.length >= 2 || !!given, gutterStart, gutterEnd, rightWidth };
+}
+
+/**
+ * Column index of a box: the column whose printed x-range holds it whole, else the
+ * last column that starts far enough to its left.
+ */
+function columnOf(box: LayoutBox, columns: Columns): number {
+  const { edges, spans, tolerance } = columns;
+  // A narrow box drawn inside a column — a centred formula, a right-aligned
+  // equation number — is that column's, even when text from the column beside it
+  // stands on the same rows and would otherwise start a column of its own.
+  for (let index = 0; index < spans.length; index += 1) {
+    const span = spans[index];
+    if (box.x >= span.left - tolerance / 2 && box.x + box.w <= span.right + tolerance / 2) return index;
+  }
+  const own = edges.filter((edge) => edge <= box.x + tolerance / 2).length - 1;
   return Math.max(0, own);
+}
+
+/** Ends a sentence, so the block after it starts a new one. A hyphen does not. */
+const SENTENCE_END = /[.!?:;)”"]$/u;
+
+/**
+ * Wide text regions that only look like band dividers. The model sometimes boxes
+ * a paragraph that starts in the left column and finishes in the right as one
+ * full-width region: if the column's text just above ends mid-sentence and the
+ * text just below resumes in lower case, that region is the middle of the
+ * sentence, and cutting a band there would read the tail before the head.
+ */
+function continuingRegions(regions: OwnedRegion[], pageWidth: number, pitch: number): LayoutBox[] {
+  const reach = Math.max(pitch, pageWidth * 0.02);
+  const flat: LayoutBox[] = [];
+
+  for (const region of regions) {
+    // Only running text continues a sentence: a figure, a table or a formula
+    // between two halves of one reads as itself, wherever the sentence resumes.
+    if (region.label !== 'text' && region.label !== 'paragraph_title') continue;
+    if (region.w < pageWidth / 2) continue;
+    const middle = region.x + region.w / 2;
+    const overlaps = (other: OwnedRegion) =>
+      other !== region && other.x < middle && Math.min(other.x + other.w, region.x + region.w) > Math.max(other.x, region.x);
+
+    const above = regions
+      .filter((other) => overlaps(other) && other.y + other.h <= region.y + 2 && region.y - (other.y + other.h) <= reach)
+      .sort((a, b) => b.y + b.h - (a.y + a.h))[0];
+    const below = regions
+      .filter((other) => overlaps(other) && other.y >= region.y + region.h - 2 && other.y - (region.y + region.h) <= reach)
+      .sort((a, b) => a.y - b.y)[0];
+    if (!above || !below) continue;
+
+    const head = regionText(above);
+    const tail = regionText(below);
+    if (!head || !tail) continue;
+    if (SENTENCE_END.test(head)) continue;
+    if (!/^\p{Ll}/u.test(tail)) continue;
+    flat.push(region);
+  }
+
+  return flat;
+}
+
+/** A region's text in reading order, so its first and last character mean something. */
+function regionText(region: OwnedRegion): string {
+  return itemsToLines(region.items)
+    .map((line) => line.text)
+    .join(' ')
+    .trim();
 }
 
 /** Two or more lines that fill most of the measure, and a paragraph's worth of text. */

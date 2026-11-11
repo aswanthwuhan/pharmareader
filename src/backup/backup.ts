@@ -574,6 +574,8 @@ function validateBook(raw: Row, where: string): Omit<BookRecord, 'fileBlob'> {
   if (author !== undefined) book.author = author;
   const layout = readOptionalEnum(raw.layout, where, 'layout', BOOK_LAYOUTS);
   if (layout !== undefined) book.layout = layout;
+  // Anything else (an older backup, a hand-edited file) means "detect".
+  if (raw.columns === 'auto' || raw.columns === 1 || raw.columns === 2) book.columns = raw.columns;
   const lastPos = readLastPos(raw.lastPos, where);
   if (lastPos) book.lastPos = lastPos;
   return book;
