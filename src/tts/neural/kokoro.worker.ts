@@ -3,6 +3,7 @@
  * the UI thread: ~300 MB of WASM memory plus multi-second inference would
  * freeze the reader otherwise. WebGPU when the browser has it, WASM otherwise.
  */
+import { env as transformersEnv } from '@huggingface/transformers';
 import { KokoroTTS, env } from 'kokoro-js';
 import type { KokoroDevice, KokoroDtype, KokoroRequest, KokoroResponse } from './kokoroProtocol';
 import { createProgressAggregator } from './progress';
@@ -39,10 +40,11 @@ env.wasmPaths = ORT_WASM_BASE;
  * Setting the number here makes the intent explicit and keeps the two engines on the same
  * budget, so a measurement is comparable between Kokoro and Pocket.
  */
-const ortEnv = env as typeof env & {
-  backends: { onnx: { wasm: { numThreads: number } } };
-};
-ortEnv.backends.onnx.wasm.numThreads = wasmThreadCount();
+// kokoro-js' `env` is a wrapper with nothing but `wasmPaths`: `env.backends` is
+// undefined there and the worker died at load ("reading 'onnx'"). The runtime
+// settings live on transformers.js' own `env`, the same module kokoro-js uses.
+const onnxWasm = transformersEnv.backends.onnx.wasm;
+if (onnxWasm) onnxWasm.numThreads = wasmThreadCount();
 
 /**
  * transformers.js caches the weights in Cache Storage (`transformers-cache`).
@@ -50,7 +52,6 @@ ortEnv.backends.onnx.wasm.numThreads = wasmThreadCount();
  * throws instead of downloading — opt out there and simply re-fetch. The flag is
  * on transformers.js' `env`; kokoro-js re-exports a narrower type for it.
  */
-const transformersEnv = env as typeof env & { useBrowserCache: boolean };
 transformersEnv.useBrowserCache = typeof caches !== 'undefined';
 
 interface WorkerScope {
