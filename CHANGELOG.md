@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.1 — 2026-11-11
+Installs over 0.3.0 without losing data.
+
+**Fixed — phone screen**
+- The Library ran off the side of the phone when a book with a long title was the one to continue: every screen now stays inside the window, at any text size.
+- With a book to continue, "Continue" is the one filled button and Import steps back; the progress percentage is a readable size; the backup reminder link is a full-size tap target.
+
+**Fixed — PDF text**
+- Words ran together wherever the type changed to italic or bold ("studiedin vivoinduced", "Thefirst"); the space is kept.
+- A sentence that ran from the foot of one column to the top of the next was cut in two; it is read as one sentence.
+- Ordinary sentences that open with a figure or table number ("Figure 3 shows…") were treated as captions and skipped by the voice.
+- A long one-line running head is no longer read as body text.
+- One page the layout model cannot read no longer switches the model off for the rest of the book.
+
+Already imported PDFs keep their old text: use Settings → PDF layout → Advanced → Re-analyse, or import the file again.
+
 ## 0.3.0 — 2026-11-10
 From a full audit of 0.2.0 (data safety first). Installs over 0.2.0 without losing data.
 
