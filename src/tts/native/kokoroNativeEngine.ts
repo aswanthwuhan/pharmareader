@@ -9,7 +9,7 @@
 import { getSetting, setSetting } from '../../core/settings';
 import type { SpeakEvents, TtsEngine, TtsVoice } from '../../core/types';
 import { planChunks } from '../neural/clauseChunk';
-import type { KokoroModelKey } from './kokoroDownload';
+import { modelState, type KokoroModelKey } from './kokoroDownload';
 import type { KokoroStage } from './kokoroFailure';
 import { isKokoroNativeAvailable, Kokoro, type KokoroStatus } from './kokoroPlugin';
 
@@ -204,8 +204,15 @@ class KokoroNativeEngine implements TtsEngine {
     requireNative();
     onStage?.('status');
     const requested = await modelSetting();
+    // The plugin answers `downloaded` for whichever build it can fall back to, so
+    // an fp32 install reported int8 as present and "Download INT8" only reloaded
+    // fp32. A build the user chose explicitly must itself be on disk; only the
+    // unset default may lean on the other one.
+    const chosen = (await getSetting<string | null>(KOKORO_MODEL_SETTING, null)) === requested;
+    const present = (s: KokoroStatus): boolean =>
+      chosen ? (modelState(s.models, requested)?.downloaded ?? s.downloaded) : s.downloaded;
     let status = await Kokoro.status({ model: requested });
-    if (!status.downloaded) {
+    if (!present(status)) {
       onStage?.('download');
       const handle = await Kokoro.addListener('downloadProgress', (progress) => {
         const fraction = clampNumber(progress.fraction, 0, 1);
@@ -224,7 +231,7 @@ class KokoroNativeEngine implements TtsEngine {
       onStage?.('status');
       status = await Kokoro.status({ model: requested });
     }
-    if (!status.downloaded) throw new Error('Kokoro model files are missing after the download.');
+    if (!present(status)) throw new Error('Kokoro model files are missing after the download.');
 
     const active = resolvedModel(status, requested);
     if (active === 'int8') await markInt8Ready();

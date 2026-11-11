@@ -223,7 +223,9 @@ export default function KokoroNativePanel(): React.JSX.Element {
     setFailure(null);
     setMeasure(null);
     setCopied('idle');
-    if (model !== chosenModel) {
+    // Always written: an unset setting lets prepare() fall back to the build already
+    // installed, which is exactly what this button must not do.
+    {
       try {
         await setSetting(KOKORO_MODEL_SETTING, model);
       } catch (err) {
