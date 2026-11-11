@@ -24,8 +24,18 @@
 
 .syl-filters {
   display: flex;
-  flex-wrap: wrap;
   gap: var(--space-2);
+  /* One row on any phone: four chips are a few pixels from wrapping at 360px,
+     and a second row costs the list a topic. The row scrolls instead, out to
+     the screen edge. */
+  margin: 0 calc(var(--space-4) * -1);
+  padding: 0 var(--space-4);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.syl-filters::-webkit-scrollbar {
+  display: none;
 }
 
 .syl-filter {
@@ -152,6 +162,12 @@
 .badge.syl-badge {
   flex: none;
   margin-left: auto;
+  /* A level is a word, not a file format: sentence case, so "Intermediate"
+     leaves the topic name room to stay on one line. */
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0;
+  text-transform: none;
   border: 1px solid var(--badge-line);
   background: var(--badge-wash);
   color: var(--badge-ink);
@@ -216,9 +232,11 @@
 }
 
 .syl-level {
-  display: inline-flex;
+  display: flex;
+  flex: 1 1 8rem;
   align-items: center;
   gap: var(--space-2);
+  min-width: 0;
 }
 
 .syl-level-label {
@@ -228,7 +246,10 @@
 }
 
 .syl-select {
+  /* Shrinks so Level and Actions share one row on a phone. */
+  flex: 1 1 6rem;
   width: auto;
+  min-width: 0;
   min-height: var(--tap);
 }
 

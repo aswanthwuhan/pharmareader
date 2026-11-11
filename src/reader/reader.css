@@ -177,16 +177,14 @@
   margin: 0 0 var(--space-4);
 }
 
-/* Where this chapter sits in the book — the one line of small caps in the
-   reading column. It is the only place the reader shows the book title in the
-   flow of the text, and it truncates rather than wraps. */
+/* Where this chapter sits in the book: one quiet line of UI type above the
+   chapter title, in sentence case like every other label (DESIGN.md keeps
+   capitals for the file-format badge). It truncates rather than wraps. */
 .rd-eyebrow {
   margin: 0 0 var(--space-2);
   font-family: var(--font-ui);
-  font-size: var(--fs-2xs);
-  font-weight: var(--fw-semibold);
-  letter-spacing: var(--ls-wide);
-  text-transform: uppercase;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;

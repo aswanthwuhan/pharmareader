@@ -522,9 +522,6 @@ export default function SyllabusPage() {
             </button>
           ))}
         </div>
-        <button type="button" className="btn btn-ghost syl-reset" onClick={() => void reset()}>
-          Reset to defaults
-        </button>
       </div>
 
       {topics.length === 0 ? <p className="syl-empty">Preparing the default syllabus…</p> : null}
@@ -542,6 +539,11 @@ export default function SyllabusPage() {
           </button>
         </div>
       ) : null}
+
+      {/* Rare and destructive: it sits under the list it rewrites, not above it. */}
+      <button type="button" className="btn btn-ghost syl-reset" onClick={() => void reset()}>
+        Reset to defaults
+      </button>
 
       {addingDomain && (
         <form

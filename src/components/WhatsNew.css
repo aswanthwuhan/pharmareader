@@ -59,6 +59,11 @@
   margin-top: 0;
 }
 
+/* "Tell me about updates" does not fit half a phone's width on one line. */
+.whatsnew .whatsnew-actions > .btn {
+  flex-basis: 12rem;
+}
+
 /* The reply to "Tell me about updates": the button gives way to a quiet line,
    so the reader sees the choice took effect before the sheet closes. */
 .whatsnew-note {
