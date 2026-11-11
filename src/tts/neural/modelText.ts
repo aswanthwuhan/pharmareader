@@ -46,18 +46,6 @@ export const MAX_CHUNK_DIGITS = 16;
 /** Words per chunk. Drug names cost far more tokens per word than prose does. */
 export const MAX_CHUNK_WORDS = 40;
 
-/**
- * Words per chunk on WebGPU. The same fp32 model turns breathy partway through a
- * long call on WebGPU but not on WASM or CPU: measured on one 54-word sentence
- * (Intel Gen12, Chrome), voiced share fell from 59% in the first quarter of the
- * clip to 19-31% in the back half, while WASM stayed at 58-67% throughout. The
- * vocoder drives the voice with sin() of a phase that grows through the clip, and
- * GPU sin() loses precision on large arguments. Through the app's own splitter,
- * a second sentence ended at 53% voiced on WASM, 43% with 12-word pieces on
- * WebGPU and 51% with 10-word pieces, so 10 is the largest budget that matches.
- */
-export const WEBGPU_MAX_CHUNK_WORDS = 10;
-
 /** Kokoro's own rate; only used when there is nothing to generate (blank text). */
 const KOKORO_SAMPLE_RATE = 24000;
 
@@ -103,10 +91,13 @@ function wrapByBudget(chunk: string): string[] {
  * extra chunk is another model call. Half a budget still lets a comma early in
  * a long sentence become the seam instead of a mid-clause wrap.
  */
-export function splitForModel(text: string, maxWords: number = MAX_CHUNK_WORDS): string[] {
+export function splitForModel(text: string): string[] {
   const normalised = text.trim().replace(/\s+/g, ' ');
   if (normalised === '') return [];
-  const clauses = splitIntoClauses(normalised, { maxWords, minWords: maxWords / 2 });
+  const clauses = splitIntoClauses(normalised, {
+    maxWords: MAX_CHUNK_WORDS,
+    minWords: MAX_CHUNK_WORDS / 2,
+  });
   return clauses.flatMap(wrapByBudget);
 }
 
@@ -127,12 +118,11 @@ export interface PieceAudio {
 export async function generateInPieces(
   text: string,
   generate: (piece: string) => Promise<PieceAudio>,
-  cancelled: () => boolean = () => false,
-  maxWords: number = MAX_CHUNK_WORDS
+  cancelled: () => boolean = () => false
 ): Promise<{ parts: Float32Array[]; sampleRate: number } | null> {
   const parts: Float32Array[] = [];
   let sampleRate = KOKORO_SAMPLE_RATE;
-  for (const piece of splitForModel(text, maxWords)) {
+  for (const piece of splitForModel(text)) {
     const generated = await generate(piece);
     parts.push(generated.audio);
     sampleRate = generated.sampleRate;

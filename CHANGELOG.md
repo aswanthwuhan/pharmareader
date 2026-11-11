@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.7 — 2026-11-11
+Web app only (GitHub Pages). Installs over 0.3.6 without losing data.
+
+**Fixed — Kokoro in the browser reads whole sentences again, in a clear voice**
+- 0.3.6 read in short bursts of a few words with a stop after each. Sentences are spoken in one flow again.
+- The whisper is fixed at its cause. On a graphics card (WebGPU), Kokoro's voice turned breathy partway through a sentence because the card computes one step of the voice wrongly on long sentences. The downloaded model is now corrected once, on this device, the first time Kokoro loads (a few seconds, no new download), and long sentences stay clear to the last word — the same as Kokoro without a graphics card.
+- Sentences prepared with 0.3.6 are made again once.
+
 ## 0.3.6 — 2026-11-11
 Web app only (GitHub Pages). Installs over 0.3.5 without losing data.
 

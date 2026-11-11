@@ -7,7 +7,6 @@ import {
   MAX_CHUNK_WORDS,
   MODEL_TOKEN_LIMIT,
   splitForModel,
-  WEBGPU_MAX_CHUNK_WORDS,
 } from './modelText';
 
 const flatten = (text: string): string => text.trim().replace(/\s+/g, ' ');
@@ -56,14 +55,6 @@ describe('splitForModel', () => {
       expect(countDigits(chunk)).toBeLessThanOrEqual(MAX_CHUNK_DIGITS);
       expect(fitsModelWindow(chunk)).toBe(true);
     }
-  });
-
-  it('cuts to the shorter WebGPU budget without losing a word', () => {
-    const chunks = splitForModel(LONG_SENTENCE, WEBGPU_MAX_CHUNK_WORDS);
-    for (const chunk of chunks) expect(countWords(chunk)).toBeLessThanOrEqual(WEBGPU_MAX_CHUNK_WORDS);
-    expect(chunks.join(' ')).toBe(flatten(LONG_SENTENCE));
-    // A sentence inside the budget is still one call.
-    expect(splitForModel('Resistance is mediated by beta-lactamase enzymes.', WEBGPU_MAX_CHUNK_WORDS)).toHaveLength(1);
   });
 
   it('splits at a clause boundary when one is available', () => {
