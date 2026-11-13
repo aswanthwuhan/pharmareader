@@ -1,0 +1,16 @@
+{
+  "name": "@pharmareader/ios-sim",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Drives the live site in a real iOS Simulator (mobile Safari) from a GitHub macOS runner",
+  "type": "module",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "test:ios": "node run.mjs"
+  },
+  "dependencies": {
+    "webdriverio": "^9.33.1"
+  }
+}

@@ -1,0 +1,264 @@
+name: iOS Simulator (mobile Safari)
+
+# The lead cannot run an iOS Simulator on the Windows workstation, so the live
+# build is checked on a GitHub macOS runner instead. Two images are used because
+# each one carries a different iOS runtime: macos-15 ships Xcode 16 with the iOS
+# 18.x simulators, macos-26 ships Xcode 26 with the iOS 26.x ones. pick-sim.mjs
+# decides which device to boot from `xcrun simctl list -j`, so nothing here names
+# a runtime or a device.
+#
+# macos-14 (iOS 17.x) was the other leg until GitHub retired every macOS 14 image
+# on 2026-11-02 (actions/runner-images#15226); that label now fails before the job
+# starts, so this workflow asks for macos-26 instead of losing a leg to it.
+#
+# Trigger: `gh workflow run ios-sim.yml` (needs the file on the default branch),
+# or push to the `ios-sim` branch, which works before it is merged.
+#
+# Two modes:
+#   live URL    (workflow_dispatch, build=false) — the deployed GitHub Pages build.
+#   local build (push to ios-sim, or workflow_dispatch build=true) — the checked-out
+#               commit is built with VITE_BASE=/pharmareader/, served on this Mac at
+#               http://localhost:4173/pharmareader/ and driven there, so the working
+#               tree can be tested in the simulator before it is deployed. localhost
+#               is a secure context in Safari, so the service worker still registers.
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Page to open in the simulator (ignored when build is true)
+        required: false
+        default: https://aswanthwuhan.github.io/pharmareader/
+      driver:
+        description: Automation driver
+        required: false
+        type: choice
+        default: appium
+        options:
+          - appium
+          - safaridriver
+      build:
+        description: Build the checked-out commit and test that instead of the live site
+        required: false
+        type: choice
+        default: 'false'
+        options:
+          - 'false'
+          - 'true'
+  push:
+    branches: [ios-sim]
+
+permissions:
+  contents: read
+
+env:
+  # Appium 3 with the matching xcuitest driver: driver 13 needs Appium 4, so the
+  # pair is pinned rather than left to `latest` on both sides.
+  APPIUM_VERSION: '3.9.0'
+  XCUITEST_VERSION: '12.22.8'
+  IOS_SIM_DRIVER: ${{ inputs.driver || 'appium' }}
+  # A push to ios-sim always tests the pushed commit; workflow_dispatch only when
+  # asked. Every other run tests the deployed Pages build. (A string, not a
+  # boolean, because `if:` compares it with 'true'.)
+  IOS_SIM_BUILD: ${{ github.event_name != 'workflow_dispatch' || inputs.build == 'true' }}
+  # localhost, not 127.0.0.1: the simulator shares the Mac's loopback and WebKit
+  # treats localhost as a secure context, which the service worker needs.
+  IOS_SIM_URL: ${{ (github.event_name != 'workflow_dispatch' || inputs.build == 'true') && 'http://localhost:4173/pharmareader/' || inputs.url || 'https://aswanthwuhan.github.io/pharmareader/' }}
+  IOS_SIM_ARTIFACTS: ios-sim-artifacts
+  # run.mjs stops itself and writes its report before the step's own timeout bites.
+  IOS_SIM_BUDGET_MS: '1800000'
+
+jobs:
+  ios-sim:
+    name: Simulator on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    concurrency:
+      group: ios-sim-${{ github.ref }}-${{ matrix.os }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Artifacts directory
+        run: mkdir -p "$IOS_SIM_ARTIFACTS"
+
+      - name: Xcode and simulator inventory
+        run: |
+          xcode-select -p
+          xcodebuild -version
+          xcrun simctl list runtimes
+          xcrun simctl list devices available
+          {
+            echo "# xcode-select -p"; xcode-select -p
+            echo; echo "# xcodebuild -version"; xcodebuild -version
+            echo; echo "# simctl list runtimes"; xcrun simctl list runtimes
+            echo; echo "# simctl list devices available"; xcrun simctl list devices available
+          } > "$IOS_SIM_ARTIFACTS/simctl-inventory.txt" 2>&1 || true
+          { xcode-select -p; xcodebuild -version; } > "$IOS_SIM_ARTIFACTS/xcode-version.txt" 2>&1 || true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # Local-build mode only: the same toolchain as pages.yml, but the build stays
+      # on this runner and is served to the simulator instead of being deployed.
+      - name: Set up pnpm (local build)
+        if: env.IOS_SIM_BUILD == 'true'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - name: Build the checked-out commit (local build)
+        if: env.IOS_SIM_BUILD == 'true'
+        run: |
+          set -o pipefail
+          # --frozen-lockfile is the contract; a working tree whose package.json has
+          # moved ahead of pnpm-lock.yaml still gets tested, loudly, instead of
+          # failing the whole run before Safari is ever opened.
+          if ! pnpm install --frozen-lockfile; then
+            echo "::warning::pnpm install --frozen-lockfile failed: the lockfile is out of date with this commit. Installing without it; the lockfile change stays on the runner."
+            pnpm install --no-frozen-lockfile
+          fi
+          VITE_BASE=/pharmareader/ pnpm build
+          cp dist/index.html dist/404.html
+          ls -la dist | head -30
+          du -sh dist
+        timeout-minutes: 15
+
+      - name: Serve the build under /pharmareader/ (local build)
+        if: env.IOS_SIM_BUILD == 'true'
+        run: |
+          # vite.config.ts reads VITE_BASE when it loads, so the preview server needs
+          # the same value the build was made with — otherwise it serves at / and
+          # every /pharmareader/ URL 404s.
+          # Bind every IPv4 interface: the simulator shares this Mac's loopback, and
+          # a listener on ::1 only would refuse a localhost that resolves to IPv4.
+          VITE_BASE=/pharmareader/ nohup npx vite preview --port 4173 --strictPort --host 0.0.0.0 \
+            > "$IOS_SIM_ARTIFACTS/vite-preview.log" 2>&1 &
+          echo $! > "$IOS_SIM_ARTIFACTS/vite-preview.pid"
+          for attempt in $(seq 1 60); do
+            if curl -sf "http://127.0.0.1:4173/pharmareader/" -o "$IOS_SIM_ARTIFACTS/vite-preview-index.html"; then
+              echo "vite preview answered after ${attempt} attempt(s)"
+              break
+            fi
+            sleep 1
+          done
+          if ! curl -sf "http://127.0.0.1:4173/pharmareader/" > /dev/null; then
+            echo "::error::vite preview is not serving /pharmareader/ on port 4173"
+            tail -60 "$IOS_SIM_ARTIFACTS/vite-preview.log" || true
+            exit 1
+          fi
+          # The probe page the TTS experiment uses must resolve too (SPA fallback).
+          curl -sf "http://127.0.0.1:4173/pharmareader/?probe=1" -o /dev/null
+          # localhost is the name the test uses (secure context, so the service worker
+          # registers). If this Mac resolves it to an address the server is not on,
+          # fall back to 127.0.0.1 — also a loopback secure context, same app origin
+          # shape — rather than failing every step with a blank page.
+          if curl -sf "http://localhost:4173/pharmareader/" > /dev/null; then
+            echo "localhost:4173 answered — the test stays on http://localhost:4173/pharmareader/"
+          else
+            echo "::warning::localhost:4173 did not answer (IPv6 loopback?); testing http://127.0.0.1:4173/pharmareader/ instead"
+            echo "IOS_SIM_URL=http://127.0.0.1:4173/pharmareader/" >> "$GITHUB_ENV"
+          fi
+          head -5 "$IOS_SIM_ARTIFACTS/vite-preview-index.html"
+        timeout-minutes: 5
+
+      - name: Pick a simulator (newest iOS, newest iPhone)
+        run: node scripts/ios-sim/pick-sim.mjs --github-env | tee "$IOS_SIM_ARTIFACTS/simulator.json"
+
+      - name: Boot the simulator
+        # bootstatus -b boots it when needed and blocks until Springboard is up.
+        run: |
+          echo "UDID=$IOS_SIM_UDID  device=$IOS_SIM_DEVICE_NAME  runtime=$IOS_SIM_RUNTIME"
+          xcrun simctl boot "$IOS_SIM_UDID" 2>/dev/null || true
+          xcrun simctl bootstatus "$IOS_SIM_UDID" -b
+          xcrun simctl list devices booted
+        timeout-minutes: 15
+
+      - name: Install the WebDriver client
+        run: |
+          cd scripts/ios-sim
+          npm ci --no-audit --no-fund
+          npm ls webdriverio --depth=0
+
+      - name: Install Appium and the XCUITest driver
+        if: env.IOS_SIM_DRIVER == 'appium'
+        run: |
+          npm install -g "appium@${APPIUM_VERSION}" --no-audit --no-fund
+          appium --version | tee "$IOS_SIM_ARTIFACTS/appium-version.txt"
+          appium driver install "xcuitest@${XCUITEST_VERSION}"
+          appium driver list --installed | tee "$IOS_SIM_ARTIFACTS/appium-drivers.txt"
+        timeout-minutes: 12
+
+      - name: Start Appium
+        if: env.IOS_SIM_DRIVER == 'appium'
+        run: |
+          nohup appium --log-level info --port 4723 > "$IOS_SIM_ARTIFACTS/appium.log" 2>&1 &
+          echo $! > "$IOS_SIM_ARTIFACTS/appium.pid"
+          for attempt in $(seq 1 60); do
+            if curl -sf "http://127.0.0.1:4723/status" -o "$IOS_SIM_ARTIFACTS/appium-status.json"; then
+              echo "Appium answered after ${attempt} attempt(s)"
+              break
+            fi
+            sleep 2
+          done
+          if ! curl -sf "http://127.0.0.1:4723/status" > /dev/null; then
+            echo "::error::Appium did not start"
+            tail -80 "$IOS_SIM_ARTIFACTS/appium.log" || true
+            exit 1
+          fi
+          cat "$IOS_SIM_ARTIFACTS/appium-status.json"
+        timeout-minutes: 5
+
+      - name: Enable and start safaridriver
+        if: env.IOS_SIM_DRIVER == 'safaridriver'
+        run: |
+          sudo safaridriver --enable
+          safaridriver --version | tee "$IOS_SIM_ARTIFACTS/safaridriver-version.txt" || true
+          nohup safaridriver -p 4444 > "$IOS_SIM_ARTIFACTS/safaridriver.log" 2>&1 &
+          echo $! > "$IOS_SIM_ARTIFACTS/safaridriver.pid"
+          for attempt in $(seq 1 30); do
+            if curl -sf "http://127.0.0.1:4444/status" -o "$IOS_SIM_ARTIFACTS/safaridriver-status.json"; then
+              echo "safaridriver answered after ${attempt} attempt(s)"
+              break
+            fi
+            sleep 2
+          done
+          cat "$IOS_SIM_ARTIFACTS/safaridriver-status.json" 2>/dev/null || true
+        timeout-minutes: 5
+
+      - name: Run the mobile Safari test
+        # Always runs: when a session cannot be created the report says why, and
+        # the artifacts still show the simulator's own screen.
+        if: always()
+        run: |
+          echo "mode=$( [ "$IOS_SIM_BUILD" = "true" ] && echo local-build || echo live-url ) url=$IOS_SIM_URL"
+          node scripts/ios-sim/run.mjs
+        timeout-minutes: 33
+
+      - name: Simulator screenshot (simctl)
+        if: always()
+        run: |
+          xcrun simctl io booted screenshot "$IOS_SIM_ARTIFACTS/simctl-workflow.png" || true
+          ls -la "$IOS_SIM_ARTIFACTS" || true
+
+      - name: Stop Appium and the preview server
+        if: always()
+        run: |
+          if [ -f "$IOS_SIM_ARTIFACTS/appium.pid" ]; then kill "$(cat "$IOS_SIM_ARTIFACTS/appium.pid")" 2>/dev/null || true; fi
+          if [ -f "$IOS_SIM_ARTIFACTS/safaridriver.pid" ]; then kill "$(cat "$IOS_SIM_ARTIFACTS/safaridriver.pid")" 2>/dev/null || true; fi
+          # npx is the parent of the real vite process, so kill the whole pattern too.
+          if [ -f "$IOS_SIM_ARTIFACTS/vite-preview.pid" ]; then kill "$(cat "$IOS_SIM_ARTIFACTS/vite-preview.pid")" 2>/dev/null || true; fi
+          pkill -f "vite preview --port 4173" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-sim-${{ matrix.os }}
+          path: ios-sim-artifacts/
+          if-no-files-found: warn
+          retention-days: 14
