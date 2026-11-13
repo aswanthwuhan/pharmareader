@@ -14,6 +14,8 @@ const HELPERS: [object, string][] = [
   [Map.prototype, 'getOrInsert'],
   [Map.prototype, 'getOrInsertComputed'],
   [Promise, 'withResolvers'],
+  [ArrayBuffer.prototype, 'transfer'],
+  [ArrayBuffer.prototype, 'transferToFixedLength'],
 ];
 
 interface Saved {
@@ -101,6 +103,15 @@ describe('pdfPolyfill', () => {
     expect(deferred).toBeDefined();
     deferred?.resolve(7);
     await expect(deferred?.promise).resolves.toBe(7);
+
+    // pdf.js's worker trims its stream buffers with this; missing on iOS < 17.4.
+    const bufferProto = ArrayBuffer.prototype as unknown as {
+      transferToFixedLength?: (this: ArrayBuffer, length?: number) => ArrayBuffer;
+    };
+    const source = new Uint8Array([1, 2, 3, 4]).buffer;
+    expect(Array.from(new Uint8Array(bufferProto.transferToFixedLength!.call(source, 2)))).toEqual([1, 2]);
+    expect(Array.from(new Uint8Array(bufferProto.transferToFixedLength!.call(source, 6)))).toEqual([1, 2, 3, 4, 0, 0]);
+    expect(bufferProto.transferToFixedLength!.call(source).byteLength).toBe(4);
   });
 
   it('rejects malformed hex instead of returning garbage', async () => {

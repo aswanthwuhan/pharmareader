@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.8 — 2026-11-13
+Web app only (GitHub Pages). Installs over 0.3.7 without losing data.
+
+**Fixed — iPhone and iPad (Safari)**
+- On iOS 16.3 and older the app never started: the page stayed on "Loading the study app". It now starts on iOS 15.4 and newer (iPhone 6s, 7 and the first SE included).
+- On iOS 16.4 to 17.3 every PDF page was blank in the reader, although the text imported. Pages draw again.
+- The first tap on Play with the phone's built-in voice could stay silent on iPhone. It now speaks on the first tap.
+- "Add to Home Screen" now shows the PharmaReader icon instead of a screenshot of the page, and the installed app opens without Safari's address bar.
+
 ## 0.3.7 — 2026-11-11
 Web app only (GitHub Pages). Installs over 0.3.6 without losing data.
 

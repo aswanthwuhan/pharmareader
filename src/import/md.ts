@@ -101,7 +101,8 @@ export function stripInline(value: string): string {
       .replace(/\*\*([^*]+)\*\*/g, '$1')
       .replace(/__([^_]+)__/g, '$1')
       .replace(/\*([^*\n]+)\*/g, '$1')
-      .replace(/(?<!\w)_([^_\n]+)_(?!\w)/g, '$1')
+      // no lookbehind: in a regex literal it is a parse error on iOS < 16.4 and blanks the app
+      .replace(/(^|\W)_([^_\n]+)_(?!\w)/g, '$1$2')
       .replace(/~~([^~]+)~~/g, '$1')
       .replace(/<[^>]+>/g, '')
       .replace(/\\([\\`*_{}[\]()#+\-.!>])/g, '$1'),

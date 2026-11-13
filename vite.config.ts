@@ -10,6 +10,10 @@ const base = rawBase.endsWith('/') ? rawBase : `${rawBase}/`;
 
 export default defineConfig(({ mode }) => ({
   base,
+  // Pinned so a Vite upgrade cannot silently raise the floor. iOS 15.4 is the
+  // oldest Safari pdf.js runs on (structuredClone, Object.hasOwn); Chrome 110 is
+  // the oldest Android WebView supported (see src/import/pdfPolyfill.ts).
+  build: { target: ['safari15.4', 'ios15.4', 'chrome110', 'edge110', 'firefox115'] },
   // The What's new sheet and the update check compare against the version that
   // is actually running, so it comes from package.json at build time.
   define: { __APP_VERSION__: JSON.stringify(packageJson.version) },
@@ -19,7 +23,7 @@ export default defineConfig(({ mode }) => ({
       // native shell bundles its own assets; a service worker there would serve stale code after app updates
       disable: mode === 'native',
       registerType: 'autoUpdate',
-      includeAssets: ['icon.svg'],
+      includeAssets: ['icon.svg', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png'],
       manifest: {
         name: 'PharmaReader',
         short_name: 'PharmaReader',
@@ -31,7 +35,12 @@ export default defineConfig(({ mode }) => ({
         start_url: base,
         scope: base,
         // relative to the manifest, which sits at the base path
-        icons: [{ src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }],
+        icons: [
+          { src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+          // iOS and some Android launchers ignore SVG manifest icons
+          { src: 'icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+        ],
       },
       workbox: {
         // TTS models are hundreds of MB and are downloaded at runtime, never precached.

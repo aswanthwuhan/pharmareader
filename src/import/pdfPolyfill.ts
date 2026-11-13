@@ -13,6 +13,10 @@
  * pdf.js still works on is Chrome / Android WebView 110 (it also relies on
  * `structuredClone`, `Object.hasOwn` and ES-module workers).
  *
+ * `ArrayBuffer.prototype.transferToFixedLength` (Safari 17.4, Chrome 114) is not
+ * shimmed by the legacy build either: without it the worker's operator list
+ * throws and every PDF page renders blank (iOS 16.4–17.3, WebView 110–113).
+ *
  * Import this module before any `pdfjs-dist` import — see `pdf.ts`, the worker
  * entry `pdfWorker.ts`, and `src/reader/PdfView.tsx`.
  */
@@ -103,6 +107,15 @@ function withResolvers<T>(this: unknown): {
   return { promise, resolve, reject };
 }
 
+/** Copying stand-in for `transfer`: the source is not detached, which callers never rely on. */
+function transfer(this: ArrayBuffer, newLength: number = this.byteLength): ArrayBuffer {
+  const out = new ArrayBuffer(newLength);
+  new Uint8Array(out).set(new Uint8Array(this, 0, Math.min(newLength, this.byteLength)));
+  return out;
+}
+
+define(ArrayBuffer.prototype, 'transfer', transfer);
+define(ArrayBuffer.prototype, 'transferToFixedLength', transfer);
 define(typedArray.prototype, 'toHex', toHex);
 define(typedArray.prototype, 'toBase64', toBase64);
 define(typedArray, 'fromHex', fromHex);

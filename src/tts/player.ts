@@ -195,8 +195,20 @@ export function createPlayer(options: PlayerOptions): Player {
 
   /** Must be called synchronously from the tap; see SILENT_WAV. */
   function primeAudio(): void {
-    if (!canSynthesize || unlocked) return;
+    if (unlocked) return;
     unlocked = true;
+    if (!canSynthesize) {
+      // iOS Safari keeps speechSynthesis silent unless its first speak() runs
+      // inside the tap; the real utterance comes after IndexedDB/voice awaits.
+      try {
+        if (typeof SpeechSynthesisUtterance !== 'undefined') {
+          globalThis.speechSynthesis?.speak(new SpeechSynthesisUtterance(''));
+        }
+      } catch {
+        // an unlock that throws must not stop playback from starting
+      }
+      return;
+    }
     const el = ensureAudio();
     el.muted = true;
     el.src = SILENT_WAV;

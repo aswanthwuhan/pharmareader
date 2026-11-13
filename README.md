@@ -5,7 +5,7 @@
 Offline-first PWA for MD Pharmacology study: import your own PDF/EPUB/DOCX/text, read with
 listen-along TTS, highlight, and review FSRS flashcards mapped to the NMC syllabus. Files,
 highlights and cards live in IndexedDB only — no accounts, no backend. GPL-3.0.
-Version 0.3.7: Android (Capacitor), Windows (Tauri) and installable PWA. See `CHANGELOG.md`.
+Version 0.3.8: Android (Capacitor), Windows (Tauri) and installable PWA. See `CHANGELOG.md`.
 
 ## Who it is for
 

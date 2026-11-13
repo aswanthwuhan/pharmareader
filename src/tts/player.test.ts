@@ -270,6 +270,23 @@ describe('streaming engines', () => {
     expect(done).toBe(1);
   });
 
+  it('speaks an empty utterance synchronously in the tap (iOS speechSynthesis unlock)', () => {
+    const speak = vi.fn();
+    vi.stubGlobal('speechSynthesis', { speak });
+    vi.stubGlobal('SpeechSynthesisUtterance', class {
+      constructor(public text: string) {}
+    });
+    try {
+      const player = createPlayer({ ...baseOptions, engine: new FakeEngine(false) });
+      player.play();
+      expect(speak).toHaveBeenCalledTimes(1);
+      expect(speak.mock.calls[0]![0]).toMatchObject({ text: '' });
+      player.stop();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('does not start a second queue when play() is called twice', async () => {
     const engine = new FakeEngine(false);
     const player = createPlayer({ ...baseOptions, engine });

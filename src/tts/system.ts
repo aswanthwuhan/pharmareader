@@ -144,8 +144,10 @@ function speakOne(
 /** Split on sentence ends, and cap very long sentences so Chrome cannot cut them. */
 function chunks(text: string): string[] {
   const out: string[] = [];
-  for (const sentence of text.split(/(?<=[.!?])\s+/)) {
-    const s = sentence.trim();
+  // no lookbehind: in a regex literal it is a parse error on iOS < 16.4 and blanks the app
+  const parts = text.split(/([.!?])\s+/);
+  for (let i = 0; i < parts.length; i += 2) {
+    const s = (parts[i]! + (parts[i + 1] ?? '')).trim();
     if (!s) continue;
     if (s.length <= MAX_UTTERANCE_CHARS) {
       out.push(s);
