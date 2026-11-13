@@ -16,6 +16,13 @@ import { systemEngine } from './system';
 import { invalidate, listLexiconEntries, saveUserEntry } from './lexicon';
 import { putAudio } from './cache';
 
+/** What the browser can run; false stands for iOS 15.4–16.3. */
+const caps = vi.hoisted(() => ({ supported: true }));
+vi.mock('./capabilities', () => ({
+  supportsNeuralVoices: () => caps.supported,
+  neuralUnsupportedHint: () => "Needs iOS 16.4 or newer — your phone's built-in voice still works.",
+}));
+
 // React 19 keeps act() warnings quiet only when this flag is set.
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
@@ -106,6 +113,7 @@ function setInputValue(el: HTMLInputElement | HTMLSelectElement, value: string):
 }
 
 beforeEach(() => {
+  caps.supported = true;
   invalidate();
 });
 
@@ -163,6 +171,25 @@ describe('TtsSettings', () => {
     const rate = container.querySelector<HTMLInputElement>('#tts-rate');
     expect(rate?.min).toBe('0.5');
     expect(rate?.max).toBe('2');
+  });
+
+  it('shows the downloaded voices as unavailable when the browser cannot run them', async () => {
+    caps.supported = false;
+    await setSetting(TTS_ENGINE_SETTING, 'kokoro');
+    await mount();
+
+    const engine = container.querySelector<HTMLSelectElement>('#tts-engine')!;
+    // The saved on-device choice is shown as the voice that will actually speak.
+    expect(engine.value).toBe('system');
+    expect([...engine.options].filter((o) => o.value === 'pocket' || o.value === 'kokoro').map((o) => o.disabled)).toEqual([
+      true,
+      true,
+    ]);
+    expect(container.textContent).toContain(
+      "Needs iOS 16.4 or newer — your phone's built-in voice still works.",
+    );
+    // The phone's own voice stays a normal, usable choice.
+    expect(container.querySelector<HTMLSelectElement>('#tts-voice')?.disabled).toBe(false);
   });
 
   it('writes the engine choice to settings when changed', async () => {

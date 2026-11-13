@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { db } from '../../core/db';
+import { isIos } from '../../core/platform';
 import { setSetting, useSetting } from '../../core/settings';
 import {
   HEAT_WARNING,
   WORD_HIGHLIGHT_KEY,
   isNeuralVoice,
 } from '../../reader/reading';
+import { supportsNeuralVoices } from '../capabilities';
 import { TTS_ENGINE_SETTING } from '../TtsSettings';
 import { resetDownload, startDownload, useDownload, type DownloadState } from '../downloads';
 import { copyText } from '../neural/clipboard';
@@ -20,7 +22,7 @@ import {
   prepareWhisper,
   resetWhisperWorker,
 } from './whisper';
-import { WHISPER_READY_SETTING } from './whisperModel';
+import { WHISPER_IOS_SETTING, WHISPER_READY_SETTING } from './whisperModel';
 
 /** Last measured speed: model time, end-to-end time, and the clip it ran on. */
 export const WHISPER_SPEED_SETTING = 'align.whisper.speed';
@@ -90,11 +92,15 @@ export default function AlignModelPanel() {
   const whisperReady = useSetting<boolean>(WHISPER_READY_SETTING, false);
   const engine = useSetting<string>(TTS_ENGINE_SETTING, 'auto');
   const wordHighlight = useSetting<boolean>(WORD_HIGHLIGHT_KEY, true);
+  const wordTimingOn = useSetting<boolean>(WHISPER_IOS_SETTING, false);
+  const onIos = useMemo(() => isIos(), []);
 
   useEffect(() => {
     let alive = true;
     void (async () => {
-      if (!hasWhisperSupport()) {
+      // The aligner is a SIMD-only ONNX worker, so a browser that cannot run the
+      // downloaded voices cannot run it either (iOS 15.4–16.3).
+      if (!hasWhisperSupport() || !supportsNeuralVoices()) {
         if (alive) setAvailable('unsupported');
         return;
       }
@@ -217,8 +223,27 @@ export default function AlignModelPanel() {
 
       {state.kind === 'unsupported' && (
         <p className={styles.hint}>
-          This browser cannot run the on-device aligner, so words are highlighted by an estimate.
+          {onIos
+            ? 'Needs iOS 16.4 or newer — words are highlighted by an estimate instead.'
+            : 'This browser cannot run the on-device aligner, so words are highlighted by an estimate.'}
         </p>
+      )}
+
+      {onIos && state.kind !== 'unsupported' && (
+        <div className={styles.iosChoice}>
+          <label className={styles.iosToggle}>
+            <input
+              type="checkbox"
+              checked={wordTimingOn}
+              onChange={(e) => void setSetting(WHISPER_IOS_SETTING, e.target.checked)}
+            />
+            <span>Use word timing on this iPhone</span>
+          </label>
+          <p className={styles.hint}>
+            Off by default: the model holds about 100 MB of memory while you read, and iOS
+            closes tabs that grow too large. The estimate is used until this is on.
+          </p>
+        </div>
       )}
 
       {state.kind === 'downloading' && (

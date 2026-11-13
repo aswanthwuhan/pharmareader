@@ -9,6 +9,7 @@ import { checkForUpdate, dismissUpdate, type UpdateRelease } from '../core/updat
 import { APP_VERSION } from '../core/version';
 import { deleteBook, importFileDetailed, importText, importUrl, setBookColumns } from '../import';
 import '../import/library.css';
+import InstallHint from '../components/InstallHint';
 import { LAST_BOOK_KEY, type LastBook } from '../reader/lastBook';
 import ModelStatusBanner from '../tts/ModelStatusBanner';
 
@@ -495,6 +496,7 @@ export default function LibraryPage() {
           />
         </div>
       </header>
+      <InstallHint />
       <ModelStatusBanner context="library" />
 
       {update ? (

@@ -15,6 +15,15 @@ import { WHISPER_MODEL_ID } from './whisperProtocol';
 export const WHISPER_READY_SETTING = 'align.whisper.ready';
 
 /**
+ * iPhone opt-in for word timing (`align.whisper.ios`).
+ *
+ * Off by default there: the loaded model is another ~100 MB on a phone whose
+ * Safari tab is already the scarcest thing the app owns. Everywhere else the
+ * aligner is used whenever it is installed.
+ */
+export const WHISPER_IOS_SETTING = 'align.whisper.ios';
+
+/**
  * Files transformers.js must have cached for the model to run offline. The two
  * graphs and the tokenizer are the model; `generation_config.json` carries the
  * cross-attention alignment heads, without which word timestamps cannot be

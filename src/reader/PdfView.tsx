@@ -17,6 +17,7 @@ import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist/legacy/build/pdf.mj
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import workerUrl from '../import/pdfWorker?worker&url';
 import { MISSING_FILE_MESSAGE, fileMissing } from '../import';
+import { PDF_ASSETS } from '../import/pdfAssets';
 import type { PdfRect } from '../core/types';
 import type { PageBlock } from './blockOrder';
 import LayoutOverlay from './LayoutOverlay';
@@ -48,6 +49,8 @@ interface Props {
 
 const ZOOM_MIN = 0.6;
 const ZOOM_MAX = 3;
+/** The narrowest a fitted page may be and still read as a page (CSS px). */
+const MIN_PAGE_PX = 360;
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
@@ -72,10 +75,13 @@ export default function PdfView({
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [pageCount, setPageCount] = useState(0);
   const [zoom, setZoom] = useState(1);
-  // How the page is fitted before `zoom`: the whole sheet by default, so a phone
-  // shows one complete page instead of the top of a page that hangs off the
-  // bottom. "Fit width" is the manual override for reading the print larger.
-  const [fit, setFit] = useState<'width' | 'page'>('page');
+  // How the page is fitted before `zoom`. "Auto" — the default — shows the whole
+  // sheet only while that still reads as a page (a tablet, a desktop); on a phone
+  // the box is short enough that a fitted page is a stamp, so it fills the width
+  // and the box scrolls. The two fit buttons pin one or the other, and the
+  // pressed one reports what the paint actually did.
+  const [fit, setFit] = useState<'auto' | 'width' | 'page'>('auto');
+  const [appliedFit, setAppliedFit] = useState<'width' | 'page'>('page');
   const [width, setWidth] = useState(0);
   const [height, setHeight] = useState(0);
   const [scale, setScale] = useState(1);
@@ -123,7 +129,7 @@ export default function PdfView({
     void (async () => {
       const data = new Uint8Array(await fileRef.current.arrayBuffer());
       if (!alive) return;
-      loadingTask = getDocument({ data });
+      loadingTask = getDocument({ data, ...PDF_ASSETS });
       const loaded = await loadingTask.promise;
       if (!alive) {
         void loadingTask.destroy();
@@ -209,13 +215,21 @@ export default function PdfView({
     };
   }, []);
 
-  // Fit the whole sheet again whenever the thing being fitted changes: another
-  // book, or a full-screen toggle that gives the box a different height. Zoom is
+  // Re-fit automatically whenever the thing being fitted changes: another book,
+  // or a full-screen toggle that gives the box a different height. Zoom is
   // relative to that fit, so it starts over with it.
   useEffect(() => {
-    setFit('page');
+    setFit('auto');
     setZoom(1);
   }, [docKey, fullscreen]);
+
+  // A page that fills the width is taller than its box, so the box can be
+  // scrolled when the reader turns a page: the new page starts at its top (the
+  // voice may move it again a frame later, below).
+  useEffect(() => {
+    const element = wrap.current;
+    if (element) element.scrollTop = 0;
+  }, [docKey, painted]);
 
   // Follow the voice: when the spoken sentence's first line is outside the
   // visible part of the page box, bring it into view with a margin. Only when it
@@ -277,15 +291,22 @@ export default function PdfView({
         const availableHeight = wrap.current?.clientHeight || height;
         const widthFit = availableWidth / base.width;
         // "Fit page": the smaller of the two fits, so a portrait sheet is shown
-        // complete inside the box — on a phone the height is usually the tighter
-        // one, and fitting only the width is what cropped the page.
+        // complete inside the box. Fitting only the width is what cropped the
+        // page — but the whole sheet is only worth showing while it is still a
+        // readable size: a phone's box is a fraction of the page's height, and
+        // there a complete sheet is a thumbnail of one. So "auto" takes the
+        // sheet when it keeps ~85% of the width fit and is at least a page
+        // wide, and otherwise fills the width, scrolling inside the box.
         const pageFit = availableHeight > 0 ? Math.min(widthFit, availableHeight / base.height) : widthFit;
-        const baseFit = fit === 'page' ? pageFit : widthFit;
+        const pageReads = pageFit >= Math.min(widthFit * 0.85, MIN_PAGE_PX / base.width);
+        const fitPage = fit === 'page' || (fit === 'auto' && (fullscreen || pageReads));
+        const baseFit = fitPage ? pageFit : widthFit;
         const viewport = pdfPage.getViewport({ scale: baseFit * zoom });
         const ratio = Math.min(window.devicePixelRatio || 1, 2);
 
         // Publish the geometry *before* painting, so the sentence overlay is
         // never drawn at the previous page's scale.
+        setAppliedFit(fitPage ? 'page' : 'width');
         setScale(viewport.scale);
         setSize({ w: viewport.width, h: viewport.height });
 
@@ -487,7 +508,7 @@ export default function PdfView({
             className="btn btn-ghost btn-icon"
             aria-label="Fit width"
             title="Fit width"
-            aria-pressed={fit === 'width'}
+            aria-pressed={appliedFit === 'width'}
             onClick={() => {
               setFit('width');
               setZoom(1);
@@ -500,7 +521,7 @@ export default function PdfView({
             className="btn btn-ghost btn-icon"
             aria-label="Fit page"
             title="Fit page"
-            aria-pressed={fit === 'page'}
+            aria-pressed={appliedFit === 'page'}
             onClick={() => {
               setFit('page');
               setZoom(1);

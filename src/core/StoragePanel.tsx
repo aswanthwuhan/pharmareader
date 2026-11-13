@@ -6,6 +6,7 @@
  */
 import { useEffect, useState } from 'react';
 import { db } from './db';
+import { isIos, isStandalone } from './platform';
 import { cacheSizeBytes, clearAudio } from '../tts/cache';
 import './storage.css';
 
@@ -58,6 +59,9 @@ export default function StoragePanel() {
   const [books, setBooks] = useState<{ count: number; bytes: number } | null>(null);
   const [busy, setBusy] = useState<'cache' | 'books' | 'persist' | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // Safari on iOS ignores persist() and deletes the whole store after a week
+  // without a visit; only the Home Screen install changes that, so say so here.
+  const [iosNotInstalled] = useState(() => isIos() && !isStandalone());
 
   useEffect(() => {
     let alive = true;
@@ -162,6 +166,12 @@ export default function StoragePanel() {
           </dd>
         </div>
       </dl>
+
+      {iosNotInstalled ? (
+        <p className="muted storage-note">
+          On iPhone, Safari deletes this data after 7 days without a visit. Tap Share → Add to Home Screen to keep it.
+        </p>
+      ) : null}
 
       {canPersist ? (
         <div className="storage-actions">

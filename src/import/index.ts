@@ -1,5 +1,6 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { db, newId } from '../core/db';
+import { isIos } from '../core/platform';
 import type { BookRecord, ColumnMode, DocFormat, ParsedDoc } from '../core/types';
 import { normaliseText } from './blocks';
 import { parseHtmlDocument } from './html';
@@ -51,28 +52,33 @@ export function titleFromFileName(name: string): string {
 }
 
 async function parseFile(
-  bytes: ArrayBuffer,
-  type: string,
+  file: Blob,
   name: string,
   onProgress?: (note: string) => void,
+  // Bytes already read for the stored copy: reading the Blob again would be a second full copy.
+  readBytes?: ArrayBuffer,
 ): Promise<{ doc: ParsedDoc; warning?: string; layout?: BookRecord['layout'] }> {
-  const format = detectFormat({ name, type });
-  const text = () => new TextDecoder().decode(bytes);
+  const format = detectFormat({ name, type: file.type });
   if (!format) {
     throw new Error(`Unsupported file type: ${name}. Import a PDF, EPUB, DOCX, TXT, Markdown or HTML file.`);
   }
 
   const fallback = titleFromFileName(name);
+  // Read the bytes where a parser needs them and nowhere else: the whole file
+  // never sits in memory next to a second copy of itself. TextDecoder is kept
+  // for text rather than `Blob.text()` because it drops a UTF-8 BOM reliably.
+  const bytes = async () => readBytes ?? file.arrayBuffer();
+  const text = async () => new TextDecoder().decode(await bytes());
 
   switch (format) {
     case 'txt':
-      return { doc: parseText(text(), fallback) };
+      return { doc: parseText(await text(), fallback) };
 
     case 'md':
-      return { doc: parseMarkdown(text(), fallback) };
+      return { doc: parseMarkdown(await text(), fallback) };
 
     case 'html': {
-      const html = text();
+      const html = await text();
       const doc = new DOMParser().parseFromString(html, 'text/html');
       return {
         doc: parseHtmlDocument(doc, { format: 'html', title: normaliseText(doc.title) || fallback }),
@@ -82,7 +88,9 @@ async function parseFile(
     case 'pdf': {
       // Heavy extractors are loaded only when that file type is imported.
       const { parsePdf } = await import('./pdf');
-      const parsed = await parsePdf(bytes, fallback, (done, total, phase) => {
+      // pdf.js takes the buffer away for its worker (postMessage transfer), so
+      // this is the only copy of the file that exists during extraction.
+      const parsed = await parsePdf(await bytes(), fallback, (done, total, phase) => {
         // A 1000-page paper takes a while; a note every 25 pages is enough to
         // prove the app is alive without re-rendering the library 1000 times.
         if (done !== total && done % 25 !== 0) return;
@@ -96,12 +104,12 @@ async function parseFile(
 
     case 'epub': {
       const { parseEpub } = await import('./epub');
-      return { doc: await parseEpub(bytes, fallback) };
+      return { doc: await parseEpub(await bytes(), fallback) };
     }
 
     case 'docx': {
       const { parseDocx } = await import('./docx');
-      return { doc: await parseDocx(bytes, fallback) };
+      return { doc: await parseDocx(await bytes(), fallback) };
     }
   }
 }
@@ -151,8 +159,14 @@ export async function deleteBook(bookId: string): Promise<void> {
  * as zero bytes ("The PDF file is empty"), even though IndexedDB happily stored
  * the record. Copying the bytes into a fresh `Blob` gives the book a file that
  * survives everything the store survives.
+ *
+ * iOS is the exception: WebKit writes a stored Blob into IndexedDB's own files,
+ * so the picked `File` survives as is — and there a second 300 MB copy is what
+ * kills the tab. Chromium (Android Chrome too, not only the native shell) keeps
+ * the copy, since that is where the empty-handle bug was seen.
  */
 export async function ownedCopy(file: Blob & { name?: string }): Promise<Blob> {
+  if (isIos()) return file;
   return new Blob([await file.arrayBuffer()], { type: file.type || 'application/octet-stream' });
 }
 
@@ -171,19 +185,41 @@ export function fileMissing(book: Pick<BookRecord, 'fileBlob'>): boolean {
   return !blob || typeof blob.size !== 'number' || blob.size === 0;
 }
 
+/**
+ * The largest file this app will try to import on an iPhone or an iPad.
+ *
+ * iOS Safari kills the whole tab somewhere between 1 GB and 1.5 GB of memory,
+ * and an import costs about twice the file's size on top of the app itself: the
+ * bytes once for the parser (pdf.js hands them to its worker, the extracted
+ * text grows beside them) and once more while IndexedDB writes the stored copy.
+ * A 300 MB scan is already close to the edge, so 500 MB is the point where
+ * refusing costs the reader less than a tab that vanishes mid-import. Android
+ * and desktop builds have no such limit.
+ */
+export const IOS_IMPORT_LIMIT_BYTES = 500 * 1024 * 1024;
+
 /** Full result including the scanned-PDF warning the library shows inline. */
 export async function importFileDetailed(
   file: File,
   onProgress?: (note: string) => void,
 ): Promise<ImportResult> {
-  // Read the picked file exactly once, and keep the bytes that were parsed: the
-  // picker's File handle is not a durable store (see ownedCopy). The Blob is
-  // built first because pdf.js takes the buffer away for its worker; reading the
-  // Blob back for the parser would be a second full copy of a 150 MB textbook.
-  const bytes = await file.arrayBuffer();
-  const owned = new Blob([bytes], { type: file.type || 'application/octet-stream' });
-  const { doc, warning, layout } = await parseFile(bytes, file.type, file.name, onProgress);
-  const bookId = await saveRecord(doc, owned, layout);
+  if (isIos() && file.size > IOS_IMPORT_LIMIT_BYTES) {
+    throw new Error(
+      `That file is too large to import on this device (over ${IOS_IMPORT_LIMIT_BYTES / 1024 ** 2} MB). ` +
+        'Import it on a computer instead.',
+    );
+  }
+  // The stored copy of the book (see ownedCopy). On iOS it is the picked File
+  // and the parser reads it once; elsewhere the bytes read for the copy go
+  // straight to the parser (pdf.js transfers them; the Blob has its own copy).
+  let stored: Blob = file;
+  let bytes: ArrayBuffer | undefined;
+  if (!isIos()) {
+    bytes = await file.arrayBuffer();
+    stored = new Blob([bytes], { type: file.type || 'application/octet-stream' });
+  }
+  const { doc, warning, layout } = await parseFile(stored, file.name, onProgress, bytes);
+  const bookId = await saveRecord(doc, stored, layout);
   return { bookId, warning };
 }
 

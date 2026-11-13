@@ -7,6 +7,7 @@
 import { Capacitor } from '@capacitor/core';
 import { getSetting } from '../core/settings';
 import type { TtsEngine } from '../core/types';
+import { supportsNeuralVoices } from './capabilities';
 import { rtfSettingKey } from './neural/benchmark';
 import { kokoroEngine } from './neural/kokoro';
 import { pocketEngine } from './neural/pocket';
@@ -61,15 +62,20 @@ export function warmEngine(engine: TtsEngine, delayMs = 1500): void {
 }
 
 async function pickEngine(): Promise<TtsEngine> {
+  // The web voices are SIMD-only WASM and would fail after a wasted download on
+  // iOS 15.4–16.3; Android's native Kokoro plugin does not run in the WebView.
+  const neural = supportsNeuralVoices();
+  const usable = (engine: TtsEngine) => neural || engine === kokoroNativeEngine;
+
   const choice = await getSetting<string>(ENGINE_SETTING, 'auto');
 
   if (choice !== 'auto') {
     const picked = allEngines().find((engine) => engine.id === choice);
-    if (picked && (await ready(picked))) return picked;
+    if (picked && usable(picked) && (await ready(picked))) return picked;
     return systemEngine;
   }
 
-  for (const engine of [kokoroFor(), pocketEngine]) {
+  for (const engine of [kokoroFor(), pocketEngine].filter(usable)) {
     if ((await ready(engine)) && (await fastEnough(engine))) return engine;
   }
   return systemEngine;

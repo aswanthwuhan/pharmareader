@@ -18,6 +18,7 @@ import {
 } from 'fflate';
 import type { Table } from 'dexie';
 import { db } from '../core/db';
+import { isIos } from '../core/platform';
 import { BLOCK_KINDS } from '../core/types';
 import type {
   Block,
@@ -49,6 +50,13 @@ export const EXCLUDED_SETTING = 'ai.apiKey';
 
 /** Refuse absurd archives before allocating memory for them. */
 const MAX_ZIP_BYTES = 2 * 1024 ** 3;
+/**
+ * What an iPhone or iPad can unzip in a tab. The whole archive is held in memory
+ * once and every entry it carries is decompressed beside it, and iOS Safari kills
+ * the tab somewhere between 1 GB and 1.5 GB — so the 2 GB a desktop chews
+ * through would be a crash, not an import.
+ */
+const IOS_ZIP_BYTES = 500 * 1024 ** 2;
 const MAX_ENTRY_BYTES = 1024 ** 3;
 /** Table JSON is parsed in one go, so it gets a tighter cap than book files. */
 const MAX_JSON_BYTES = 256 * 1024 ** 2;
@@ -185,7 +193,10 @@ export async function exportBackup({ includeBooks }: { includeBooks: boolean }):
  * hold every book in memory at once, which a phone cannot do for a full library.
  */
 async function buildZip(entries: ZipEntry[]): Promise<Blob> {
-  const parts: Uint8Array[] = [];
+  // One Blob per chunk, as the compressor produces it. Holding the chunks as
+  // Uint8Arrays and building the Blob at the end would put a second full copy of
+  // the archive in memory at the worst moment: a 400 MB library then needs 800 MB.
+  const parts: Blob[] = [];
   let failure: Error | null = null;
   let finish!: () => void;
   const done = new Promise<void>((resolve) => {
@@ -194,7 +205,7 @@ async function buildZip(entries: ZipEntry[]): Promise<Blob> {
 
   const zip = new Zip((err, chunk, final) => {
     if (err) failure ??= new Error(`Could not build the backup zip: ${err.message}`);
-    else if (chunk.length) parts.push(chunk);
+    else if (chunk.length) parts.push(new Blob([chunk as unknown as BlobPart]));
     if (final) finish();
   });
 
@@ -224,8 +235,8 @@ async function buildZip(entries: ZipEntry[]): Promise<Blob> {
   zip.end();
   await done;
   if (failure) throw failure;
-  // fflate types its chunks as Uint8Array<ArrayBufferLike>; Blob takes views.
-  return new Blob(parts as unknown as BlobPart[], { type: 'application/zip' });
+  // The parts are already Blobs, so this concatenates references, not bytes.
+  return new Blob(parts, { type: 'application/zip' });
 }
 
 export async function importBackup(file: Blob, mode: ImportMode): Promise<ImportReport> {
@@ -281,10 +292,14 @@ async function attachBookFiles(
 ): Promise<BookRecord[]> {
   const books: BookRecord[] = [];
   for (const record of rows) {
-    const bytes = files[`books/${record.id}.${record.format}`];
+    const name = `books/${record.id}.${record.format}`;
+    const bytes = files[name];
     let fileBlob: Blob;
     if (bytes) {
       fileBlob = new Blob([bytes], { type: MIME[record.format] });
+      // The Blob keeps its own copy of the bytes, and the unzipped entry is dead
+      // weight now: dropping it here means a library is never in memory twice.
+      delete files[name];
     } else {
       // A device that already has the book keeps its local file, in a replace
       // too: a notes-only backup must never cost the reader her PDF. This runs
@@ -336,9 +351,16 @@ function checkManifest(files: Unzipped): void {
  * entries are refused, and a refused entry is never decompressed.
  */
 async function readZip(file: Blob, knownTables: Set<string>): Promise<Unzipped> {
-  if (!(file.size <= MAX_ZIP_BYTES)) {
-    throw new Error(`That backup is too large (over ${gigabytes(MAX_ZIP_BYTES)}).`);
+  const limit = isIos() ? IOS_ZIP_BYTES : MAX_ZIP_BYTES;
+  if (!(file.size <= limit)) {
+    throw new Error(
+      isIos()
+        ? `That backup is too large to open on this device (over ${IOS_ZIP_BYTES / 1024 ** 2} MB). Import it on a computer.`
+        : `That backup is too large (over ${gigabytes(MAX_ZIP_BYTES)}).`,
+    );
   }
+  // The one copy of the archive. fflate needs the whole buffer, and it is
+  // released as soon as this function returns — `files` holds only the entries.
   const bytes = new Uint8Array(await file.arrayBuffer());
   const problems: string[] = [];
   let total = 0;
@@ -356,8 +378,10 @@ async function readZip(file: Blob, knownTables: Set<string>): Promise<Unzipped> 
             return false;
           }
           total += info.originalSize;
-          if (total > MAX_TOTAL_BYTES) {
-            problems.push(`the archive expands to more than ${gigabytes(MAX_TOTAL_BYTES)}`);
+          // On iOS the expanded size is what the tab must hold, so it gets the same cap.
+          const totalLimit = isIos() ? IOS_ZIP_BYTES : MAX_TOTAL_BYTES;
+          if (total > totalLimit) {
+            problems.push(`the archive expands to more than ${gigabytes(totalLimit)}`);
             return false;
           }
           return true;
@@ -440,6 +464,9 @@ function readBookRows(files: Unzipped): unknown[] {
     if (typeof id === 'string' && id !== match[1]) {
       throw new Error(`This backup is damaged: ${name} does not hold book "${match[1]}".`);
     }
+    // Parsed and validated: an iPhone importing a full library cannot keep the
+    // encoded records in memory next to the parsed ones.
+    delete files[name];
     rows.push(parsed);
   }
   return rows;
@@ -456,7 +483,8 @@ function checkDuplicateBooks(rows: unknown[]): void {
 }
 
 function readTable(files: Unzipped, name: string): unknown[] | undefined {
-  const raw = files[`data/${name}.json`];
+  const key = `data/${name}.json`;
+  const raw = files[key];
   if (!raw) return undefined;
   let parsed: unknown;
   try {
@@ -464,6 +492,8 @@ function readTable(files: Unzipped, name: string): unknown[] | undefined {
   } catch {
     throw new Error(`This backup is damaged: data/${name}.json is not readable.`);
   }
+  // The rows are plain objects now; the encoded bytes are one copy too many.
+  delete files[key];
   if (!Array.isArray(parsed)) throw new Error(`This backup is damaged: data/${name}.json is not a list.`);
   return parsed;
 }

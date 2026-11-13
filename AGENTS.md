@@ -44,6 +44,10 @@ without a per-row regex pass (the 50 KB test is ~20 ms, budget 50 ms).
 
 **One rule per word.** A word covered by `rx-`/`med-`/`term-` must not get a second row.
 
+**No lookbehind in patterns.** iOS 15.4–16.3 cannot compile `(?<!…)`/`(?<=…)`, and
+`regexFor()` silently skips a row that fails to compile. Use a `(^|[^X])` capture and
+re-emit it with `$1` (see `regex-portability.md`); the test *regex portability (iOS 15.4–16.3)* enforces it.
+
 ## Measuring pronunciation
 
 The exact front end, from a script (pnpm keeps `phonemizer` out of the top-level
@@ -169,7 +173,7 @@ Also still open:
 |---|---|
 | `src/tts/lexicon/pharma-lexicon.json` | the shipped lexicon (671 rows) |
 | `src/tts/lexicon/index.ts` | seeding + `expand()` + the word map |
-| `src/tts/lexicon/index.test.ts` | 727 tests; spoken/untouched corpora + performance |
+| `src/tts/lexicon/index.test.ts` | 754 tests; spoken/untouched corpora + performance |
 | `src/tts/lexicon/drug-respellings.md` | `rx-` conventions and measured rows |
 | `src/tts/lexicon/medical-respellings.md` | `med-` morphology rules |
 | `src/tts/lexicon/term-respellings.md` | `term-` provenance + Round 3 evidence table |

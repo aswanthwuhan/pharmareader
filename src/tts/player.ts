@@ -197,6 +197,9 @@ export function createPlayer(options: PlayerOptions): Player {
   function primeAudio(): void {
     if (unlocked) return;
     unlocked = true;
+    // Safari 17+: play like a media app, so the iPhone's silent switch does not mute reading.
+    const session = (navigator as { audioSession?: { type: string } }).audioSession;
+    if (session) session.type = 'playback';
     if (!canSynthesize) {
       // iOS Safari keeps speechSynthesis silent unless its first speak() runs
       // inside the tap; the real utterance comes after IndexedDB/voice awaits.

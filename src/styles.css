@@ -927,6 +927,9 @@ textarea.input {
   inset: 0;
   z-index: calc(var(--z-sheet) - 1);
   background: var(--scrim);
+  /* A drag on the scrim belongs to the sheet, not to the page behind it. */
+  touch-action: none;
+  overscroll-behavior: none;
 }
 
 .sheet {
@@ -935,12 +938,21 @@ textarea.input {
   z-index: var(--z-sheet);
   max-height: 85dvh;
   overflow-y: auto;
+  /* Scrolling the sheet to its end must not drag the page behind it (iOS
+     rubber-bands the document under a fixed overlay otherwise). */
+  overscroll-behavior: contain;
   padding: var(--space-5) var(--space-4) calc(var(--space-6) + env(safe-area-inset-bottom, 0px));
   background: var(--surface);
   border-top: 1px solid var(--border);
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   box-shadow: var(--shadow-sheet);
   animation: sheet-in var(--dur-3) var(--ease-out);
+}
+
+/* A sheet is the top layer: the page under it must not scroll or rubber-band.
+   `:has` is the whole test (iOS 15.4), so nothing has to be measured in JS. */
+body:has(.sheet-backdrop) {
+  overflow: hidden;
 }
 
 .sheet-title {

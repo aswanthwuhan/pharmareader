@@ -8,6 +8,8 @@ const h = vi.hoisted(() => {
   const ready: Record<string, boolean> = {};
   const failing = new Set<string>();
   const native = { value: false };
+  /** What the browser can run; false stands for iOS 15.4–16.3. */
+  const caps = { supported: true };
   const make = (id: string, label: string): unknown => ({
     id,
     label,
@@ -23,12 +25,13 @@ const h = vi.hoisted(() => {
     pause: () => undefined,
     resume: () => undefined,
   });
-  return { ready, failing, native, make };
+  return { ready, failing, native, caps, make };
 });
 
 vi.mock('@capacitor/core', () => ({
   Capacitor: { isNativePlatform: () => h.native.value },
 }));
+vi.mock('./capabilities', () => ({ supportsNeuralVoices: () => h.caps.supported }));
 vi.mock('./system', () => ({ systemEngine: h.make('system', 'System voices') }));
 vi.mock('./neural/pocket', () => ({ pocketEngine: h.make('pocket', 'Pocket TTS') }));
 vi.mock('./neural/kokoro', () => ({ kokoroEngine: h.make('kokoro', 'Kokoro (web)') }));
@@ -42,6 +45,7 @@ beforeEach(async () => {
   h.ready.kokoro = false;
   h.failing.clear();
   h.native.value = false;
+  h.caps.supported = true;
   await db.delete();
   await db.open();
 });
@@ -146,5 +150,36 @@ describe('resolveEngine', () => {
   it('types the resolved engines as TtsEngine', async () => {
     const engine: TtsEngine = await resolveEngine();
     expect(typeof engine.speak).toBe('function');
+  });
+});
+
+describe('a browser without SIMD or lookbehind', () => {
+  it('never selects a downloaded voice, not even an explicitly chosen ready one', async () => {
+    h.caps.supported = false;
+    h.ready.kokoro = true;
+    h.ready.pocket = true;
+    await setSetting('tts.engine', 'kokoro');
+    expect((await resolveEngine()).id).toBe('system');
+    await setSetting('tts.engine', 'pocket');
+    expect((await resolveEngine()).id).toBe('system');
+
+    // Even a measured, faster-than-real-time model is refused.
+    await setSetting('tts.engine', 'auto');
+    await setSetting('tts.rtf.kokoro', 0.5);
+    await setSetting('tts.rtf.pocket', 0.4);
+    const info = await describeEngine();
+    expect(info.engine.id).toBe('system');
+    expect(info.preferred).toBe(false);
+  });
+
+  it("still uses Android's native Kokoro, which does not run in the WebView", async () => {
+    h.caps.supported = false;
+    h.native.value = true;
+    h.ready.kokoro = true;
+    h.ready.pocket = true;
+    await setSetting('tts.engine', 'kokoro');
+    expect((await resolveEngine()).label).toBe('Kokoro (native)');
+    await setSetting('tts.engine', 'pocket');
+    expect((await resolveEngine()).id).toBe('system');
   });
 });

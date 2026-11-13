@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
 import App from './App';
 import './styles.css';
+import { isIos, isStandalone } from './core/platform';
 import { ensureSyllabusSeeded } from './syllabus/seed';
 
 // BASE_URL carries the deploy sub-path (e.g. /pharmareader/ on GitHub Pages) and is '/'
@@ -68,7 +69,8 @@ function afterFirstPaint(task: () => void): void {
 
 afterFirstPaint(() => {
   // Ask the browser to keep IndexedDB (books, audio cache) from being evicted.
-  void navigator.storage?.persist?.().catch(() => undefined);
+  // Safari on iOS answers no unless the app is on the Home Screen (see InstallHint).
+  if (!isIos() || isStandalone()) void navigator.storage?.persist?.().catch(() => undefined);
   // Topic pickers anywhere in the app need the default syllabus present.
   void ensureSyllabusSeeded().catch((error) => console.warn('Syllabus seed failed', error));
 });

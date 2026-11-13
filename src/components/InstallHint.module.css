@@ -1,0 +1,17 @@
+/* The iOS install hint. Shape, colour and type come from the global `.banner`
+   (a flex row) and `.btn-icon`; this file only keeps the text in the middle and
+   the dismiss button at the trailing edge, level with the title. */
+.hint {
+  align-items: flex-start;
+}
+
+.body {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.dismiss {
+  flex: none;
+  margin-left: auto;
+}

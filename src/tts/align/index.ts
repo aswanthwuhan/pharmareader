@@ -8,10 +8,14 @@
  * slower than the sentence is long, the proportional estimate is used so the
  * highlight never stalls.
  */
+import { isIos } from '../../core/platform';
+import { getSetting } from '../../core/settings';
+import { supportsNeuralVoices } from '../capabilities';
 import { alignTimings } from './align';
 import { estimateTimings } from './text';
 import type { WordTiming } from './types';
 import { isWhisperAvailable, isWhisperLoaded, resetWhisperWorker, transcribe } from './whisper';
+import { WHISPER_IOS_SETTING } from './whisperModel';
 
 export type { TranscriptWord, WordTiming } from './types';
 export { alignTimings, transcriptFromChunks } from './align';
@@ -214,6 +218,15 @@ function pauseAligning(): void {
 export async function wordTimings(audio: Blob, text: string, durationMs: number): Promise<WordTiming[]> {
   const estimate = estimateTimings(text, durationMs);
   if (audio.size === 0 || durationMs <= 0 || text.trim() === '') return estimate;
+
+  // The recogniser is a SIMD-only ONNX build too. On a browser that cannot run
+  // it (iOS before 16.4) the highlight stays on the estimate and no worker or
+  // 42 MB of weights are ever touched.
+  if (!supportsNeuralVoices()) return estimate;
+  // On iPhone the loaded model is ~100 MB the tab can ill afford, so word
+  // timing is opt-in there (Settings → Word-by-word highlighting). Elsewhere
+  // the aligner runs whenever it is installed.
+  if (isIos() && !(await getSetting<boolean>(WHISPER_IOS_SETTING, false))) return estimate;
 
   const key = cacheKey(audio, text, durationMs);
   const cached = cache.get(key);

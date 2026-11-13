@@ -83,6 +83,26 @@ describe('saveFile (web)', () => {
     const link = click.mock.contexts[0] as HTMLAnchorElement;
     expect(link.download).toBe('-a-b-c-.zip');
   });
+
+  it('hands the browser the Blob itself, with no copy of it', async () => {
+    const blob = new Blob(['%PDF-1.4 the whole library'], { type: 'application/zip' });
+    const seen: Blob[] = [];
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      writable: true,
+      value: (target: Blob) => {
+        seen.push(target);
+        return 'blob:test';
+      },
+    });
+
+    await saveFile(blob, 'pharmareader-backup.zip');
+
+    // A blob: URL names the Blob instead of copying it, which is what keeps an
+    // export on iOS from needing a second 400 MB copy to download the first.
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBe(blob);
+  });
 });
 
 describe('saveFile (native)', () => {

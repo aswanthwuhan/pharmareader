@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useSetting } from '../core/settings';
 import { createCard } from '../study/api';
+import { copyText } from '../tts/neural/clipboard';
 import { generateCards, summarize, type GeneratedCard } from './tasks';
 import './ai.css';
 
@@ -92,12 +93,14 @@ export default function AiActions({ text, bookId, topicIds, onClose }: AiActions
   }
 
   async function copySummary() {
-    try {
-      await navigator.clipboard.writeText(summary);
+    // The summary arrives after a long await, so Safari no longer treats the
+    // click as a gesture and rejects writeText; the helper falls back to the
+    // legacy copy path instead of reporting a failure that is not real.
+    if (await copyText(summary)) {
       setCopied(true);
-    } catch {
-      setError('Could not copy — select the text and copy it manually.');
+      return;
     }
+    setError('Could not copy — select the text and copy it manually.');
   }
 
   return (

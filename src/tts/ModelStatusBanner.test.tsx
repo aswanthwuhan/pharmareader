@@ -148,6 +148,8 @@ describe('ModelStatusBanner', () => {
     const banner = view.querySelector('.banner-warning');
     expect(banner).not.toBeNull();
     expect(banner!.getAttribute('role')).toBe('status');
+    // Only the tip is marked: a warning must stay visible even on a short screen.
+    expect(banner!.getAttribute('data-dismissible')).toBeNull();
     expect(banner!.textContent).toContain(
       "Pocket TTS voice isn't downloaded yet — reading with the phone's built-in voice.",
     );
@@ -181,6 +183,8 @@ describe('ModelStatusBanner', () => {
 
     const banner = view.querySelector('.banner-info');
     expect(banner).not.toBeNull();
+    // The reader's short-window query hides the tip by this attribute.
+    expect(banner!.getAttribute('data-dismissible')).toBe('true');
     expect(banner!.textContent).toContain(
       "Using your phone's built-in voice. Download Kokoro or Pocket TTS in Settings for a more natural voice.",
     );

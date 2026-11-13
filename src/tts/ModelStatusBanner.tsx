@@ -272,11 +272,15 @@ export default function ModelStatusBanner({ context }: ModelStatusBannerProps) {
   if (!banner) return null;
   if (banner.dismissible && dismissed) return null;
 
+  // Only the dismissible tip is marked: on a phone held sideways the reader
+  // hides it, because its player's voice pill says the same thing. A warning or
+  // a "measure speed" prompt has nowhere else to appear and stays.
   return (
     <div
       className={CLASSES[banner.kind]}
       role={banner.kind === 'error' ? 'alert' : 'status'}
       data-context={context}
+      data-dismissible={banner.dismissible ? 'true' : undefined}
     >
       {ICONS[banner.kind]}
       <div>

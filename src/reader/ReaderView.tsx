@@ -179,6 +179,8 @@ export default function ReaderView() {
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [cachedChapter, setCachedChapter] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** A start the browser refused; a tap on Play is the only way past it. */
+  const [notice, setNotice] = useState<string | null>(null);
   /** Per-sentence generation state, straight from the player (F1). */
   const [itemStates, setItemStates] = useState<Map<string, ItemState>>(() => new Map());
   const [readyAhead, setReadyAhead] = useState(0);
@@ -203,6 +205,12 @@ export default function ReaderView() {
 
   const playerRef = useRef<Player | null>(null);
   const generation = useRef(0);
+  /**
+   * The player sits on the sentence but was stopped by a refused start
+   * (NotAllowedError), not by the reader: its own state is idle, so Play must
+   * restart it with `play()` instead of `resume()`.
+   */
+  const resumeBlocked = useRef(false);
   const engineRef = useRef<EngineInfo | null>(null);
   // `rateRef` is the authoritative rate for the next player. It must not be
   // re-read from the (asynchronously persisted) setting on every render: a
@@ -562,7 +570,10 @@ export default function ReaderView() {
         return;
       }
       const box = node.getBoundingClientRect();
-      setCursorOnScreen(box.bottom > 96 && box.top < window.innerHeight - 180);
+      // The real dock height: a fixed 180 px guess hid the cursor in a 320 px landscape window.
+      const dock = document.querySelector('.rd-dock');
+      const playerH = dock ? dock.getBoundingClientRect().height : 180;
+      setCursorOnScreen(box.bottom > 96 && box.top < window.innerHeight - Math.min(180, playerH + 40));
     };
     check();
     window.addEventListener('scroll', check, { passive: true });
@@ -602,6 +613,8 @@ export default function ReaderView() {
   /** Stop whatever is queued; any in-flight callback becomes stale. */
   function releasePlayer(): void {
     generation.current += 1;
+    resumeBlocked.current = false;
+    setNotice(null);
     const player = playerRef.current;
     playerRef.current = null;
     player?.stop();
@@ -670,11 +683,14 @@ export default function ReaderView() {
       },
       onError: (err, id) => {
         if (mine !== generation.current) return;
-        // A browser that blocks the programmatic start ("Continue listening" is
-        // not a tap on this screen) is not an error to shout about: release the
-        // player, keep the position, and let the Play button start it.
+        // A browser that blocks a start outside a gesture ("Continue listening"
+        // on the lock screen, a resumed audio session) is not an error to shout
+        // about. Keep the player where it stopped — its queue, its clip and its
+        // sentence — and let the next tap on Play (Resume) start it from there.
         if (/notallowederror|not allowed/i.test(err.message)) {
-          releasePlayer();
+          resumeBlocked.current = true;
+          setPlayState('paused');
+          setNotice('Tap Play to continue');
           return;
         }
         setPlayState('idle');
@@ -898,7 +914,15 @@ export default function ReaderView() {
     if (!pos) return;
     if (playStateRef.current === 'playing') return;
     if (playStateRef.current === 'paused' && playerRef.current) {
-      playerRef.current.resume();
+      if (resumeBlocked.current) {
+        // The player is idle on the sentence it was refused on; play() restarts
+        // it there, inside this tap, which is exactly what the browser wanted.
+        resumeBlocked.current = false;
+        playerRef.current.play();
+      } else {
+        playerRef.current.resume();
+      }
+      setNotice(null);
       setPlayState('playing');
       return;
     }
@@ -1555,6 +1579,22 @@ export default function ReaderView() {
               setError(null);
               setFailed(null);
             }}
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+
+      {notice ? (
+        <div className="banner banner-info rd-notice" role="status">
+          <Glyph>{icons.alert}</Glyph>
+          <div>
+            <p>{notice}</p>
+          </div>
+          <button
+            type="button"
+            className="btn btn-ghost rd-error-dismiss"
+            onClick={() => setNotice(null)}
           >
             Dismiss
           </button>

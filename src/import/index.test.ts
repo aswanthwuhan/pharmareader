@@ -1,22 +1,34 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../core/db';
-import {
+
+const h = vi.hoisted(() => ({ native: { value: false } }));
+
+vi.mock('@capacitor/core', () => ({
+  Capacitor: { isNativePlatform: () => h.native.value },
+  CapacitorHttp: { get: vi.fn() },
+}));
+
+const {
+  IOS_IMPORT_LIMIT_BYTES,
   MISSING_FILE_MESSAGE,
   deleteBook,
   detectFormat,
   fileMissing,
   importFile,
+  importFileDetailed,
   importText,
   importUrl,
   ownedCopy,
   reanalyseBook,
   titleFromFileName,
-} from './index';
+} = await import('./index');
 import { parseText } from './txt';
 
 afterEach(async () => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
+  vi.restoreAllMocks();
+  h.native.value = false;
   await db.delete();
   await db.open();
 });
@@ -127,21 +139,36 @@ describe('importFile', () => {
 });
 
 describe('the imported file is owned by the app, not by the picker', () => {
-  it('stores the bytes in a Blob of its own, not the picked File', async () => {
+  it('stores the picked File itself on iOS, so a big file is never copied', async () => {
+    vi.stubGlobal('navigator', {
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
+      platform: 'iPhone',
+      maxTouchPoints: 5,
+    });
     const file = new File(['Renal clearance matters. It drives dosing.'], 'renal-notes.txt', { type: 'text/plain' });
     const add = vi.spyOn(db.books, 'add');
 
     await importFile(file);
 
     const record = add.mock.calls[0]?.[0];
-    expect(record?.fileBlob).not.toBe(file);
-    expect(record?.fileBlob.constructor.name).toBe('Blob');
+    // WebKit writes a stored Blob into IndexedDB's own files, so the File needs
+    // no second copy — the 300 MB scan that used to kill the tab is why.
+    expect(record?.fileBlob).toBe(file);
+    expect(record?.fileBlob.constructor.name).toBe('File');
     expect(record?.fileBlob.size).toBe(file.size);
-    expect(record?.fileBlob.type).toBe('text/plain');
-    add.mockRestore();
   });
 
-  it('keeps every byte even when the picked file stops reading (the reinstall bug)', async () => {
+  it('returns the picked file unchanged on iOS', async () => {
+    vi.stubGlobal('navigator', {
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
+      platform: 'iPhone',
+      maxTouchPoints: 5,
+    });
+    const file = new File(['%PDF-1.4 a page of a paper'], 'paper.pdf', { type: 'application/pdf' });
+    expect(await ownedCopy(file)).toBe(file);
+  });
+
+  it('copies the picked file outside iOS, where the handle can die after an update', async () => {
     const file = new File(['%PDF-1.4 a page of a paper'], 'paper.pdf', { type: 'application/pdf' });
 
     const owned = await ownedCopy(file);
@@ -149,6 +176,7 @@ describe('the imported file is owned by the app, not by the picker', () => {
     // the copy has to be whole on its own.
     vi.spyOn(file, 'arrayBuffer').mockRejectedValue(new Error('the handle is gone'));
 
+    expect(owned).not.toBe(file);
     const bytes = new Uint8Array(await owned.arrayBuffer());
     expect(bytes.byteLength).toBe(file.size);
     expect(new TextDecoder().decode(bytes)).toContain('a page of a paper');
@@ -173,6 +201,43 @@ describe('the imported file is owned by the app, not by the picker', () => {
 
     await expect(reanalyseBook('gone')).rejects.toThrow(MISSING_FILE_MESSAGE);
     expect(MISSING_FILE_MESSAGE).toContain('re-import it to use Page view and Re-analyse');
+  });
+});
+
+describe('the iOS import size guard', () => {
+  /** A text file whose size is faked, so the test does not allocate 500 MB. */
+  function hugeFile(): File {
+    const file = new File(['Renal clearance matters. It drives dosing.'], 'huge-notes.txt', { type: 'text/plain' });
+    Object.defineProperty(file, 'size', { value: IOS_IMPORT_LIMIT_BYTES + 1 });
+    return file;
+  }
+
+  it('refuses a file an iPhone tab cannot hold, without reading it', async () => {
+    vi.stubGlobal('navigator', {
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
+      platform: 'iPhone',
+      maxTouchPoints: 5,
+    });
+    const file = hugeFile();
+    const read = vi.spyOn(file, 'arrayBuffer');
+
+    await expect(importFileDetailed(file)).rejects.toThrow(/too large to import on this device/);
+    expect(read).not.toHaveBeenCalled();
+    expect(await db.books.count()).toBe(0);
+  });
+
+  it('lets a desktop browser import the same file', async () => {
+    vi.stubGlobal('navigator', {
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      platform: 'Win32',
+      maxTouchPoints: 0,
+    });
+    const file = hugeFile();
+
+    // Desktop browsers page their IndexedDB blobs to disk; the limit is iOS-only.
+    const { bookId } = await importFileDetailed(file);
+    expect(bookId).toBeTruthy();
+    expect(await db.books.count()).toBe(1);
   });
 });
 

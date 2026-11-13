@@ -94,6 +94,7 @@ interface WebRun {
 }
 
 let webRun: WebRun | null = null;
+let speaking: SpeechSynthesisUtterance | null = null;
 
 function flushPauseWaiters(run: WebRun): void {
   const waiters = run.pauseWaiters;
@@ -119,6 +120,9 @@ function speakOne(
 ): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     const u = new SpeechSynthesisUtterance(text);
+    // Held until it ends: Safari can collect an unreferenced utterance, and then
+    // onend never fires and reading stops after the first sentence.
+    speaking = u;
     u.lang = voice?.lang ?? lang;
     if (voice) u.voice = voice;
     u.rate = Math.min(WEB_RATE_MAX, Math.max(WEB_RATE_MIN, rate));
@@ -127,7 +131,10 @@ function speakOne(
       if (e.name !== 'word' && e.name !== undefined) return;
       ev.onWord?.(sentenceId, charOffset + e.charIndex);
     };
-    u.onend = () => resolve(true);
+    u.onend = () => {
+      if (speaking === u) speaking = null;
+      resolve(true);
+    };
     u.onerror = (e) => {
       // Cancelling fires "canceled"/"interrupted"; that is us stopping, not a fault.
       const reason = (e as SpeechSynthesisErrorEvent).error;

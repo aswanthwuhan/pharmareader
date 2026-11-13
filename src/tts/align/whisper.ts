@@ -39,6 +39,14 @@ let onProgress: ((fraction: number) => void) | undefined;
 /** Cached answer of "are the weights on disk?"; cleared by delete/prepare. */
 let downloaded: boolean | undefined;
 
+/**
+ * How long an unused worker is kept. The loaded model is ~100 MB and iOS closes
+ * the whole tab around 1–1.5 GB, so between chapters the worker is dropped and
+ * the next clip builds a fresh one (the weights are already cached on disk).
+ */
+const IDLE_MS = 60_000;
+let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
 /** A Web Worker is required; the aligner is not attempted on the main thread. */
 export function hasWhisperSupport(): boolean {
   return typeof Worker !== 'undefined';
@@ -77,6 +85,7 @@ export async function prepareWhisper(progress?: (fraction: number) => void): Pro
 
 async function init(progress?: (fraction: number) => void): Promise<void> {
   onProgress = progress;
+  clearIdle();
   try {
     const scope = ensureWorker();
     const loaded = new Promise<void>((resolve, reject) => {
@@ -109,16 +118,24 @@ async function init(progress?: (fraction: number) => void): Promise<void> {
  * that can live with an estimate are expected to fall back instead of failing.
  */
 export async function transcribe(audio: Blob): Promise<WhisperResult> {
-  await prepareWhisper();
-  let pcm: Float32Array;
+  // Counted from the start: the idle timer must not unload the model while the clip decodes.
+  busy += 1;
   try {
-    pcm = await decodeToMono16k(audio);
-  } catch (err) {
-    throw alignError('decode', err);
+    await prepareWhisper();
+    let pcm: Float32Array;
+    try {
+      pcm = await decodeToMono16k(audio);
+    } catch (err) {
+      throw alignError('decode', err);
+    }
+    if (pcm.length === 0) throw alignError('decode', new Error('The clip could not be decoded'));
+    return await request(pcm);
+  } finally {
+    busy -= 1;
   }
-  if (pcm.length === 0) throw alignError('decode', new Error('The clip could not be decoded'));
-  return request(pcm);
 }
+
+let busy = 0;
 
 /** Wall time of decode + model, for the panel's speed test. */
 export async function measureWhisper(audio: Blob): Promise<WhisperResult & { wallMs: number }> {
@@ -129,6 +146,7 @@ export async function measureWhisper(audio: Blob): Promise<WhisperResult & { wal
 
 /** Drop the loaded model (the panel calls this after deleting the download). */
 export function resetWhisperWorker(): void {
+  clearIdle();
   ready = false;
   loading = null;
   pendingInit?.reject(new Error('The aligner was reset'));
@@ -137,6 +155,25 @@ export function resetWhisperWorker(): void {
   worker?.terminate();
   worker = null;
   downloaded = undefined;
+}
+
+function clearIdle(): void {
+  if (idleTimer !== undefined) {
+    clearTimeout(idleTimer);
+    idleTimer = undefined;
+  }
+}
+
+/** Unload the model once nothing has asked for it for a while. */
+function scheduleIdle(): void {
+  clearIdle();
+  idleTimer = setTimeout(() => {
+    idleTimer = undefined;
+    // A load or a clip in flight still needs this worker (`loading` itself stays
+    // set after a successful load, so readiness is what says the load is done).
+    if (!ready || busy > 0 || pendingInit !== null || pending.size > 0) return;
+    resetWhisperWorker();
+  }, IDLE_MS);
 }
 
 /** Delete the cached weights and unload the model. */
@@ -161,6 +198,7 @@ function ensureWorker(): Worker {
 }
 
 function fail(err: Error): void {
+  clearIdle();
   ready = false;
   loading = null;
   pendingInit?.reject(err);
@@ -183,11 +221,14 @@ function receive(message: WhisperResponse): void {
     case 'ready':
       pendingInit?.resolve();
       pendingInit = null;
+      // Loaded but not needed yet: start the clock that frees the model again.
+      scheduleIdle();
       return;
     case 'result': {
       const request = pending.get(message.id);
       pending.delete(message.id);
       request?.resolve({ words: message.words, text: message.text, ms: message.ms });
+      scheduleIdle();
       return;
     }
     case 'error': {
@@ -201,6 +242,7 @@ function receive(message: WhisperResponse): void {
       } else {
         pending.get(message.id)?.reject(err);
         pending.delete(message.id);
+        scheduleIdle();
       }
       return;
     }
@@ -208,6 +250,7 @@ function receive(message: WhisperResponse): void {
 }
 
 function request(pcm: Float32Array): Promise<WhisperResult> {
+  clearIdle();
   const scope = ensureWorker();
   const id = nextId++;
   return new Promise<WhisperResult>((resolve, reject) => {

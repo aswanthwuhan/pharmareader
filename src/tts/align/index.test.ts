@@ -27,6 +27,10 @@ vi.mock('./whisper', () => ({
   },
 }));
 
+/** What the browser can run; false stands for iOS 15.4–16.3. */
+const caps = vi.hoisted(() => ({ supported: true }));
+vi.mock('../capabilities', () => ({ supportsNeuralVoices: () => caps.supported }));
+
 function clip(bytes = 4000): Blob {
   return new Blob([new Uint8Array(bytes)]);
 }
@@ -35,6 +39,7 @@ const TEXT = 'Digoxin has a half-life';
 
 beforeEach(() => {
   clearTimingCache();
+  caps.supported = true;
   aligner.available = false;
   aligner.loaded = false;
   aligner.fail = false;
@@ -72,6 +77,16 @@ describe('wordTimings', () => {
     expect(await wordTimings(clip(), '   ', 2000)).toEqual([]);
     expect(await wordTimings(clip(0), TEXT, 2000)).toEqual(estimateTimings(TEXT, 2000));
     expect(aligner.calls).toBe(0);
+  });
+
+  it('stays on the estimate when the browser cannot run the aligner at all', async () => {
+    // iOS 15.4–16.3: the weights could be downloaded but the SIMD-only worker
+    // would fail on the first clip, so it must not even be asked.
+    caps.supported = false;
+    aligner.available = true;
+    expect(await wordTimings(clip(), TEXT, 2000)).toEqual(estimateTimings(TEXT, 2000));
+    expect(aligner.calls).toBe(0);
+    expect(timingCacheSize()).toBe(0);
   });
 
   it('estimates while the page cannot be seen, so nothing runs behind a dark screen', async () => {

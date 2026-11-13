@@ -152,6 +152,12 @@
   align-items: flex-start;
 }
 
+/* A refused start waits for a tap; it is a notice, not a failure. */
+.rd-notice {
+  margin: var(--space-3) 0 0;
+  align-items: flex-start;
+}
+
 .rd-error-dismiss {
   flex: none;
   margin-left: auto;
@@ -855,6 +861,8 @@
   z-index: 8;
   max-height: 56dvh;
   overflow: auto;
+  /* Scrolling the sheet to its end must not drag the chapter behind it. */
+  overscroll-behavior: contain;
   padding: var(--space-3) var(--space-4);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -1002,6 +1010,14 @@
   flex-direction: column;
   justify-content: flex-end;
   background: var(--scrim);
+  /* A drag on the scrim belongs to the sheet, never to the chapter behind it. */
+  overscroll-behavior: contain;
+}
+
+/* A sheet is the top layer: the page under it must not scroll or rubber-band.
+   `:has` is the whole test (iOS 15.4), so nothing has to be measured in JS. */
+body:has(.rd-sheet) {
+  overflow: hidden;
 }
 
 /* "Show more" at the edge of a windowed chapter. */
@@ -1387,8 +1403,26 @@
 
 .page.rd-page--page .rd-pdf-wrap {
   flex: 1 1 auto;
-  min-height: 0;
+  /* Never a sliver: a page box too short to show a line of print is the bug
+     this rule exists to prevent. */
+  min-height: min(120px, 28dvh);
   max-height: none;
+}
+
+/* Page view's only job is the page, and on a phone the voice tip is a whole band
+   of the height the page has left. It says nothing about the page, so it stands
+   down here; a warning (not dismissible) still shows. */
+.page.rd-page--page .banner[data-context='reader'][data-dismissible] {
+  display: none;
+}
+
+/* In a short window "Previous / Next chapter" is most of the height the page box
+   has left, and Page view turns pages: chapters are a Contents-drawer walk there.
+   A tall window keeps the buttons, and the sheet still fits above them. */
+@media (max-height: 700px) {
+  .page.rd-page--page .rd-chapter-nav {
+    display: none;
+  }
 }
 
 /* No player dock to clear, so the page controls sit just above the bottom edge;
@@ -1432,4 +1466,110 @@
   background: var(--surface);
   color: var(--text);
   font: inherit;
+}
+
+/* -- narrow phones: the voice pill gets its own line ----------------------- */
+
+/* Below 360px the transport row is a few pixels short even with every control
+   at its narrowest, so the voice pill was clipped to "● Ph…". It wraps to a
+   second line instead, and the page reserves the taller player. */
+@media (max-width: 359.98px) and (min-height: 501px) {
+  .page.rd-page {
+    --rd-player-h: 172px;
+  }
+
+  .rd-player-controls {
+    flex-wrap: wrap;
+    row-gap: var(--space-1);
+  }
+
+  .rd-engine {
+    flex: none;
+  }
+}
+
+/* -- short windows: a phone on its side ------------------------------------ */
+
+/* 320px of height cannot hold a 56px bar, the voice tip banner and a 120px
+   player and still leave a line of text. The player becomes one row - speed,
+   step, play, voice and the "…" for the rest - and the caption's position line
+   and page stepping stand down: the hairline still shows progress, the text
+   still scrolls, and the PDF toolbar still turns pages. Both come back on a
+   wide short window, where there is room beside the controls. */
+@media (max-height: 500px) {
+  .page.rd-page {
+    --rd-player-h: 68px;
+  }
+
+  .rd-player {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    padding-bottom: calc(var(--space-1) + env(safe-area-inset-bottom, 0px));
+  }
+
+  .rd-player-track {
+    grid-area: 1 / 1 / 2 / -1;
+  }
+
+  .rd-player-caption {
+    grid-area: 2 / 2 / 3 / 3;
+    min-height: 0;
+    padding-inline: var(--space-1) 0;
+  }
+
+  .rd-player-controls {
+    grid-area: 2 / 1 / 3 / 2;
+    gap: var(--space-1);
+    padding-inline: var(--space-3) 0;
+  }
+
+  .rd-player-meta,
+  .rd-player-caption .rd-pages {
+    display: none;
+  }
+
+  /* The two rows the player opens on demand get their own line, and the page
+     reserves that line only while one of them is there. */
+  .rd-from-here,
+  .rd-sel-done {
+    grid-column: 1 / -1;
+    grid-row: 3;
+  }
+
+  .page.rd-page:has(.rd-from-here, .rd-sel-done) {
+    --rd-player-h: 124px;
+  }
+
+  /* A popover must not open off the top edge of a 320px window. */
+  .rd-pop {
+    max-height: calc(100dvh - var(--rd-player-h) - var(--space-6));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* The voice tip may leave a short window: the player's own voice pill says
+     the same thing, and the tip is back in portrait. A warning or a call to
+     action stays, one size down, because it has nowhere else to appear. */
+  .banner[data-context='reader'][data-dismissible] {
+    display: none;
+  }
+
+  .banner[data-context='reader'] {
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--fs-xs);
+  }
+}
+
+/* A wide short window has room for the position line and the page stepper
+   beside the controls, so neither is lost there. */
+@media (max-height: 500px) and (min-width: 700px) {
+  .rd-player-meta {
+    display: grid;
+  }
+
+  .rd-player-caption .rd-pages {
+    display: flex;
+  }
 }

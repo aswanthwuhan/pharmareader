@@ -12,11 +12,21 @@ import { NEURAL_STAGES, neuralError } from './neuralError';
 
 /** Lets each test choose the platform before the component renders. */
 const platform = vi.hoisted(() => ({ native: false }));
+/** What the browser can run; `ios` drives the iPhone memory warning. */
+const caps = vi.hoisted(() => ({ supported: true, ios: false }));
 /** The panel must unload the loaded model before fetching another precision. */
 const kokoroReset = vi.hoisted(() => vi.fn());
 
 vi.mock('@capacitor/core', () => ({
   Capacitor: { isNativePlatform: () => platform.native },
+}));
+vi.mock('../capabilities', () => ({
+  supportsNeuralVoices: () => caps.supported,
+  neuralUnsupportedHint: () => "Needs iOS 16.4 or newer — your phone's built-in voice still works.",
+}));
+vi.mock('../../core/platform', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../core/platform')>()),
+  isIos: () => caps.ios,
 }));
 vi.mock('./kokoro', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./kokoro')>();
@@ -106,6 +116,8 @@ beforeEach(async () => {
   pocket.failWith = null;
   pocket.prepare = null;
   pocket.prepares = 0;
+  caps.supported = true;
+  caps.ios = false;
   resetDownload('pocket');
   resetDownload('kokoro');
   kokoroReset.mockClear();
@@ -421,5 +433,42 @@ describe('NeuralModelsPanel', () => {
     });
     expect(stop).toHaveBeenCalled();
     expect(FakeAudio.instances.at(-1)?.paused).toBe(true);
+  });
+
+  it('marks both downloads unavailable on a browser that cannot run them', async () => {
+    caps.supported = false;
+    const text = await renderPanel();
+
+    // One plain line per model, and nothing to tap that would waste 320 MB.
+    const lines = [...container.querySelectorAll('p')].filter(
+      (p) => p.textContent === "Needs iOS 16.4 or newer — your phone's built-in voice still works."
+    );
+    expect(lines).toHaveLength(2);
+    expect(text).toContain('Not available here');
+    const downloads = [...container.querySelectorAll('button')].filter(
+      (button) => button.textContent === 'Download'
+    );
+    expect(downloads).toHaveLength(2);
+    expect(downloads.every((button) => button.disabled)).toBe(true);
+  });
+
+  it('warns about memory beside both downloads on an iPhone', async () => {
+    caps.ios = true;
+    await renderPanel();
+
+    const warnings = [...container.querySelectorAll('p')].filter((p) =>
+      (p.textContent ?? '').includes('may close Safari on older iPhones')
+    );
+    expect(warnings).toHaveLength(2);
+    for (const warning of warnings) {
+      expect(warning.textContent).toBe(
+        'Large: may close Safari on older iPhones. The built-in voice uses no extra memory.'
+      );
+    }
+  });
+
+  it('leaves the memory warning off the desktop', async () => {
+    const text = await renderPanel();
+    expect(text).not.toContain('may close Safari');
   });
 });

@@ -45,7 +45,8 @@ export default defineConfig(({ mode }) => ({
       workbox: {
         // TTS models are hundreds of MB and are downloaded at runtime, never precached.
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-        globPatterns: ['**/*.{js,css,html,woff2}'],
+        // pdfjs/: decoders, standard fonts and the CMYK profile (~1.2 MB), so Page view works offline
+        globPatterns: ['**/*.{js,css,html,woff2}', 'pdfjs/**/*.{wasm,pfb,ttf,icc}'],
         // SPA deep links (e.g. /pharmareader/read/abc on reload) must land on the shell.
         navigateFallback: `${base}index.html`,
         // onnxruntime-web wasm (~22 MB) is too big to precache; cache on first use so later launches work offline.

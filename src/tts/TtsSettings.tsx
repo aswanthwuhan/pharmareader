@@ -1,7 +1,9 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { setSetting, useSetting } from '../core/settings';
 import type { LexiconEntry, TtsVoice } from '../core/types';
 import { cacheSizeBytes, clearAudio } from './cache';
+import { neuralUnsupportedHint, supportsNeuralVoices } from './capabilities';
 import {
   deleteUserEntry,
   expand,
@@ -139,7 +141,14 @@ export function VoicePanel() {
   }, []);
 
   const engineValue: EngineChoice = isEngineChoice(engine) ? engine : 'auto';
-  const systemVoiceActive = engineValue === 'system' || engineValue === 'auto';
+  // The downloaded voices need iOS 16.4+/a SIMD browser; a choice saved on one
+  // that cannot run them shows the voice that will actually speak.
+  const neuralOk = useMemo(() => supportsNeuralVoices(), []);
+  // Android's Kokoro is the native plugin, not WebView WASM.
+  const blocked = (value: string) =>
+    !neuralOk && (value === 'pocket' || (value === 'kokoro' && !Capacitor.isNativePlatform()));
+  const shownEngine: EngineChoice = blocked(engineValue) ? 'system' : engineValue;
+  const systemVoiceActive = shownEngine === 'system' || shownEngine === 'auto';
   const voiceHint = systemVoiceActive
     ? voices.length > 0
       ? `${voices.length} system ${voices.length === 1 ? 'voice' : 'voices'} reported by this device.`
@@ -155,22 +164,31 @@ export function VoicePanel() {
         <select
           id="tts-engine"
           className="input"
-          value={engineValue}
+          value={shownEngine}
           aria-describedby="tts-engine-hint"
           onChange={(e) => {
             void setSetting(TTS_ENGINE_SETTING, e.target.value);
           }}
         >
           {ENGINE_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
+            <option
+              key={o.value}
+              value={o.value}
+              disabled={blocked(o.value)}
+            >
               {o.label}
             </option>
           ))}
         </select>
         <p className="field-hint" id="tts-engine-hint">
-          {engineHint(engineValue)}{' '}
+          {engineHint(shownEngine)}{' '}
           <a href="#voice-models">Manage on-device models</a>.
         </p>
+        {!neuralOk ? (
+          <p className="field-hint tts-engine-unsupported" role="note">
+            {neuralUnsupportedHint()}
+          </p>
+        ) : null}
       </div>
 
       <div className="tts-field-grid">

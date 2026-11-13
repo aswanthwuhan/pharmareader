@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.9 — 2026-11-13
+Web app mostly (GitHub Pages); Android gets the import, backup and PDF fixes too. Installs over 0.3.8 without losing data.
+
+**Fixed — PDFs in Page view**
+- On iPhone, Page view showed the page as a tiny stamp — on smaller iPhones a few pixels wide, so it looked like no PDF at all. On a phone the page now fills the width and scrolls; tablets and the "Fit page" button still show the whole sheet. In Page view the voice tip and, on short screens, the chapter buttons step aside (chapters stay in Contents).
+- Scanned PDFs: pages that are one big JPEG 2000 or JBIG2 image (most scanned textbooks) were drawn blank because the image decoders were never loaded. They now draw, offline too, with correct colours for CMYK pages.
+
+**Fixed — iPhone and iPad (Safari)**
+- Safari deletes a website's books, highlights and flashcards after 7 days without a visit unless it is on the Home Screen. The Library now says so once, with how to add it; Settings → Storage repeats it.
+- Importing a very large PDF could close Safari. An import now keeps one copy of the file in memory instead of three, and files over 500 MB are refused with a clear message on iPhone and iPad. Backups are built and restored with less memory too.
+- On iOS 15.4–16.3, dose units such as µg/kg/min and "1 milligram" were read out wrongly; they are read properly again.
+- The on-device voices (Kokoro, Pocket) need iOS 16.4 or newer; on older iPhones they are shown as unavailable instead of failing after a large download. On iPhone they carry a memory note, and word-by-word highlighting is off by default there (it uses about 100 MB).
+- If iOS refuses to resume after a pause, the reader stays on the sentence and says "Tap Play to continue" instead of stopping silently.
+- Landscape on small iPhones: the player is one compact row, so the text is no longer hidden behind it. Smaller fixes for older Safari colours, scrolling behind open sheets and the copy button in AI actions.
+
 ## 0.3.8 — 2026-11-13
 Web app only (GitHub Pages). Installs over 0.3.7 without losing data.
 

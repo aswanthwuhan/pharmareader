@@ -103,6 +103,8 @@ export function base64Of(bytes: Uint8Array): string {
 
 function downloadInBrowser(blob: Blob, name: string): void {
   try {
+    // The URL names the Blob rather than copying it: a 400 MB backup is not read
+    // into memory a second time on its way to the Downloads folder.
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;

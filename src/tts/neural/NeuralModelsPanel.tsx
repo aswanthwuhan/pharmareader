@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Capacitor } from '@capacitor/core';
+import { isIos } from '../../core/platform';
 import { setSetting, useSetting } from '../../core/settings';
 import type { TtsEngine, TtsVoice } from '../../core/types';
+import { neuralUnsupportedHint, supportsNeuralVoices } from '../capabilities';
 import { TTS_RATE_SETTING } from '../TtsSettings';
 import VoiceTest from '../VoiceTest';
 import { resetDownload, startDownload, useDownload, type DownloadState } from '../downloads';
@@ -44,6 +46,10 @@ type ModelState =
 
 const POCKET_ATTRIBUTION = 'Pocket TTS by Kyutai — model weights CC-BY-4.0.';
 const KOKORO_ATTRIBUTION = 'Kokoro-82M by hexgrad — Apache-2.0.';
+
+/** Both models hold their weights in memory while loaded; iOS kills the tab first. */
+const IOS_MEMORY_HINT =
+  'Large: may close Safari on older iPhones. The built-in voice uses no extra memory.';
 
 /**
  * Derive one card's state from the download store and the disk check.
@@ -100,6 +106,10 @@ interface EngineCardProps {
    * back, even though the card is not "Ready".
    */
   canDelete?: boolean;
+  /** This browser cannot run the model (no SIMD/lookbehind: iOS before 16.4). */
+  unsupported?: boolean;
+  /** The device is an iPhone, where the loaded model can cost the whole tab. */
+  memoryWarning?: boolean;
   /** More than a line of explanation: sits behind Details, under the controls. */
   howItWorks?: ReactNode;
   attribution?: string;
@@ -108,11 +118,12 @@ interface EngineCardProps {
 function EngineCard(props: EngineCardProps) {
   const { state, engine } = props;
   const busy = state.kind === 'downloading' || props.measuring;
-  const chip = chipFor(state);
+  const chip = chipFor(state, props.unsupported);
   const speed = speedLine(props.rtf);
   // One line, so a disabled "Test voice" never looks like a broken control.
-  const testReason =
-    state.kind === 'ready'
+  const testReason = props.unsupported
+    ? 'This browser cannot run the model.'
+    : state.kind === 'ready'
       ? null
       : state.kind === 'downloading'
         ? 'Available once the download finishes.'
@@ -133,7 +144,12 @@ function EngineCard(props: EngineCardProps) {
         </div>
         <div className={styles.actions}>
           {state.kind !== 'ready' && (
-            <button type="button" className="btn btn-secondary" onClick={props.onDownload} disabled={busy || state.kind === 'loading'}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={props.onDownload}
+              disabled={busy || state.kind === 'loading' || props.unsupported}
+            >
               Download
             </button>
           )}
@@ -156,6 +172,9 @@ function EngineCard(props: EngineCardProps) {
           ~{props.sizeMb} MB · use Wi-Fi
         </span>
       </div>
+
+      {props.unsupported && <p className={styles.hint}>{neuralUnsupportedHint()}</p>}
+      {props.memoryWarning && <p className={styles.hint}>{IOS_MEMORY_HINT}</p>}
 
       {/* "Not downloaded" with a Delete button beside it needs a sentence, or the
           button looks like it would delete the model that is not there. */}
@@ -260,7 +279,8 @@ function EngineCard(props: EngineCardProps) {
 }
 
 /** The status chip: a word, a tone, and nothing the user has to interpret. */
-function chipFor(state: ModelState): { label: string; tone: string } {
+function chipFor(state: ModelState, unsupported = false): { label: string; tone: string } {
+  if (unsupported) return { label: 'Not available here', tone: '' };
   switch (state.kind) {
     case 'loading':
       return { label: 'Checking…', tone: 'is-busy' };
@@ -354,6 +374,10 @@ export default function NeuralModelsPanel() {
   // On Android/iOS the native sherpa-onnx panel owns Kokoro; the web engine
   // would download into the WebView cache and could not run the native model.
   const native = useMemo(() => Capacitor.isNativePlatform(), []);
+  // iOS before 16.4 has no SIMD/lookbehind: the card must not offer a download
+  // that cannot run. On an iPhone the loaded model is also a tab-sized risk.
+  const supported = useMemo(() => supportsNeuralVoices(), []);
+  const memoryWarning = useMemo(() => isIos() && !native, [native]);
 
   // fp32 is the only web Kokoro build, so the card has no precision control: it shows
   // the one download size and asks the disk whether *that* model is here.
@@ -525,6 +549,8 @@ export default function NeuralModelsPanel() {
         measuring={measuring === 'pocket'}
         rtf={pocketRtf}
         measureError={pocketError}
+        unsupported={!supported}
+        memoryWarning={memoryWarning}
         attribution={POCKET_ATTRIBUTION}
         howItWorks={
           <p className={styles.intro}>
@@ -570,6 +596,8 @@ export default function NeuralModelsPanel() {
           measuring={measuring === 'kokoro'}
           rtf={kokoroRtf}
           measureError={kokoroError}
+          unsupported={!supported}
+          memoryWarning={memoryWarning}
           attribution={KOKORO_ATTRIBUTION}
           howItWorks={
             <p className={styles.intro}>

@@ -4,10 +4,12 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../../core/db';
+import { getSetting } from '../../core/settings';
 import { WORD_HIGHLIGHT_KEY } from '../../reader/reading';
 import { TTS_ENGINE_SETTING } from '../TtsSettings';
 import { resetDownload } from '../downloads';
 import AlignModelPanel, { WHISPER_DOWNLOAD_ID } from './AlignModelPanel';
+import { WHISPER_IOS_SETTING } from './whisperModel';
 
 /** The aligner's worker client, replaced by a scriptable stand-in. */
 const whisper = vi.hoisted(() => ({
@@ -15,6 +17,15 @@ const whisper = vi.hoisted(() => ({
   support: true,
   fail: false,
   prepares: 0,
+}));
+
+/** What the browser can run; `ios` drives the iPhone opt-in. */
+const caps = vi.hoisted(() => ({ supported: true, ios: false }));
+
+vi.mock('../capabilities', () => ({ supportsNeuralVoices: () => caps.supported }));
+vi.mock('../../core/platform', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../core/platform')>()),
+  isIos: () => caps.ios,
 }));
 
 vi.mock('./whisper', () => ({
@@ -44,9 +55,11 @@ beforeEach(async () => {
   whisper.support = true;
   whisper.fail = false;
   whisper.prepares = 0;
+  caps.supported = true;
+  caps.ios = false;
   resetDownload(WHISPER_DOWNLOAD_ID);
   // Settings are shared by the whole file, so each test starts from the defaults.
-  await db.settings.bulkDelete([TTS_ENGINE_SETTING, WORD_HIGHLIGHT_KEY]);
+  await db.settings.bulkDelete([TTS_ENGINE_SETTING, WORD_HIGHLIGHT_KEY, WHISPER_IOS_SETTING]);
 });
 
 afterEach(async () => {
@@ -136,6 +149,43 @@ describe('AlignModelPanel', () => {
     expect(text).toContain('Not available here');
     expect(text).toContain('words are highlighted by an estimate');
     expect(button('Download')).toBeUndefined();
+  });
+
+  it('refuses the download on an iPhone older than 16.4', async () => {
+    caps.supported = false;
+    caps.ios = true;
+    const text = await renderPanel();
+
+    // Same promise as the voice panels: the estimate still works.
+    expect(text).toContain('Needs iOS 16.4 or newer');
+    expect(button('Download')).toBeUndefined();
+  });
+
+  it('keeps word timing off on iPhone until the reader turns it on', async () => {
+    caps.ios = true;
+    const text = await renderPanel();
+
+    expect(text).toContain('Off by default');
+    const toggle = container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(toggle).not.toBeNull();
+    expect(toggle.checked).toBe(false);
+    expect(await getSetting<boolean>(WHISPER_IOS_SETTING, false)).toBe(false);
+
+    await act(async () => {
+      toggle.click();
+    });
+    // The saved setting feeds back through the live query into the checkbox.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    });
+    expect(await getSetting<boolean>(WHISPER_IOS_SETTING, false)).toBe(true);
+  });
+
+  it('offers no iPhone switch on the desktop', async () => {
+    const text = await renderPanel();
+
+    expect(text).not.toContain('Use word timing on this iPhone');
+    expect(container.querySelector('input[type="checkbox"]')).toBeNull();
   });
 
   it('warns about heat when an on-device voice and word highlight run together', async () => {

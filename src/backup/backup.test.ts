@@ -680,6 +680,26 @@ describe('import is a trust boundary', () => {
     } as unknown as Blob;
     await expect(importBackup(huge, 'merge')).rejects.toThrow(/too large/i);
   });
+
+  it('gives an iPhone a smaller cap, with words the reader can act on', async () => {
+    vi.stubGlobal('navigator', {
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
+      platform: 'iPhone',
+      maxTouchPoints: 5,
+    });
+    // 600 MB: fine for a desktop cap of 2 GB, far past what iOS Safari survives.
+    const big = {
+      size: 600 * 1024 ** 2,
+      arrayBuffer: () => {
+        throw new Error('the file must not be read');
+      },
+    } as unknown as Blob;
+    try {
+      await expect(importBackup(big, 'merge')).rejects.toThrow(/too large to open on this device/i);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('replace is atomic', () => {
@@ -737,6 +757,45 @@ describe('export streams book files', () => {
 
     expect(strFromU8(files['books/b1.txt'])).toBe(text);
     expect(files['books/b0.txt']).toHaveLength(0);
+  });
+
+  it('keeps a book file that spans several read slices whole', async () => {
+    // 4 MB slices, so this is three of them and the last one is partial: the
+    // chunked Blob parts must join in order, with no byte lost at a seam.
+    const bytes = new Uint8Array(9 * 1024 * 1024 + 3);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = i % 251;
+    const fingerPrint = (data: Uint8Array): number => {
+      let hash = 2166136261;
+      for (let i = 0; i < data.length; i++) hash = Math.imul(hash ^ data[i], 16777619) >>> 0;
+      return hash;
+    };
+
+    const spy = vi.spyOn(db.books, 'toArray');
+    spy.mockResolvedValue([{ ...book('big'), fileBlob: new Blob([bytes]) }] as never);
+
+    const files = await openZip(await exportBackup({ includeBooks: true }));
+    const out = files['books/big.txt'];
+
+    expect(out?.length).toBe(bytes.length);
+    expect(fingerPrint(out!)).toBe(fingerPrint(bytes));
+    // The slice seams are where a dropped or duplicated chunk would show.
+    for (const at of [4 * 1024 * 1024, 8 * 1024 * 1024, bytes.length - 3]) {
+      expect(out?.slice(at, at + 3)).toEqual(bytes.slice(at, at + 3));
+    }
+  });
+
+  it('round-trips a book through export and import', async () => {
+    const spy = vi.spyOn(db.books, 'toArray');
+    spy.mockResolvedValue([{ ...book('b1'), fileBlob: new Blob(['pharmacology text']) }] as never);
+
+    const zip = await exportBackup({ includeBooks: true });
+    spy.mockRestore();
+
+    const report = await importBackup(zip, 'merge');
+
+    expect(report.counts.books).toBe(1);
+    expect(report.missingFile).toEqual([]);
+    expect((await db.books.get('b1'))?.title).toBe('Book b1');
   });
 });
 

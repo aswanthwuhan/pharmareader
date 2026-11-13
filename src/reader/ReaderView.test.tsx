@@ -950,6 +950,42 @@ describe('reader: generation status, skips and word highlight', () => {
     expect(container.textContent).not.toContain('Synthesis failed.');
   });
 
+  it('keeps the player and asks for a tap when the browser refuses a start', async () => {
+    await db.books.put(makeListBook(['One.', 'Two.']));
+    await renderReader();
+    await waitForEngine();
+    await act(async () => {
+      playButton()?.click();
+    });
+    await waitFor(() => playerMock.calls.length === 1, 'player created');
+    const call = playerMock.calls[0]!;
+
+    await act(async () => {
+      // What iOS reports when a lock-screen "Continue" starts the audio.
+      call.onError?.(
+        new Error('NotAllowedError: play() failed because the user did not interact with the document.'),
+        '0-0-0'
+      );
+    });
+
+    // Not released: the queue, the sentence and the prepared clip stay.
+    expect(call.stops).toBe(0);
+    expect(playerMock.calls.length).toBe(1);
+    expect(container.querySelector('.rd-notice')?.textContent).toContain('Tap Play to continue');
+    expect(playButton()?.getAttribute('aria-label')).toBe('Resume');
+
+    await act(async () => {
+      playButton()?.click();
+    });
+
+    // Play restarted the same player on the same sentence, inside the tap: the
+    // first tap played it, this one starts it again after the refusal.
+    expect(playerMock.calls.length).toBe(1);
+    expect(call.played).toBe(2);
+    expect(container.querySelector('.rd-notice')).toBeNull();
+    expect(playButton()?.getAttribute('aria-label')).toBe('Pause');
+  });
+
   it('leaves skipped blocks visible but out of the queue (F2)', async () => {
     const book = makeBook();
     book.parsed.chapters[0]!.blocks.push({
@@ -1364,7 +1400,11 @@ describe('reader: continue listening', () => {
       playerMock.last()?.onError?.(new Error('NotAllowedError: play() failed without a gesture'));
     });
 
-    expect(playButton()?.getAttribute('aria-label')).toBe('Play');
+    // The player is kept at the saved sentence and the reader is asked to tap
+    // Play (Resume) — not an error, and not a queue thrown away.
+    expect(playerMock.last()?.stops).toBe(0);
+    expect(playButton()?.getAttribute('aria-label')).toBe('Resume');
+    expect(container.querySelector('.rd-notice')?.textContent).toContain('Tap Play to continue');
     expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(readingId()).toBe('0-0-0');
   });

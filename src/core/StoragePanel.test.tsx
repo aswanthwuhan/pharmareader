@@ -26,8 +26,34 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const NOW = 1_700_000_000_000;
 
+const IPHONE_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1';
+
 let container: HTMLDivElement;
 let root: Root;
+let shadowed: string[] = [];
+let savedMatchMedia: PropertyDescriptor | undefined;
+
+function shadow(key: string, value: unknown): void {
+  Object.defineProperty(navigator, key, { configurable: true, value });
+  shadowed.push(key);
+}
+
+function stubStandaloneMedia(matches: boolean): void {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    value: (query: string) => ({
+      media: query,
+      matches,
+      onchange: null,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      dispatchEvent: () => false,
+    }),
+  });
+}
 
 function stubStorage(value: unknown): void {
   Object.defineProperty(navigator, 'storage', { configurable: true, value });
@@ -77,6 +103,7 @@ function bookRecord(id: string): BookRecord {
 beforeEach(() => {
   h.cacheBytes.value = 4 * 1024 * 1024;
   h.cleared.value = 0;
+  savedMatchMedia = Object.getOwnPropertyDescriptor(window, 'matchMedia');
 });
 
 afterEach(async () => {
@@ -84,6 +111,10 @@ afterEach(async () => {
   if (root) await act(async () => root.unmount());
   container?.remove();
   delete (navigator as { storage?: unknown }).storage;
+  for (const key of shadowed) delete (navigator as unknown as Record<string, unknown>)[key];
+  shadowed = [];
+  if (savedMatchMedia) Object.defineProperty(window, 'matchMedia', savedMatchMedia);
+  else delete (window as { matchMedia?: unknown }).matchMedia;
   for (const table of db.tables) await table.clear();
 });
 
@@ -109,6 +140,8 @@ describe('StoragePanel', () => {
     expect(container.textContent).toContain('Not measured');
     expect(container.querySelectorAll('button')).toHaveLength(2);
     expect(container.textContent).not.toContain('Keep my data');
+    // The iOS 7-day advice is only for iOS; the desktop suite must not see it.
+    expect(container.textContent).not.toContain('Add to Home Screen');
   });
 
   it('shows space usage and can ask the browser to keep the data', async () => {
@@ -164,5 +197,28 @@ describe('StoragePanel', () => {
     await click(button('Measure books'));
 
     expect(container.textContent).toContain('(2 books)');
+  });
+});
+
+describe('iOS install advice', () => {
+  it('tells an iPhone reader in a browser tab to add the app to the Home Screen', async () => {
+    shadow('userAgent', IPHONE_UA);
+    shadow('platform', 'iPhone');
+    stubStandaloneMedia(false);
+    stubStorage(undefined);
+    await mount();
+
+    expect(container.textContent).toContain('Safari deletes this data after 7 days without a visit');
+    expect(container.textContent).toContain('Add to Home Screen');
+  });
+
+  it('drops the advice on the Home Screen app, where storage is kept', async () => {
+    shadow('userAgent', IPHONE_UA);
+    shadow('platform', 'iPhone');
+    stubStandaloneMedia(true);
+    stubStorage(undefined);
+    await mount();
+
+    expect(container.textContent).not.toContain('Add to Home Screen');
   });
 });

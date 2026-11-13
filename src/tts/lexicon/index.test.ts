@@ -59,6 +59,50 @@ describe('seedLexicon', () => {
   });
 });
 
+describe('regex portability (iOS 15.4–16.3)', () => {
+  // iOS 15.4–16.3 ships no lookbehind: `new RegExp('(?<!q)(\\d)h')` throws, and
+  // `regexFor()` catches that and drops the row, so the unit would be read as
+  // written ("mug per m two per day"). Every pattern must stay inside the
+  // syntax the oldest WebView in the support matrix can compile, which is why
+  // the boundary a lookbehind used to check is now a `$1` capture.
+  it('never uses a lookbehind assertion', () => {
+    const offenders = BUILTIN_LEXICON.filter((e) => e.pattern.includes('(?<'));
+    expect(offenders.map((e) => `${e.id}: ${e.pattern}`)).toEqual([]);
+  });
+
+  it('compiles every row as a plain global regex', () => {
+    const broken = BUILTIN_LEXICON.filter((e) => {
+      if (!e.isRegex) return false;
+      try {
+        new RegExp(e.pattern, 'g');
+        return false;
+      } catch {
+        return true;
+      }
+    });
+    expect(broken.map((e) => e.id)).toEqual([]);
+  });
+
+  // The rows that used a lookbehind guard a boundary: start of text, a space, a
+  // digit, a `q`. These pin the behaviour the guard used to provide.
+  const boundaryCases: [string, string][] = [
+    ['µg/m²/day', 'micrograms per square meter per day'],
+    ['50 µg/m²', '50 micrograms per square meter'],
+    ['q6h', 'every 6 hours'],
+    ['6h', '6 hours'],
+    ['12 h', '12 hours'],
+    ['1 milligrams', '1 milligram'],
+    ['21 milligrams', '21 milligrams'],
+    ['1.1 milligrams', '1.1 milligrams'],
+    ['1 degrees Celsius', '1 degree Celsius'],
+  ];
+  for (const [input, want] of boundaryCases) {
+    it(`keeps the boundary rule for ${JSON.stringify(input)}`, async () => {
+      expect(await expand(input)).toBe(want);
+    });
+  }
+});
+
 describe('expand', () => {
   const cases: [string, string][] = [
     ['t½ of digoxin is 36 h', 'half-life of digoxin is 36 hours'],

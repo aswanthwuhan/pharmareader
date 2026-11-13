@@ -28,7 +28,10 @@
      pale one must still read against the bright page. */
   box-shadow: 0 0 0 1px rgb(0 0 0 / 0.28);
   /* A tint, never a wash: the printed words have to stay readable under it.
-     A browser without color-mix drops the declaration and keeps the outline. */
+     The plain wash first is the fallback for a browser without color-mix
+     (Safari 16.2); the page is always light, so neutral black at 6% reads the
+     same. */
+  background: rgb(0 0 0 / 0.06);
   background: color-mix(in srgb, currentColor 8%, transparent);
   font: inherit;
   text-align: left;
@@ -39,6 +42,7 @@
 .tappable {
   pointer-events: auto;
   cursor: pointer;
+  background: rgb(0 0 0 / 0.1);
   background: color-mix(in srgb, currentColor 14%, transparent);
 }
 

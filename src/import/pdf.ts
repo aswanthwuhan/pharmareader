@@ -33,6 +33,7 @@ import {
 } from './pdfLayout';
 import type { ColumnMode, PanelRect } from './layout/assign';
 import { pagePanels } from './panels';
+import { PDF_ASSETS } from './pdfAssets';
 
 GlobalWorkerOptions.workerSrc ||= workerUrl;
 
@@ -78,7 +79,7 @@ export async function parsePdf(
   options: PdfParseOptions = {},
 ): Promise<PdfParseResult> {
   const columns = options.columns ?? 'auto';
-  const loadingTask = getDocument({ data: new Uint8Array(data) });
+  const loadingTask = getDocument({ data: new Uint8Array(data), ...PDF_ASSETS });
   let detector: PageLayoutDetector | null = null;
 
   try {

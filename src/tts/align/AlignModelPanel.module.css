@@ -202,6 +202,30 @@
   color: var(--muted);
 }
 
+/* iPhone only: word timing is opt-in because the loaded model costs memory.
+   A plain checkbox row, like the lexicon toggles, not a card of its own. */
+.iosChoice {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.iosToggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--tap);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.iosToggle input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
 .attribution {
   margin: 0;
   font-size: var(--fs-2xs);
