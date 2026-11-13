@@ -1,0 +1,100 @@
+/* Guided tour: a spotlight on one real control and a card that explains it.
+   The ring and the dim are one element (an inset-free box with a huge shadow),
+   so the cut-out tracks the control through scroll, resize and layout changes. */
+
+.tour-catch {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: transparent;
+}
+
+.tour-spot {
+  position: fixed;
+  z-index: 61;
+  pointer-events: none;
+  border-radius: var(--radius-md);
+  box-shadow:
+    0 0 0 2px var(--accent),
+    0 0 0 9999px var(--scrim);
+  transition:
+    top 180ms ease,
+    left 180ms ease,
+    width 180ms ease,
+    height 180ms ease;
+}
+
+.tour-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 61;
+  pointer-events: none;
+  background: var(--scrim);
+}
+
+/* Doubled class so the shared `.sheet`-era rules in src/styles.css cannot win:
+   the app stylesheet is injected after the page stylesheets. */
+.tour.tour-card {
+  position: fixed;
+  z-index: 62;
+  top: max(var(--tour-top, 0px), calc(env(safe-area-inset-top, 0px) + 16px));
+  left: max(var(--tour-left, 16px), calc(env(safe-area-inset-left, 0px) + 16px));
+  width: min(22rem, calc(100vw - 32px));
+  max-height: calc(100vh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  overflow: auto;
+  padding: var(--space-4);
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+}
+
+.tour.tour-card--centre {
+  top: auto;
+  left: 50%;
+  bottom: max(16px, calc(env(safe-area-inset-bottom, 0px) + 16px));
+  transform: translateX(-50%);
+}
+
+.tour-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-lg);
+  line-height: 1.25;
+}
+
+.tour-body {
+  margin: 0;
+  max-width: 60ch;
+  line-height: 1.5;
+}
+
+.tour-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.tour-count {
+  margin: 0 var(--space-1);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+.tour-gap {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* Every button in the tour keeps the 44px tap target, including Back. */
+.tour .btn {
+  min-height: 44px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tour-spot {
+    transition: none;
+  }
+}

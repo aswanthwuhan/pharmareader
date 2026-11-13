@@ -41,7 +41,7 @@ let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(async () => {
   await db.delete();
   await db.open();
-  fetchMock = vi.fn(async () => okResponse([release('v0.4.0')]));
+  fetchMock = vi.fn(async () => okResponse([release('v9.9.9')]));
   vi.stubGlobal('fetch', fetchMock);
 });
 
@@ -54,22 +54,22 @@ afterEach(async () => {
 
 describe('releaseVersion', () => {
   it('strips the leading v from GitHub tags', () => {
-    expect(releaseVersion('v0.4.0')).toBe('0.4.0');
-    expect(releaseVersion(' 0.4.0-rc.1 ')).toBe('0.4.0-rc.1');
+    expect(releaseVersion('v9.9.9')).toBe('9.9.9');
+    expect(releaseVersion(' 9.9.9-rc.1 ')).toBe('9.9.9-rc.1');
   });
 });
 
 describe('pickNewerRelease', () => {
   it('picks the newest release that is newer than the app', () => {
     const picked = pickNewerRelease(
-      [release('v0.3.1'), release('v0.4.0'), release('v0.3.0'), release('v0.2.9')],
+      [release('v0.3.1'), release('v9.9.9'), release('v0.3.0'), release('v0.2.9')],
       '0.3.0',
     );
-    expect(picked?.version).toBe('0.4.0');
+    expect(picked?.version).toBe('9.9.9');
   });
 
   it('counts pre-releases, because every PharmaReader release is one', () => {
-    expect(pickNewerRelease([release('v0.4.0-rc.1')], '0.3.0')?.version).toBe('0.4.0-rc.1');
+    expect(pickNewerRelease([release('v9.9.9-rc.1')], '0.3.0')?.version).toBe('9.9.9-rc.1');
   });
 
   it('skips drafts and malformed entries', () => {
@@ -79,11 +79,11 @@ describe('pickNewerRelease', () => {
         release('latest'),
         { tag_name: 'v0.6.0' },
         'not an object',
-        release('v0.4.0'),
+        release('v9.9.9'),
       ],
       '0.3.0',
     );
-    expect(picked?.version).toBe('0.4.0');
+    expect(picked?.version).toBe('9.9.9');
   });
 
   it('reports nothing when the app is already the newest', () => {
@@ -122,8 +122,8 @@ describe('checkForUpdate', () => {
     const result = await checkForUpdate({ now: NOW });
 
     expect(result).toEqual({
-      version: '0.4.0',
-      url: 'https://github.com/aswanthwuhan/pharmareader/releases/tag/v0.4.0',
+      version: '9.9.9',
+      url: 'https://github.com/aswanthwuhan/pharmareader/releases/tag/v9.9.9',
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -153,10 +153,10 @@ describe('checkForUpdate', () => {
 
   it('stays silent when the same version was dismissed', async () => {
     await setSetting(UPDATE_CHECK_KEY, true);
-    await dismissUpdate('0.4.0');
+    await dismissUpdate('9.9.9');
 
     expect(await checkForUpdate({ now: NOW })).toBeNull();
-    expect(await getSetting(UPDATE_DISMISSED_KEY, undefined)).toBe('0.4.0');
+    expect(await getSetting(UPDATE_DISMISSED_KEY, undefined)).toBe('9.9.9');
 
     // A later release is offered again.
     fetchMock.mockResolvedValueOnce(okResponse([release('v0.5.0')]));

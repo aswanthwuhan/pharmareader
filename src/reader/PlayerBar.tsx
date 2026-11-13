@@ -9,10 +9,20 @@
  * Generation status ("Generating sentence 15…", "2 ready ahead") lives under the
  * position line, so waiting is visible instead of looking like a stuck button.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { pushBackHandler } from '../core/backButton';
+import { getSetting } from '../core/settings';
+import { useDownload } from '../tts/downloads';
+import {
+  canRunKokoro,
+  kokoroIsReady,
+  markKokoroPrompted,
+  wasKokoroPrompted,
+} from '../tts/kokoroOffer';
+import { ENGINE_SETTING } from '../tts/registry';
 import { Glyph, icons } from './Icon';
+import VoicePrompt from './VoicePrompt';
 
 export type PlayState = 'idle' | 'playing' | 'paused';
 
@@ -38,15 +48,28 @@ export interface SelectionStatus {
   onReplay(): void;
 }
 
+/**
+ * What the "…" menu shows while audio is being saved: one chapter, or a queue
+ * of several. `status` is the queue's own sentence ("Saving chapter 2 of 5 — 14
+ * of 120 sentences"); a single chapter keeps the original line.
+ */
+export interface PrerenderProgress {
+  done: number;
+  total: number;
+  status?: string;
+}
+
 interface Props {
   state: PlayState;
   /** "Kokoro" / "Pocket TTS" / "Phone voice" — never an engine class name. */
   engineName: string;
+  /** The resolved engine's id ('system', 'kokoro', 'pocket'), or null while resolving. */
+  engineId?: string | null;
   /** True when the chosen engine was unavailable and the phone voice took over. */
   fallback: boolean;
   rate: number;
   canPrerender: boolean;
-  progress: { done: number; total: number } | null;
+  progress: PrerenderProgress | null;
   cached: boolean;
   /** 1-based position of the spoken sentence inside the chapter. */
   sentenceNumber: number;
@@ -67,6 +90,8 @@ interface Props {
   onNext(): void;
   onRate(rate: number): void;
   onPrerender(): void;
+  /** Opens the sheet that queues several chapters, or a page range. */
+  onPrerenderMore(): void;
   onCancelPrerender(): void;
   onPlayFromHere(): void;
   /** Sleep timer ran out: pause where the voice is, do not stop or close. */
@@ -96,9 +121,28 @@ function rateLabel(rate: number): string {
   return `${rate.toFixed(2).replace(/0$/, '')}×`;
 }
 
+/** The phone-voice pill is an icon-only 44px button under 480px; this is its glyph. */
+const DOWNLOAD_GLYPH = (
+  <>
+    <path d="M12 4.5v9" />
+    <path d="m8.4 10 3.6 3.6L15.6 10" />
+    <path d="M5 18.5h14" />
+  </>
+);
+
+/** When Kokoro cannot run here the pill still links to Settings; this is that glyph. */
+const VOICE_GLYPH = (
+  <>
+    <path d="M4.5 10v4h3l4 3.5v-11L7.5 10z" />
+    <path d="M15 9.2a4 4 0 0 1 0 5.6" />
+    <path d="M17.5 7a7.5 7.5 0 0 1 0 10" />
+  </>
+);
+
 export default function PlayerBar({
   state,
   engineName,
+  engineId,
   fallback,
   rate,
   canPrerender,
@@ -117,6 +161,7 @@ export default function PlayerBar({
   onNext,
   onRate,
   onPrerender,
+  onPrerenderMore,
   onCancelPrerender,
   onPlayFromHere,
   onSleepEnd,
@@ -137,6 +182,44 @@ export default function PlayerBar({
   sleepAtChapterEnd.current = onSleepAtChapterEndChange;
   /** A one-shot "End of chapter" only resets once playback has actually run. */
   const wasPlaying = useRef(false);
+
+  const kokoroDownload = useDownload('kokoro');
+  /** The Kokoro offer sheet: opened by the phone-voice pill, or once on the first Play. */
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const promptedOnce = useRef(false);
+  const canOfferKokoro = useMemo(() => canRunKokoro(), []);
+  const phoneVoice = engineId === 'system';
+  const kokoroBusy =
+    kokoroDownload.status === 'downloading' || kokoroDownload.status === 'unpacking';
+  const kokoroPercent = Math.max(0, Math.min(100, Math.round(kokoroDownload.fraction * 100)));
+
+  // First Play while the phone voice would read: offer Kokoro once, without delaying
+  // playback. "Not now" (any close) leaves the pill and the banner as the way back.
+  useEffect(() => {
+    if (!canOfferKokoro || promptedOnce.current) return;
+    if (state !== 'playing' || engineId !== 'system') return;
+    if (kokoroBusy || kokoroDownload.status === 'done') return;
+    promptedOnce.current = true;
+    let alive = true;
+    void (async () => {
+      // Read the stored choice, never the live hook's fallback: a choice made in
+      // Settings must hold even during the instant before it finishes loading.
+      if ((await getSetting<string>(ENGINE_SETTING, 'auto')) !== 'auto') return;
+      if (await kokoroIsReady()) return;
+      if (await wasKokoroPrompted()) return;
+      // Playback state moved on while we were reading settings: ask on the next
+      // Play instead of recording a prompt nobody saw.
+      if (!alive) {
+        promptedOnce.current = false;
+        return;
+      }
+      await markKokoroPrompted();
+      setVoiceOpen(true);
+    })().catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [canOfferKokoro, state, engineId, kokoroBusy, kokoroDownload.status]);
 
   useEffect(() => {
     if (sleepEndsAt === null) return;
@@ -253,7 +336,13 @@ export default function PlayerBar({
                   ? 'Selection finished'
                   : `Selection: sentence ${selection.at} of ${selection.total}`
                 : sentenceTotal > 0
-                  ? `Sentence ${sentenceNumber} of ${sentenceTotal}`
+                  ? (
+                    <>
+                      {/* The word drops out on a narrow phone; the numbers stay. */}
+                      <span className="rd-count-word">Sentence </span>
+                      {sentenceNumber} of {sentenceTotal}
+                    </>
+                  )
                   : 'No sentences here'}
               {selection === null && cached && !busy ? (
                 <span className="rd-player-saved"> · audio saved</span>
@@ -289,6 +378,7 @@ export default function PlayerBar({
             aria-label="Playback options"
             aria-expanded={open === 'more'}
             onClick={() => togglePanel('more')}
+            data-tour="more"
           >
             <Glyph>{icons.more}</Glyph>
           </button>
@@ -321,11 +411,18 @@ export default function PlayerBar({
             aria-label={`Playback speed ${rateLabel(rate)}`}
             aria-expanded={open === 'speed'}
             onClick={() => togglePanel('speed')}
+            data-tour="speed"
           >
             {rateLabel(rate)}
           </button>
 
-          <button type="button" className="rd-icon-btn" aria-label="Previous sentence" onClick={onPrev}>
+          <button
+            type="button"
+            className="rd-icon-btn"
+            aria-label="Previous sentence"
+            onClick={onPrev}
+            data-tour="step"
+          >
             <Glyph>{icons.prev}</Glyph>
           </button>
           <button
@@ -334,6 +431,7 @@ export default function PlayerBar({
             aria-label={playing ? 'Pause' : state === 'paused' ? 'Resume' : 'Play'}
             aria-pressed={playing}
             onClick={onToggle}
+            data-tour="play"
           >
             <Glyph>{playing ? icons.pause : icons.play}</Glyph>
           </button>
@@ -341,18 +439,49 @@ export default function PlayerBar({
             <Glyph>{icons.next}</Glyph>
           </button>
 
-          <Link
-            className={fallback ? 'rd-engine is-warning' : 'rd-engine'}
-            to="/settings#voice-models"
-            title={
-              fallback
-                ? 'Your chosen voice model is not ready, so the phone voice is reading. Change it in Settings.'
-                : `Voice: ${engineName}. Change it in Settings.`
-            }
-          >
-            <span className="rd-engine-dot" aria-hidden="true" />
-            <span className="rd-engine-name">{engineName}</span>
-          </Link>
+          {phoneVoice && canOfferKokoro ? (
+            <button
+              type="button"
+              className={`rd-engine rd-engine--phone${fallback ? ' is-warning' : ''}`}
+              data-engine-state={kokoroBusy ? 'downloading' : 'phone'}
+              title="Voice options. Kokoro is available for this book."
+              aria-label={
+                kokoroBusy
+                  ? `Kokoro download ${kokoroPercent}% — open voice options`
+                  : 'Voice options — the phone voice is reading. Kokoro is available.'
+              }
+              onClick={() => setVoiceOpen(true)}
+            >
+              <span className="rd-engine-dot" aria-hidden="true" />
+              <span className="rd-engine-name">
+                {kokoroBusy ? `Kokoro · ${kokoroPercent}%` : engineName}
+              </span>
+              <span className="rd-engine-glyph" aria-hidden="true">
+                <Glyph size={24}>{DOWNLOAD_GLYPH}</Glyph>
+              </span>
+            </button>
+          ) : (
+            <Link
+              className={`rd-engine${phoneVoice ? ' rd-engine--phone' : ''}${fallback ? ' is-warning' : ''}`}
+              data-engine-state={
+                phoneVoice ? (kokoroBusy ? 'downloading' : 'phone') : engineId ?? 'resolving'
+              }
+              to="/settings#voice-models"
+              title={
+                fallback
+                  ? 'Your chosen voice model is not ready, so the phone voice is reading. Change it in Settings.'
+                  : `Voice: ${engineName}. Change it in Settings.`
+              }
+            >
+              <span className="rd-engine-dot" aria-hidden="true" />
+              <span className="rd-engine-name">{engineName}</span>
+              {phoneVoice ? (
+                <span className="rd-engine-glyph" aria-hidden="true">
+                  <Glyph size={24}>{VOICE_GLYPH}</Glyph>
+                </span>
+              ) : null}
+            </Link>
+          )}
         </div>
       </div>
 
@@ -413,7 +542,7 @@ export default function PlayerBar({
                 <span style={{ width: `${Math.round((progress.done / Math.max(1, progress.total)) * 100)}%` }} />
               </div>
               <p className="rd-pop-note" role="status">
-                Saving chapter audio {progress.done} of {progress.total}
+                {progress.status ?? `Saving chapter audio ${progress.done} of ${progress.total}`}
               </p>
               <button type="button" className="rd-pop-action" onClick={onCancelPrerender}>
                 Cancel
@@ -431,6 +560,17 @@ export default function PlayerBar({
               >
                 <Glyph>{icons.spacing}</Glyph>
                 <span>{cached ? 'Save this chapter again' : 'Save chapter audio'}</span>
+              </button>
+              <button
+                type="button"
+                className="rd-pop-action"
+                onClick={() => {
+                  setOpen('none');
+                  onPrerenderMore();
+                }}
+              >
+                <Glyph>{icons.chapters}</Glyph>
+                <span>Save audio for more…</span>
               </button>
               <p className="rd-pop-note">Plays back with no waiting, and keeps working offline.</p>
             </div>
@@ -463,6 +603,8 @@ export default function PlayerBar({
           </div>
         </div>
       </div>
+
+      <VoicePrompt open={voiceOpen} onClose={() => setVoiceOpen(false)} />
     </div>
   );
 }

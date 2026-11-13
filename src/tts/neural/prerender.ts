@@ -8,6 +8,7 @@ import { expand } from '../lexicon';
 import type { TtsEngine } from '../../core/types';
 import { audioDurationMs } from './wav';
 import {
+  runIsPrerendered,
   runPrerender,
   type PrerenderItem,
   type PrerenderOptions,
@@ -34,4 +35,17 @@ export async function prerenderChapter(
     putAudio,
     durationMs: audioDurationMs,
   });
+}
+
+/**
+ * Whether this chapter's audio is already saved for the current engine, voice
+ * and rate. Used to mark chapters that need no rendering; see
+ * `runIsPrerendered` for why the cache keys are the test.
+ */
+export async function isPrerendered(
+  engine: TtsEngine,
+  items: PrerenderItem[],
+  opts: PrerenderOptions = {}
+): Promise<boolean> {
+  return runIsPrerendered(engine, items, opts, { expand, cacheKey, getAudio, putAudio });
 }

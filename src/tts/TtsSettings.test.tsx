@@ -2,7 +2,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../core/db';
-import type { AudioCacheRecord } from '../core/types';
+import type { AudioCacheRecord, TtsEngine } from '../core/types';
 import TtsSettings, {
   TEST_SENTENCE,
   TTS_ENGINE_SETTING,
@@ -21,6 +21,33 @@ const caps = vi.hoisted(() => ({ supported: true }));
 vi.mock('./capabilities', () => ({
   supportsNeuralVoices: () => caps.supported,
   neuralUnsupportedHint: () => "Needs iOS 16.4 or newer — your phone's built-in voice still works.",
+}));
+
+/** The engine behind `kokoroFor()`, with its download/voices under test control. */
+const kokoroState = vi.hoisted(() => ({
+  ready: false,
+  voices: [
+    { id: 'af_heart', name: 'Heart', lang: 'en-US' },
+    { id: 'bf_alice', name: 'Alice', lang: 'en-GB' },
+  ],
+}));
+vi.mock('./registry', () => ({
+  ENGINE_SETTING: 'tts.engine',
+  kokoroFor: () =>
+    ({
+      id: 'kokoro',
+      label: 'Kokoro',
+      capabilities: { streaming: true, prerender: true, wordBoundaries: true, needsDownload: true },
+      isReady: async () => kokoroState.ready,
+      prepare: async () => undefined,
+      listVoices: async () => kokoroState.voices,
+      synthesize: async () => new Blob(),
+      cacheVariant: () => 'kokoro-test',
+      speak: async () => undefined,
+      stop() {},
+      pause() {},
+      resume() {},
+    }) as unknown as TtsEngine,
 }));
 
 // React 19 keeps act() warnings quiet only when this flag is set.
@@ -112,8 +139,20 @@ function setInputValue(el: HTMLInputElement | HTMLSelectElement, value: string):
   el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }));
 }
 
+const IPHONE_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+const DESKTOP_UA =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+/** `isIos()` reads the user agent; shadow it the way the other tests do. */
+function useUserAgent(userAgent: string): void {
+  Object.defineProperty(navigator, 'userAgent', { value: userAgent, configurable: true });
+}
+
 beforeEach(() => {
   caps.supported = true;
+  kokoroState.ready = false;
+  useUserAgent(DESKTOP_UA);
   invalidate();
 });
 
@@ -151,7 +190,7 @@ describe('filterEntries', () => {
 });
 
 describe('TtsSettings', () => {
-  it('starts on Auto with the engine hint and the test sentence line', async () => {
+  it('starts on Auto with the engine hint and no voice picker', async () => {
     await mount();
     const engine = container.querySelector<HTMLSelectElement>('#tts-engine');
     expect(engine?.value).toBe('auto');
@@ -163,10 +202,12 @@ describe('TtsSettings', () => {
     expect(hint?.querySelector('a')?.getAttribute('href')).toBe('#voice-models');
     expect(hint?.querySelector('a')?.textContent).toBe('Manage on-device models');
 
-    // "Speaks: …" is what the button will say, so it stays out of any disclosure.
-    const speaks = container.querySelector('.tts-test-sentence');
-    expect(speaks?.textContent).toBe(`Speaks: “${TEST_SENTENCE}”`);
-    expect(speaks?.closest('details')).toBeNull();
+    // Auto picks the engine; the engine, once chosen, picks the voice.
+    expect(container.textContent).toContain(
+      'Auto uses the best on-device voice when one is ready, and the phone voice',
+    );
+    expect(container.querySelector('#tts-voice')).toBeNull();
+    expect(container.querySelector('.tts-test-sentence')).toBeNull();
 
     const rate = container.querySelector<HTMLInputElement>('#tts-rate');
     expect(rate?.min).toBe('0.5');
@@ -201,12 +242,14 @@ describe('TtsSettings', () => {
     await waitFor(() => container.querySelector<HTMLSelectElement>('#tts-engine')?.value === 'kokoro');
     expect(await getSetting(TTS_ENGINE_SETTING, 'auto')).toBe('kokoro');
 
-    // The hint follows the selection, and the system-voice hint names both engines.
+    // The hint follows the selection, and the phone picker is gone with the phone voice.
     expect(container.querySelector('#tts-engine-hint')?.textContent).toContain('Kokoro-82M');
-    expect(container.querySelector('#tts-voice-hint')?.textContent).toBe(
-      'Used when the system engine speaks. The on-device model brings its own voices.',
-    );
-    expect(container.querySelector<HTMLSelectElement>('#tts-voice')?.disabled).toBe(true);
+    expect(container.querySelector('#tts-voice')).toBeNull();
+
+    // Kokoro is not downloaded in this test: one line and the action, not a dead list.
+    await waitFor(() => container.querySelector('.tts-voice-absent') !== null);
+    expect(container.textContent).toContain('Kokoro isn’t downloaded yet');
+    expect(container.querySelector('.tts-voice-list')).toBeNull();
   });
 
   it('keeps the long voice tip inside "How this works", under its plain bold title', async () => {
@@ -406,6 +449,7 @@ describe('TtsSettings', () => {
   });
 
   it('stops the system test on a second tap', async () => {
+    await setSetting(TTS_ENGINE_SETTING, 'system');
     const stop = vi.spyOn(systemEngine, 'stop').mockImplementation(() => undefined);
     vi.spyOn(systemEngine, 'speak').mockImplementation(() => new Promise<void>(() => undefined));
     await mount();
@@ -424,14 +468,75 @@ describe('TtsSettings', () => {
     expect(buttonWithText('Test voice')).toBeDefined();
   });
 
-  it('disables the system test while an on-device model is the engine', async () => {
+  it('offers the download instead of a dead list when Kokoro is not downloaded', async () => {
     await setSetting(TTS_ENGINE_SETTING, 'kokoro');
     await mount();
 
-    const test = buttonWithText('Test voice')!;
-    expect(test.disabled).toBe(true);
-    expect(container.textContent).toContain('The engine above is set to an on-device model.');
-    expect(container.querySelector<HTMLSelectElement>('#tts-voice')?.disabled).toBe(true);
+    await waitFor(() => container.querySelector('.tts-voice-absent') !== null);
+    expect(container.textContent).toContain('Kokoro isn’t downloaded yet');
+    expect(container.textContent).toContain('320 MB');
+    expect(buttonWithText('Download Kokoro')).toBeDefined();
+    expect(container.querySelectorAll('input[name="tts-kokoro-voice"]')).toHaveLength(0);
+    expect(container.querySelector('#tts-voice')).toBeNull();
+  });
+
+  it('shows each engine’s own voice controls only for that engine', async () => {
+    kokoroState.ready = true;
+    await setSetting(TTS_ENGINE_SETTING, 'system');
+    await mount();
+    expect(container.querySelector('#tts-voice')).not.toBeNull();
+    expect(container.querySelector('#tts-pocket-voice')).toBeNull();
+    expect(container.querySelector('.tts-voice-list')).toBeNull();
+
+    const engine = container.querySelector<HTMLSelectElement>('#tts-engine')!;
+    await act(async () => {
+      setInputValue(engine, 'pocket');
+    });
+    await waitFor(() => container.querySelector('#tts-pocket-voice') !== null);
+    expect(container.querySelector('#tts-voice')).toBeNull();
+    expect(container.querySelector('.tts-voice-list')).toBeNull();
+
+    await act(async () => {
+      setInputValue(container.querySelector<HTMLSelectElement>('#tts-engine')!, 'kokoro');
+    });
+    await waitFor(
+      () =>
+        container.querySelectorAll('input[name="tts-kokoro-voice"]').length ===
+        kokoroState.voices.length,
+    );
+    expect(container.querySelector('#tts-voice')).toBeNull();
+    expect(container.querySelector('#tts-pocket-voice')).toBeNull();
+    expect(container.textContent).toContain('Heart · American female (en-US)');
+    expect(
+      container.querySelector<HTMLInputElement>('input[name="tts-kokoro-voice"]:checked')?.value,
+    ).toBe('af_heart');
+  });
+
+  it('persists the chosen Kokoro voice and marks the default in text', async () => {
+    kokoroState.ready = true;
+    await setSetting(TTS_ENGINE_SETTING, 'kokoro');
+    await mount();
+    await waitFor(
+      () => container.querySelectorAll('input[name="tts-kokoro-voice"]').length === 2,
+    );
+
+    const radios = container.querySelectorAll<HTMLInputElement>('input[name="tts-kokoro-voice"]');
+    await act(async () => {
+      radios[1]!.click();
+    });
+    await waitForSetting('tts.kokoro.voice', 'bf_alice');
+    await waitFor(
+      () =>
+        container.querySelector<HTMLInputElement>('input[name="tts-kokoro-voice"]:checked')
+          ?.value === 'bf_alice',
+    );
+
+    const chosen = container.querySelector<HTMLInputElement>(
+      'input[name="tts-kokoro-voice"]:checked',
+    );
+    expect(chosen?.value).toBe('bf_alice');
+    expect(chosen?.closest('li')?.textContent).toContain('Default');
+    expect(container.querySelectorAll('.tts-voice-default')).toHaveLength(1);
   });
 
   it('lists the device voices and writes the chosen system voice', async () => {
@@ -445,6 +550,7 @@ describe('TtsSettings', () => {
       removeEventListener: () => undefined,
       cancel: () => undefined,
     });
+    await setSetting(TTS_ENGINE_SETTING, 'system');
     await mount();
 
     const select = container.querySelector<HTMLSelectElement>('#tts-voice')!;
@@ -461,5 +567,56 @@ describe('TtsSettings', () => {
       setInputValue(select, 'v-uk');
     });
     await waitForSetting(TTS_VOICE_SETTING, 'v-uk');
+  });
+
+  it('warns an iPhone about the phone voice, under the engine choice', async () => {
+    useUserAgent(IPHONE_UA);
+    await setSetting(TTS_ENGINE_SETTING, 'system');
+    await mount();
+
+    const engine = container.querySelector<HTMLSelectElement>('#tts-engine')!;
+    const warning = container.querySelector('.tts-ios-warning');
+    expect(warning).not.toBeNull();
+    expect(warning!.getAttribute('role')).toBe('note');
+    // Under the engine choice, not somewhere else on the page.
+    expect(warning!.closest('.field')).toBe(engine.closest('.field'));
+    expect(warning!.textContent).toContain('The phone voice may not work on iPhone and iPad.');
+
+    // Kokoro is not downloaded here, so the one-line warning carries the action.
+    await waitFor(() => buttonWithText('Download Kokoro', warning!) !== undefined);
+    expect(buttonWithText('Download Kokoro', warning!)!.className).toBe('rd-banner-link');
+  });
+
+  it('warns on an older iPhone without offering a voice it cannot run', async () => {
+    useUserAgent(IPHONE_UA);
+    caps.supported = false;
+    await setSetting(TTS_ENGINE_SETTING, 'system');
+    await mount();
+
+    const warning = container.querySelector('.tts-ios-warning');
+    expect(warning).not.toBeNull();
+    expect(warning!.textContent).toContain('The phone voice may not work on iPhone and iPad.');
+    // The capability note above it already asks for iOS 16.4 or newer; no action.
+    expect(container.textContent).toContain(
+      "Needs iOS 16.4 or newer — your phone's built-in voice still works.",
+    );
+    expect(buttonWithText('Download Kokoro')).toBeUndefined();
+  });
+
+  it('stops warning on an iPhone once Kokoro is the engine', async () => {
+    useUserAgent(IPHONE_UA);
+    kokoroState.ready = true;
+    await setSetting(TTS_ENGINE_SETTING, 'kokoro');
+    await mount();
+
+    expect(container.querySelector<HTMLSelectElement>('#tts-engine')?.value).toBe('kokoro');
+    expect(container.querySelector('.tts-ios-warning')).toBeNull();
+  });
+
+  it('keeps the phone voice warning off other platforms', async () => {
+    await setSetting(TTS_ENGINE_SETTING, 'system');
+    await mount();
+
+    expect(container.querySelector('.tts-ios-warning')).toBeNull();
   });
 });

@@ -15,6 +15,7 @@ import { pushBackHandler } from '../core/backButton';
 import { APP_VERSION } from '../core/version';
 import { UPDATE_CHECK_KEY } from '../core/updateCheck';
 import Disclosure from '../components/Disclosure';
+import { startTutorial } from '../components/Tutorial';
 import WhatsNew from '../components/WhatsNew';
 import './settings.css';
 
@@ -301,6 +302,9 @@ export default function SettingsPage() {
                 </label>
 
                 <div className="about-links">
+                  <button type="button" className="btn btn-secondary" onClick={startTutorial}>
+                    How to use PharmaReader
+                  </button>
                   <button type="button" className="btn btn-secondary" onClick={() => setWhatsNewOpen(true)}>
                     What’s new in v{APP_VERSION}
                   </button>
@@ -356,7 +360,7 @@ export default function SettingsPage() {
         </nav>
       </div>
 
-      {/* The same sheet App opens on an upgrade, reachable any time from About. */}
+      {/* The tour itself is rendered once by App, so it survives the pages it visits. */}
       {whatsNewOpen ? <WhatsNew version={APP_VERSION} onClose={() => setWhatsNewOpen(false)} /> : null}
     </section>
   );

@@ -4,6 +4,7 @@ import { isIos } from '../core/platform';
 import type { BookRecord, ColumnMode, DocFormat, ParsedDoc } from '../core/types';
 import { normaliseText } from './blocks';
 import { parseHtmlDocument } from './html';
+import type { LayoutMode } from './pdf';
 import { parseMarkdown } from './md';
 import { parseText } from './txt';
 
@@ -11,6 +12,16 @@ export interface ImportResult {
   bookId: string;
   /** Non-fatal note for the user, e.g. a PDF that looks scanned. */
   warning?: string;
+}
+
+/** Choices the caller makes for one import, before the file is parsed. */
+export interface ImportOptions {
+  /**
+   * Which layout a PDF gets: `'auto'` lets the model run where the text alone
+   * is unsure, `'heuristic'` skips it entirely. The import question answers
+   * this; left out, the device-wide setting decides.
+   */
+  pdfLayout?: LayoutMode;
 }
 
 const FORMAT_BY_EXT: Record<string, DocFormat> = {
@@ -57,6 +68,7 @@ async function parseFile(
   onProgress?: (note: string) => void,
   // Bytes already read for the stored copy: reading the Blob again would be a second full copy.
   readBytes?: ArrayBuffer,
+  options: ImportOptions = {},
 ): Promise<{ doc: ParsedDoc; warning?: string; layout?: BookRecord['layout'] }> {
   const format = detectFormat({ name, type: file.type });
   if (!format) {
@@ -95,7 +107,7 @@ async function parseFile(
         // prove the app is alive without re-rendering the library 1000 times.
         if (done !== total && done % 25 !== 0) return;
         onProgress?.(phase === 'layout' ? `Analysing layout: page ${done} of ${total}` : `page ${done} of ${total}`);
-      });
+      }, { layout: options.pdfLayout });
       // Under ~50 characters per page there is no real text layer: a scan.
       const warning =
         parsed.charsPerPage < 50 ? 'Looks scanned — OCR not supported yet' : parsed.modelNote;
@@ -202,6 +214,7 @@ export const IOS_IMPORT_LIMIT_BYTES = 500 * 1024 * 1024;
 export async function importFileDetailed(
   file: File,
   onProgress?: (note: string) => void,
+  options: ImportOptions = {},
 ): Promise<ImportResult> {
   if (isIos() && file.size > IOS_IMPORT_LIMIT_BYTES) {
     throw new Error(
@@ -218,7 +231,7 @@ export async function importFileDetailed(
     bytes = await file.arrayBuffer();
     stored = new Blob([bytes], { type: file.type || 'application/octet-stream' });
   }
-  const { doc, warning, layout } = await parseFile(stored, file.name, onProgress, bytes);
+  const { doc, warning, layout } = await parseFile(stored, file.name, onProgress, bytes, options);
   const bookId = await saveRecord(doc, stored, layout);
   return { bookId, warning };
 }

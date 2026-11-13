@@ -157,6 +157,30 @@ export async function runPrerender(
   return report;
 }
 
+/**
+ * Whether playback of every item would be served from the audio cache right
+ * now. Cache rows are content hashes with no chapter index, so asking for the
+ * same keys the player asks for is the only truthful test. It reads until the
+ * first miss, which keeps a chapter that was never saved cheap to check.
+ */
+export async function runIsPrerendered(
+  engine: TtsEngine,
+  items: PrerenderItem[],
+  opts: PrerenderOptions,
+  deps: PrerenderDeps
+): Promise<boolean> {
+  if (items.length === 0 || !engine.synthesize) return false;
+  const rate = opts.rate ?? 1;
+  const voiceId = await cacheVoiceId(engine, opts.voiceId);
+  for (const item of items) {
+    const text = await deps.expand(item.text, engine.id);
+    const key = await deps.cacheKey(text, engine.id, voiceId, rate);
+    const cached = await deps.getAudio(key);
+    if (!cached) return false;
+  }
+  return true;
+}
+
 function logItemError(error: unknown, item: PrerenderItem): void {
   console.warn(`Pre-render failed for ${item.id}`, error);
 }

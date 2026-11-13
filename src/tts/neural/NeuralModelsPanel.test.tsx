@@ -19,6 +19,9 @@ const kokoroReset = vi.hoisted(() => vi.fn());
 
 vi.mock('@capacitor/core', () => ({
   Capacitor: { isNativePlatform: () => platform.native },
+  // The settings panel now imports modules that touch the native Kokoro plugin at
+  // module scope; the plugin itself is not under test here.
+  registerPlugin: () => ({ addListener: async () => ({ remove: async () => undefined }) }),
 }));
 vi.mock('../capabilities', () => ({
   supportsNeuralVoices: () => caps.supported,

@@ -1,0 +1,106 @@
+/* The Kokoro offer sheet, plus the one place the phone-voice pill comes back on a
+   narrow screen. reader.css hides `.rd-engine` below 480px; the pill is the only
+   standing way to offer Kokoro while the phone voice reads, so it is shown there as
+   a 44x44 icon button and only in that state. Doubled-class selectors keep these
+   rules ahead of reader.css regardless of stylesheet order. */
+
+.voice-prompt .voice-prompt-body {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.voice-prompt p {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.voice-prompt .voice-prompt-note {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.voice-prompt .voice-prompt-status {
+  font-weight: var(--fw-semibold);
+}
+
+.voice-prompt .voice-prompt-progress-label {
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.voice-prompt .voice-prompt-progress {
+  margin: 0;
+}
+
+.voice-prompt .voice-prompt-actions {
+  margin-top: var(--space-4);
+}
+
+/* The download glyph is only for the narrow, icon-only pill. */
+.rd-player .rd-engine .rd-engine-glyph {
+  display: none;
+  flex: none;
+  width: 24px;
+  height: 24px;
+}
+
+@media (max-width: 479.98px) {
+  /* Only the phone-voice pill returns; a Kokoro or Pocket pill stays hidden.
+     Exactly 44px: the reader raises --tap to 48 for comfort, but the fourth
+     control in this row can only spare 44 if the position stays on screen at 320px. */
+  .rd-player .rd-engine.rd-engine--phone {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    margin-left: 0;
+    padding: 0;
+    gap: 0;
+  }
+
+  .rd-player .rd-engine.rd-engine--phone .rd-engine-dot {
+    display: none;
+  }
+
+  /* Same text for the accessibility tree and ReaderView's label test, none on screen. */
+  .rd-player .rd-engine.rd-engine--phone .rd-engine-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .rd-player .rd-engine.rd-engine--phone .rd-engine-glyph {
+    display: block;
+  }
+}
+
+/* 320px-wide phones: the pill costs 44px, so the transport gives back a little
+   air (2px gaps) and the rate chip a smaller label. Both stay full-height
+   targets; this is the only band where the sum needs the room. */
+@media (max-width: 359.98px) {
+  .rd-player .rd-player-controls {
+    gap: 2px;
+  }
+
+  .rd-player .rd-speed {
+    padding-inline: 6px;
+    font-size: var(--fs-xs);
+  }
+}
+
+/* iPhone: the phone voice may never start, so the offer says so above its buttons. */
+.voice-prompt .voice-prompt-ios {
+  color: var(--warning);
+}

@@ -1,9 +1,12 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
+import { isIos } from '../core/platform';
 import { setSetting, useSetting } from '../core/settings';
 import type { LexiconEntry, TtsVoice } from '../core/types';
 import { cacheSizeBytes, clearAudio } from './cache';
 import { neuralUnsupportedHint, supportsNeuralVoices } from './capabilities';
+import { useDownload } from './downloads';
+import { canRunKokoro, IOS_PHONE_VOICE_WARNING, startKokoroDownload } from './kokoroOffer';
 import {
   deleteUserEntry,
   expand,
@@ -11,13 +14,28 @@ import {
   saveUserEntry,
   setEntryEnabled,
 } from './lexicon';
+import {
+  DEFAULT_KOKORO_SID,
+  KOKORO_VOICE_SETTING as NATIVE_KOKORO_VOICE_SETTING,
+} from './native/kokoroSettings';
+import {
+  DEFAULT_KOKORO_VOICE,
+  KOKORO_VOICE_SETTING,
+  setKokoroVoice,
+} from './neural/kokoro';
+import { pocketEngine } from './neural/pocket';
+import { POCKET_VOICES } from './neural/pocketVoices';
+import { kokoroSizeMb, POCKET_SIZE_MB } from './neural/sizes';
+import { kokoroFor } from './registry';
 import { systemEngine } from './system';
-import VoiceTest from './VoiceTest';
+import VoiceTest, { VOICE_TEST_SENTENCE } from './VoiceTest';
 import './tts.css';
 
 export const TTS_ENGINE_SETTING = 'tts.engine';
 export const TTS_VOICE_SETTING = 'tts.voice.system';
 export const TTS_RATE_SETTING = 'tts.rate';
+/** Pocket keeps its own voice setting; the engine and the models panel both read it. */
+export const TTS_POCKET_VOICE_SETTING = 'tts.pocket.voice';
 
 export const TEST_SENTENCE = 'The half-life of CYP3A4 substrates rises with ketoconazole.';
 
@@ -40,12 +58,12 @@ const ENGINE_OPTIONS: { value: EngineChoice; label: string; hint: string }[] = [
   {
     value: 'pocket',
     label: 'Pocket TTS (on-device model)',
-    hint: 'A 148 MB model that runs on this device. Speed is limited to 0.80×–1.25× because it works by resampling.',
+    hint: `A ${POCKET_SIZE_MB} MB model that runs on this device. Speed is limited to 0.80×–1.25× because it works by resampling.`,
   },
   {
     value: 'kokoro',
     label: 'Kokoro (on-device model)',
-    hint: 'Kokoro-82M, 320 MB download. Faster than real-time on most phones.',
+    hint: `Kokoro-82M, ${kokoroSizeMb()} MB download. Faster than real-time on most phones.`,
   },
 ];
 
@@ -87,6 +105,21 @@ export function isEngineChoice(value: string): value is EngineChoice {
 
 export function engineHint(value: string): string {
   return (ENGINE_OPTIONS.find((o) => o.value === value) ?? ENGINE_OPTIONS[0]).hint;
+}
+
+/**
+ * Kokoro names its voices `accent + gender + name` (`af_heart`), which is unreadable
+ * in a picker. The web engine already carries the pretty name; the native one carries
+ * the raw one, so both go through this. Same wording as the models panel.
+ */
+function kokoroVoiceLabel(voice: TtsVoice): string {
+  const raw = /^[ab][fm]_/.test(voice.id) ? voice.id : voice.name;
+  const match = /^([ab])([fm])_(.+)$/.exec(raw);
+  if (!match) return `${voice.name} (${voice.lang})`;
+  const accent = match[1] === 'a' ? 'American' : 'British';
+  const gender = match[2] === 'f' ? 'female' : 'male';
+  const name = match[3].charAt(0).toUpperCase() + match[3].slice(1);
+  return `${name} · ${accent} ${gender} (${voice.lang})`;
 }
 
 function ErrorBanner({ message }: { message: string | null }) {
@@ -141,19 +174,70 @@ export function VoicePanel() {
   }, []);
 
   const engineValue: EngineChoice = isEngineChoice(engine) ? engine : 'auto';
-  // The downloaded voices need iOS 16.4+/a SIMD browser; a choice saved on one
-  // that cannot run them shows the voice that will actually speak.
+  // Pocket needs the web model; Kokoro is the native plugin on Android and the web
+  // worker everywhere else. A saved choice this device cannot run shows the voice
+  // that will actually speak.
   const neuralOk = useMemo(() => supportsNeuralVoices(), []);
-  // Android's Kokoro is the native plugin, not WebView WASM.
+  const kokoroOk = useMemo(() => canRunKokoro(), []);
+  const ios = useMemo(() => isIos(), []);
   const blocked = (value: string) =>
-    !neuralOk && (value === 'pocket' || (value === 'kokoro' && !Capacitor.isNativePlatform()));
+    value === 'pocket' ? !neuralOk : value === 'kokoro' ? !kokoroOk : false;
   const shownEngine: EngineChoice = blocked(engineValue) ? 'system' : engineValue;
-  const systemVoiceActive = shownEngine === 'system' || shownEngine === 'auto';
+  const systemVoiceActive = shownEngine === 'system';
+
+  const kokoroNative = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
+  const kokoro = useMemo(() => kokoroFor(), []);
+  const kokoroDownload = useDownload('kokoro');
+  const [kokoroReady, setKokoroReady] = useState<boolean | null>(null);
+  const [kokoroVoices, setKokoroVoices] = useState<TtsVoice[]>([]);
+  const pocketVoice = useSetting<string>(TTS_POCKET_VOICE_SETTING, POCKET_VOICES[0]?.id ?? 'alba');
+  const kokoroVoice = useSetting<string>(
+    kokoroNative ? NATIVE_KOKORO_VOICE_SETTING : KOKORO_VOICE_SETTING,
+    kokoroNative ? String(DEFAULT_KOKORO_SID) : DEFAULT_KOKORO_VOICE,
+  );
+
+  // The Kokoro list is only built while that engine is on screen. Its voices exist
+  // before the model is downloaded, but a list that cannot speak is a dead control:
+  // when the model is absent, the section shows one line and a Download action.
+  // The iPhone warning asks the same question ("is Kokoro downloaded?"), so the
+  // probe also runs while that warning is on screen.
+  const wantsKokoroState =
+    shownEngine === 'kokoro' || (ios && systemVoiceActive && kokoroOk);
+  useEffect(() => {
+    if (!wantsKokoroState) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const [ready, list] = await Promise.all([kokoro.isReady(), kokoro.listVoices()]);
+        if (!alive) return;
+        setKokoroReady(ready);
+        if (list.length > 0) setKokoroVoices(list);
+      } catch {
+        if (alive) setKokoroReady(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [wantsKokoroState, kokoro, kokoroDownload.status]);
+
+  const kokoroBusy =
+    kokoroDownload.status === 'downloading' || kokoroDownload.status === 'unpacking';
+  const kokoroPercent = Math.max(0, Math.min(100, Math.round(kokoroDownload.fraction * 100)));
+
+  function chooseKokoroVoice(voice: string): void {
+    if (kokoroNative) {
+      void setSetting(NATIVE_KOKORO_VOICE_SETTING, voice);
+      return;
+    }
+    void setKokoroVoice(voice);
+  }
+
   const voiceHint = systemVoiceActive
     ? voices.length > 0
       ? `${voices.length} system ${voices.length === 1 ? 'voice' : 'voices'} reported by this device.`
       : 'Voices are provided by the device; none were reported yet.'
-    : 'Used when the system engine speaks. The on-device model brings its own voices.';
+    : 'Used when the system engine speaks.';
 
   return (
     <div className="tts-panel">
@@ -189,43 +273,184 @@ export function VoicePanel() {
             {neuralUnsupportedHint()}
           </p>
         ) : null}
+        {ios && systemVoiceActive ? (
+          <div className="tts-ios-warning" role="note">
+            <p>{IOS_PHONE_VOICE_WARNING}</p>
+            {kokoroOk ? (
+              kokoroBusy ? (
+                <p className="field-hint" role="status">
+                  Downloading Kokoro — {kokoroPercent}%
+                </p>
+              ) : kokoroReady === false ? (
+                <button
+                  type="button"
+                  className="rd-banner-link"
+                  onClick={() => void startKokoroDownload()}
+                >
+                  Download Kokoro
+                </button>
+              ) : null
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
-      <div className="tts-field-grid">
+      {shownEngine === 'auto' ? (
+        <p className="field-hint">
+          Auto uses the best on-device voice when one is ready, and the phone voice
+          otherwise. Choose an engine to pick its voice.
+        </p>
+      ) : null}
+
+      {shownEngine === 'kokoro' ? (
         <div className="field">
-          <label className="field-label" htmlFor="tts-voice">
-            System voice
-          </label>
-          <select
-            id="tts-voice"
-            className="input"
-            value={voiceId}
-            disabled={!systemVoiceActive}
-            aria-describedby="tts-voice-hint"
-            onChange={(e) => void setSetting(TTS_VOICE_SETTING, e.target.value)}
-          >
-            <option value="">Device default</option>
-            {voices.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.name} ({v.lang})
-              </option>
-            ))}
-          </select>
-          <p className="field-hint" id="tts-voice-hint">
-            {voiceHint}
-          </p>
-          <VoiceTest
-            engine={systemEngine}
-            voiceId={voiceId}
-            rate={rate}
-            sample={TEST_SENTENCE}
-            tone="primary"
-            disabledReason={
-              systemVoiceActive ? null : 'The engine above is set to an on-device model.'
-            }
-          />
-          <p className="field-hint tts-test-sentence">Speaks: “{TEST_SENTENCE}”</p>
+          <span className="field-label">Kokoro voice</span>
+          {kokoroReady === null ? (
+            <p className="field-hint" role="status">
+              Checking Kokoro…
+            </p>
+          ) : kokoroReady === false ? (
+            <div className="tts-voice-absent">
+              <p>
+                Kokoro isn’t downloaded yet. Download it once ({kokoroSizeMb()} MB) and it
+                works offline after that.
+              </p>
+              {kokoroBusy ? (
+                <>
+                  <div
+                    className="progress"
+                    role="progressbar"
+                    aria-label="Kokoro download progress"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={kokoroPercent}
+                  >
+                    <span style={{ width: `${kokoroPercent}%` }} />
+                  </div>
+                  <p className="field-hint" role="status">
+                    Downloading Kokoro — {kokoroPercent}%
+                  </p>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => void startKokoroDownload()}
+                >
+                  Download Kokoro
+                </button>
+              )}
+              {kokoroDownload.status === 'error' ? (
+                <p className="field-hint" role="alert">
+                  {kokoroDownload.error ?? 'The download stopped before Kokoro was ready.'}
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <>
+              <ul className="tts-voice-list">
+                {kokoroVoices.map((voice) => (
+                  <li key={voice.id} className="tts-voice-option">
+                    <label className="tts-voice-choice">
+                      <input
+                        type="radio"
+                        className="tts-voice-radio"
+                        name="tts-kokoro-voice"
+                        value={voice.id}
+                        checked={kokoroVoice === voice.id}
+                        onChange={() => chooseKokoroVoice(voice.id)}
+                      />
+                      <span className="tts-voice-label">
+                        <span className="tts-voice-name">{kokoroVoiceLabel(voice)}</span>
+                        {kokoroVoice === voice.id ? (
+                          <span className="tts-voice-default">Default</span>
+                        ) : null}
+                      </span>
+                    </label>
+                    <div className="tts-voice-test">
+                      <VoiceTest
+                        engine={kokoro}
+                        voiceId={voice.id}
+                        rate={rate}
+                        sample={VOICE_TEST_SENTENCE}
+                      />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              <p className="field-hint">
+                The chosen voice is saved for every book.{' '}
+                <a href="#voice-models">Manage the model</a>.
+              </p>
+            </>
+          )}
         </div>
+      ) : null}
+
+      <div className="tts-field-grid">
+        {shownEngine === 'system' ? (
+          <div className="field">
+            <label className="field-label" htmlFor="tts-voice">
+              System voice
+            </label>
+            <select
+              id="tts-voice"
+              className="input"
+              value={voiceId}
+              aria-describedby="tts-voice-hint"
+              onChange={(e) => void setSetting(TTS_VOICE_SETTING, e.target.value)}
+            >
+              <option value="">Device default</option>
+              {voices.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.name} ({v.lang})
+                </option>
+              ))}
+            </select>
+            <p className="field-hint" id="tts-voice-hint">
+              {voiceHint}
+            </p>
+            <VoiceTest
+              engine={systemEngine}
+              voiceId={voiceId}
+              rate={rate}
+              sample={TEST_SENTENCE}
+              tone="primary"
+            />
+            <p className="field-hint tts-test-sentence">Speaks: “{TEST_SENTENCE}”</p>
+          </div>
+        ) : null}
+
+        {shownEngine === 'pocket' ? (
+          <div className="field">
+            <label className="field-label" htmlFor="tts-pocket-voice">
+              Pocket voice
+            </label>
+            <select
+              id="tts-pocket-voice"
+              className="input"
+              value={pocketVoice}
+              aria-describedby="tts-pocket-voice-hint"
+              onChange={(e) => void setSetting(TTS_POCKET_VOICE_SETTING, e.target.value)}
+            >
+              {POCKET_VOICES.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.name} ({v.lang})
+                </option>
+              ))}
+            </select>
+            <p className="field-hint" id="tts-pocket-voice-hint">
+              The voice the on-device Pocket model speaks with.
+            </p>
+            <VoiceTest
+              engine={pocketEngine}
+              voiceId={pocketVoice}
+              rate={rate}
+              sample={TEST_SENTENCE}
+            />
+            <p className="field-hint tts-test-sentence">Speaks: “{TEST_SENTENCE}”</p>
+          </div>
+        ) : null}
 
         <div className="field">
           <div className="tts-label-row">

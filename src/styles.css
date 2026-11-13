@@ -971,6 +971,16 @@ body:has(.sheet-backdrop) {
   flex: 1 1 8rem;
 }
 
+/* On a desk a sheet belongs to the reading column: a 1280px-wide row of two
+   buttons is not a sheet any more. Fixed + left/right 0 + auto margins centres it. */
+@media (min-width: 720px) {
+  .sheet {
+    max-width: var(--app-max);
+    margin-inline: auto;
+    border-inline: 1px solid var(--border);
+  }
+}
+
 @keyframes sheet-in {
   from {
     transform: translateY(12px);
@@ -1262,5 +1272,15 @@ details.disc-sub > summary:focus-visible {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+
+  /* A spinner stopped at the first frame reads as a hung screen, so the two
+     loading spinners keep turning — slowly. The page rules that ask for this
+     (library.css, reader.css) are plain declarations and lose to the `*` rule
+     above, which is `!important`; this is where the exception has to live. */
+  .lib-spinner,
+  .rd-spinner {
+    animation-duration: 1.6s !important;
+    animation-iteration-count: infinite !important;
   }
 }

@@ -17,6 +17,14 @@ import {
   WORD_HIGHLIGHT_KEY,
 } from './reading';
 import ReadingOptions from './ReadingOptions';
+import {
+  READ_ALONG_COLOUR_KEY,
+  READ_ALONG_COLOUR_VARS,
+  READ_ALONG_STRENGTH_KEY,
+  READ_ALONG_STYLE_KEY,
+  READ_ALONG_WORD_STRENGTH_KEY,
+  READ_ALONG_WORD_STYLE_KEY,
+} from './readAlong';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -254,5 +262,156 @@ describe('ReadingOptions', () => {
     await waitFor(async () => (await stored(WORD_HIGHLIGHT_KEY)) === false, 'word highlight off');
     await flush();
     expect(warned()).toBe(false);
+  });
+});
+
+describe('ReadingOptions: the read-along mark', () => {
+  function group(): HTMLElement {
+    return container.querySelector<HTMLElement>('fieldset.rd-ra')!;
+  }
+
+  /** The segmented control in the row with this label ("Sentence style", "Word mark"). */
+  function segRow(rowLabel: string): HTMLElement {
+    const rows = [...group().querySelectorAll<HTMLElement>('.rd-ra-row')];
+    const found = rows.find((row) => row.querySelector('.rd-opt-name')?.textContent === rowLabel);
+    if (!found) throw new Error(`no row labelled ${rowLabel}`);
+    return found;
+  }
+
+  function rowButton(rowLabel: string, label: string): HTMLButtonElement {
+    const found = [...segRow(rowLabel).querySelectorAll<HTMLButtonElement>('button.rd-seg-btn')].find(
+      (button) => button.textContent === label
+    );
+    if (!found) throw new Error(`no ${label} button in the ${rowLabel} row`);
+    return found;
+  }
+
+  /** Two sliders: the sentence's, then the spoken word's. */
+  function strength(index: number): HTMLInputElement {
+    return group().querySelectorAll<HTMLInputElement>('input[type="range"]')[index]!;
+  }
+
+  async function setStrength(input: HTMLInputElement, value: string): Promise<void> {
+    await act(async () => {
+      // React reads the value from the event target on change.
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
+
+  it('shows the sentence and word controls with their defaults and a live preview', async () => {
+    await render();
+
+    expect(group().querySelector('legend')?.textContent).toBe('Read-along highlight');
+    expect(group().getAttribute('data-ra-style')).toBe('fill');
+    expect(group().getAttribute('data-ra-word')).toBe('highlight');
+    expect(group().style.getPropertyValue('--ra-color')).toBe(READ_ALONG_COLOUR_VARS.yellow.fill);
+    expect(group().style.getPropertyValue('--ra-alpha')).toBe('30');
+    expect(group().style.getPropertyValue('--ra-word-alpha')).toBe('70');
+    expect(rowButton('Sentence style', 'Fill').getAttribute('aria-pressed')).toBe('true');
+    expect(rowButton('Word mark', 'Highlight').getAttribute('aria-pressed')).toBe('true');
+    expect(
+      group().querySelector('[aria-label="Yellow read-along colour"]')?.getAttribute('aria-pressed')
+    ).toBe('true');
+
+    // The preview is the real sentence span with a real word mark, so it shows
+    // both layers as the reader will see them.
+    expect(group().querySelector('.rd-ra-preview .rd-s.reading')?.textContent).toContain(
+      'sentence being read'
+    );
+    expect(group().querySelector('.rd-ra-preview .rd-word')?.textContent).toBe('sentence');
+
+    const sentence = strength(0);
+    expect(sentence.min).toBe('10');
+    expect(sentence.max).toBe('60');
+    expect(sentence.step).toBe('5');
+    expect(sentence.value).toBe('30');
+    expect(group().textContent).toContain('30%');
+
+    const word = strength(1);
+    expect(word.min).toBe('30');
+    expect(word.max).toBe('100');
+    expect(word.step).toBe('5');
+    expect(word.value).toBe('70');
+    expect(group().textContent).toContain('70%');
+  });
+
+  it('stores the style, the colour and the strength from the controls', async () => {
+    await render();
+
+    await act(async () => {
+      rowButton('Sentence style', 'Underline').click();
+    });
+    await waitFor(async () => (await stored(READ_ALONG_STYLE_KEY)) === 'underline', 'style stored');
+    await waitFor(() => group().getAttribute('data-ra-style') === 'underline', 'preview underlined');
+    expect(rowButton('Sentence style', 'Underline').getAttribute('aria-pressed')).toBe('true');
+
+    await act(async () => {
+      group().querySelector<HTMLButtonElement>('[aria-label="Blue read-along colour"]')!.click();
+    });
+    await waitFor(async () => (await stored(READ_ALONG_COLOUR_KEY)) === 'blue', 'colour stored');
+    await waitFor(
+      () => group().style.getPropertyValue('--ra-color') === READ_ALONG_COLOUR_VARS.blue.fill,
+      'preview recoloured'
+    );
+    expect(
+      group().querySelector('[aria-label="Blue read-along colour"]')?.getAttribute('aria-pressed')
+    ).toBe('true');
+
+    await setStrength(strength(0), '55');
+    await waitFor(async () => (await stored(READ_ALONG_STRENGTH_KEY)) === 55, 'strength stored');
+    await waitFor(() => group().style.getPropertyValue('--ra-alpha') === '55', 'preview stronger');
+    expect(group().textContent).toContain('55%');
+  });
+
+  it('stores the word mark and the word strength from the controls', async () => {
+    await render();
+
+    await act(async () => {
+      rowButton('Word mark', 'Underline').click();
+    });
+    await waitFor(
+      async () => (await stored(READ_ALONG_WORD_STYLE_KEY)) === 'underline',
+      'word mark stored'
+    );
+    await waitFor(() => group().getAttribute('data-ra-word') === 'underline', 'preview ruled');
+    expect(rowButton('Word mark', 'Underline').getAttribute('aria-pressed')).toBe('true');
+    // The sentence keeps its own mark while the word changes.
+    expect(rowButton('Sentence style', 'Fill').getAttribute('aria-pressed')).toBe('true');
+
+    await setStrength(strength(1), '90');
+    await waitFor(
+      async () => (await stored(READ_ALONG_WORD_STRENGTH_KEY)) === 90,
+      'word strength stored'
+    );
+    await waitFor(() => group().style.getPropertyValue('--ra-word-alpha') === '90', 'word stronger');
+    expect(group().textContent).toContain('90%');
+  });
+
+  it('points at the word-highlight switch when word marking is off', async () => {
+    await db.settings.put({ key: WORD_HIGHLIGHT_KEY, value: false });
+    await render();
+
+    await waitFor(
+      () => (group().textContent ?? '').includes('Word marking is off'),
+      'the off note shown'
+    );
+    expect(group().textContent).toContain('Highlight the word being spoken');
+    // The controls stay usable while it is off.
+    expect(rowButton('Word mark', 'Highlight')).toBeTruthy();
+    expect(strength(1).disabled).toBe(false);
+  });
+
+  it('shows a stored value outside the range as the nearest allowed one', async () => {
+    await db.settings.put({ key: READ_ALONG_STRENGTH_KEY, value: 200 });
+    await db.settings.put({ key: READ_ALONG_COLOUR_KEY, value: 'purple' });
+    await render();
+
+    await waitFor(() => group().style.getPropertyValue('--ra-alpha') === '60', 'strength clamped');
+    await waitFor(
+      () => group().style.getPropertyValue('--ra-color') === READ_ALONG_COLOUR_VARS.yellow.fill,
+      'colour fallback'
+    );
   });
 });

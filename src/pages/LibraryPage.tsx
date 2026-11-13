@@ -3,11 +3,15 @@ import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'rea
 import { Link, useNavigate } from 'react-router-dom';
 import { db } from '../core/db';
 import { pushBackHandler } from '../core/backButton';
-import { setSetting, useSetting } from '../core/settings';
+import { getSetting, setSetting, useSetting } from '../core/settings';
 import type { BookRecord, ColumnMode } from '../core/types';
 import { checkForUpdate, dismissUpdate, type UpdateRelease } from '../core/updateCheck';
 import { APP_VERSION } from '../core/version';
-import { deleteBook, importFileDetailed, importText, importUrl, setBookColumns } from '../import';
+import { deleteBook, detectFormat, importFileDetailed, importText, importUrl, setBookColumns } from '../import';
+import { IMPORT_LAYOUT_KEY, canRunLayoutModel, layoutForChoice, type ImportLayoutChoice } from '../import/importLayout';
+import ImportLayoutSheet from '../import/ImportLayoutSheet';
+import { isLayoutModelReady } from '../import/layout/model';
+import type { LayoutMode } from '../import/pdf';
 import '../import/library.css';
 import InstallHint from '../components/InstallHint';
 import { LAST_BOOK_KEY, type LastBook } from '../reader/lastBook';
@@ -39,6 +43,12 @@ const COLUMN_OPTIONS: { value: ColumnMode; label: string }[] = [
 
 /** An import note, split so the banner can lead with the file it belongs to. */
 type Warning = { file: string; message: string; scanned: boolean };
+
+/** The reader's answer to the PDF import question. */
+type ImportAnswer = { choice: 'textbook' | 'simple'; remember: boolean; note?: string };
+
+/** What the import question needs to draw itself, once per pick. */
+type ImportQuestion = { count: number; modelReady: boolean };
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -310,6 +320,9 @@ export default function LibraryPage() {
   const [errors, setErrors] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<Warning[]>([]);
   const [panel, setPanel] = useState<'none' | 'web' | 'text'>('none');
+  // The PDF question an import is waiting on, and the promise that resumes it.
+  const [question, setQuestion] = useState<ImportQuestion | null>(null);
+  const answerRef = useRef<((answer: ImportAnswer | null) => void) | null>(null);
   // The row whose "more" sheet is open, plus the button that opened it so focus
   // can come back to the same row when the sheet closes.
   const [menuBook, setMenuBook] = useState<BookRecord | null>(null);
@@ -375,6 +388,22 @@ export default function LibraryPage() {
     setUpdate(null);
   }
 
+  /** Show the PDF question and wait for the reader's answer. */
+  function askLayout(asked: ImportQuestion): Promise<ImportAnswer | null> {
+    return new Promise((resolve) => {
+      answerRef.current = resolve;
+      setQuestion(asked);
+    });
+  }
+
+  /** Close the question; `null` means it was dismissed. */
+  function answerLayout(answer: ImportAnswer | null): void {
+    setQuestion(null);
+    const resolve = answerRef.current;
+    answerRef.current = null;
+    resolve?.(answer);
+  }
+
   async function handleFiles(list: FileList | null) {
     const files = Array.from(list ?? []);
     if (!files.length || busy) return;
@@ -382,12 +411,66 @@ export default function LibraryPage() {
     setErrors([]);
     setWarnings([]);
 
+    // The question is for PDFs only: every other format is read from its own
+    // structure. It is asked once and applies to every PDF in the pick.
+    const pdfs = files.filter((file) => detectFormat(file) === 'pdf');
+    let pdfLayout: LayoutMode | undefined;
+    let layoutNote: string | undefined;
+
+    if (pdfs.length) {
+      const mode = await getSetting<LayoutMode>('import.layout', 'auto').catch(() => 'auto' as LayoutMode);
+      const stored = await getSetting<ImportLayoutChoice>(IMPORT_LAYOUT_KEY, 'ask').catch(
+        () => 'ask' as ImportLayoutChoice,
+      );
+
+      if (mode === 'heuristic') {
+        // The reader already turned the model off device-wide: there is nothing
+        // to ask, and a download here would contradict their choice.
+        pdfLayout = 'heuristic';
+      } else if (canRunLayoutModel() && stored === 'ask') {
+        const modelReady = await isLayoutModelReady();
+        setStatus(
+          pdfs.length === 1 ? `Getting ${pdfs[0].name} ready…` : `Getting ${pdfs.length} PDFs ready…`,
+        );
+        const answer = await askLayout({ count: pdfs.length, modelReady });
+        if (!answer) {
+          // Dismissed: the whole pick is dropped, so nothing lands half-imported.
+          setStatus(null);
+          if (fileInput.current) fileInput.current.value = '';
+          return;
+        }
+        if (answer.remember) void setSetting(IMPORT_LAYOUT_KEY, answer.choice).catch(() => undefined);
+        pdfLayout = layoutForChoice(answer.choice);
+        layoutNote = answer.note;
+      } else if (stored !== 'ask') {
+        // A remembered answer, or a device that cannot store the model, is used
+        // without a sheet — the same import a return visit gets.
+        pdfLayout = layoutForChoice(stored);
+      }
+
+      // Wanted the model but it is not here: the import still happens, and the
+      // warning says what actually read the book.
+      if (pdfLayout === 'auto' && !layoutNote && !(await isLayoutModelReady())) {
+        layoutNote =
+          'The layout model is not downloaded, so the text layout was used instead. Download it in Settings → PDF layout.';
+      }
+
+      if (layoutNote) {
+        const file = pdfs.length === 1 ? pdfs[0].name : `${pdfs.length} PDFs`;
+        setWarnings([{ file, message: layoutNote, scanned: false }]);
+      }
+    }
+
     for (let index = 0; index < files.length; index++) {
       const file = files[index];
       const prefix = files.length > 1 ? `Importing ${index + 1} of ${files.length}: ${file.name}` : `Importing ${file.name}`;
       setStatus(`${prefix}…`);
       try {
-        const result = await importFileDetailed(file, (note) => setStatus(`${prefix} — ${note}…`));
+        const result = await importFileDetailed(
+          file,
+          (progressNote) => setStatus(`${prefix} — ${progressNote}…`),
+          { pdfLayout: detectFormat(file) === 'pdf' ? pdfLayout : undefined },
+        );
         const warning = result.warning;
         if (warning) {
           setWarnings((current) => [
@@ -482,6 +565,7 @@ export default function LibraryPage() {
             className={continueBook ? 'btn btn-secondary' : 'btn btn-primary'}
             onClick={() => fileInput.current?.click()}
             disabled={busy}
+            data-tour="import"
           >
             Import
           </button>
@@ -496,8 +580,6 @@ export default function LibraryPage() {
           />
         </div>
       </header>
-      <InstallHint />
-      <ModelStatusBanner context="library" />
 
       {update ? (
         <div className="banner banner-info lib-update">
@@ -530,7 +612,7 @@ export default function LibraryPage() {
         </div>
       ) : null}
 
-      <div className="toolbar lib-actions">
+      <div className="toolbar lib-actions" data-tour="add-other">
         <button
           type="button"
           className="btn btn-ghost"
@@ -661,28 +743,6 @@ export default function LibraryPage() {
         </p>
       ) : null}
 
-      {showBackupReminder ? (
-        <div className="banner banner-info lib-backup">
-          <div className="lib-backup-body">
-            <p className="banner-title">
-              <Link to="/settings#backup">Back up your notes and cards</Link>
-            </p>
-            <p>
-              Highlights, cards and reading positions live on this phone only. An export is the copy that survives a
-              lost or reset phone.
-            </p>
-          </div>
-          <button
-            type="button"
-            className="btn btn-ghost btn-icon lib-backup-close"
-            aria-label="Dismiss the backup reminder"
-            onClick={dismissBackupReminder}
-          >
-            <CloseIcon />
-          </button>
-        </div>
-      ) : null}
-
       {loading ? (
         <ul className="lib-list lib-skeleton" aria-hidden="true">
           {[0, 1, 2].map((row) => (
@@ -731,7 +791,7 @@ export default function LibraryPage() {
             const chapters = chapterCount(book);
 
             return (
-              <li className="lib-row" key={book.id}>
+              <li className="lib-row" key={book.id} data-tour="book-row">
                 <Link className="lib-open" to={`/read/${book.id}`}>
                   <span className="lib-row-top">
                     <span className="badge">{FORMAT_LABEL[book.format] ?? book.format.toUpperCase()}</span>
@@ -780,6 +840,32 @@ export default function LibraryPage() {
         </ul>
       )}
 
+      {/* Tips and reminders come after the shelf: the books are the page. */}
+      <InstallHint />
+      <ModelStatusBanner context="library" />
+
+      {showBackupReminder ? (
+        <div className="banner banner-info lib-backup">
+          <div className="lib-backup-body">
+            <p className="banner-title">
+              <Link to="/settings#backup">Back up your notes and cards</Link>
+            </p>
+            <p>
+              Highlights, cards and reading positions live on this phone only. An export is the copy that survives a
+              lost or reset phone.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon lib-backup-close"
+            aria-label="Dismiss the backup reminder"
+            onClick={dismissBackupReminder}
+          >
+            <CloseIcon />
+          </button>
+        </div>
+      ) : null}
+
       {menuBook && (
         <BookActionsSheet
           book={menuBook}
@@ -789,6 +875,15 @@ export default function LibraryPage() {
             closeBookMenu();
             void handleDelete(book);
           }}
+        />
+      )}
+
+      {question && (
+        <ImportLayoutSheet
+          count={question.count}
+          modelReady={question.modelReady}
+          onAnswer={(choice, remember, note) => answerLayout({ choice, remember, note })}
+          onCancel={() => answerLayout(null)}
         />
       )}
     </section>

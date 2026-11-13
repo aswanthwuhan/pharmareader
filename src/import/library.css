@@ -87,10 +87,13 @@
   border-top: 1px solid var(--border);
 }
 
+/* The whole text block is one link and the More button is 44px: a 4px seam
+   between two targets is a mis-tap on the row you tap most, so the seam is a
+   full step of the scale (the link's own right padding adds the rest). */
 .lib-row {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
   border-bottom: 1px solid var(--border);
 }
 
@@ -212,6 +215,142 @@
   color: var(--danger);
 }
 
+/* --- The PDF import question ---------------------------------------------- */
+/* Two whole-row choices rather than a radio list: the answer decides how the
+   book is read, so each option carries its own sentence and the whole row is
+   the touch target. */
+.import-sheet-lead {
+  margin: 0;
+}
+
+.import-choices {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.import-choice {
+  display: grid;
+  gap: var(--space-1);
+  width: 100%;
+  min-height: var(--tap);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-1) var(--ease-standard),
+    border-color var(--dur-1) var(--ease-standard);
+}
+
+.import-choice:hover {
+  border-color: var(--border-control);
+  background: var(--surface-sunken);
+}
+
+.import-choice:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+/* The recommended answer, marked as such rather than silently pre-chosen. */
+.import-choice-primary {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.import-choice-primary:hover {
+  border-color: var(--accent-hover);
+}
+
+.import-choice-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.import-choice-title {
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-snug);
+}
+
+.import-choice-badge {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  line-height: 1.6;
+  letter-spacing: 0.02em;
+}
+
+.import-choice-note {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-snug);
+}
+
+.import-sheet-model {
+  margin-top: var(--space-3);
+}
+
+.import-sheet-progress {
+  display: grid;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+}
+
+.import-sheet-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--lh-snug);
+}
+
+/* Same row, checkbox and shadowing as the update opt-in: the checkbox is the
+   control, the whole sentence is the target. */
+.import-remember {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  margin-top: var(--space-4);
+  padding: var(--space-1) 0;
+  min-height: 48px;
+  cursor: pointer;
+}
+
+.import-remember input {
+  flex: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin: 0.15rem 0 0;
+  accent-color: var(--accent);
+}
+
+.import-remember-text {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.import-remember-label {
+  font-size: var(--fs-base);
+  line-height: var(--lh-snug);
+}
+
+.import-remember .field-hint {
+  margin-top: 0;
+}
+
 /* --- Loading -------------------------------------------------------------- */
 .lib-skeleton .lib-row {
   padding: var(--space-4) 0;
@@ -239,7 +378,7 @@
 
 /* The last book opened, offered above the shelf as the one primary action. */
 .lib-continue {
-  margin: var(--space-4) 0 var(--space-3);
+  margin: 0;
 }
 
 .lib-continue-btn {
@@ -258,7 +397,7 @@
    week so it can never become nagging. */
 .lib-backup {
   align-items: flex-start;
-  margin: 0 0 var(--space-4);
+  margin: 0;
 }
 
 .lib-backup .banner-title a {

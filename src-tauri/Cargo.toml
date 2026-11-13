@@ -1,6 +1,6 @@
 [package]
 name = "pharmareader"
-version = "0.3.5"
+version = "0.4.0"
 description = "PharmaReader desktop shell (offline reader for MD Pharmacology study material)"
 authors = ["AuraPharmLab"]
 license = "GPL-3.0-only"

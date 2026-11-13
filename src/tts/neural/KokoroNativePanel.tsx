@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { setSetting, useSetting } from '../../core/settings';
 import type { TtsVoice } from '../../core/types';
-import { resetDownload, startDownload, useDownload, type DownloadReporter } from '../downloads';
+import { resetDownload, startDownload, useDownload } from '../downloads';
 import { TTS_RATE_SETTING } from '../TtsSettings';
 import VoiceTest from '../VoiceTest';
 import {
@@ -32,23 +32,20 @@ import {
   KOKORO_REQUIRED_BYTES,
   downloadLabel,
   downloadStageOf,
-  followRunningDownload,
   formatBytes,
-  isBusyError,
   meteredWarning,
   modelArchiveBytes,
   modelState,
   resumeFraction,
   storageWarning,
-  tagDownloadStage,
   type KokoroModelKey,
 } from '../native/kokoroDownload';
-import { measureRtf, rtfSettingKey } from './benchmark';
+import { KOKORO_DOWNLOAD_ID, runKokoroNativeDownload } from '../native/kokoroDownloadCore';
+import { rtfSettingKey } from './benchmark';
 import {
   copyText,
   describeKokoroFailure,
   type KokoroFailure,
-  type KokoroStage,
 } from '../native/kokoroFailure';
 import { isKokoroNativeAvailable, Kokoro, type KokoroStatus } from '../native/kokoroPlugin';
 import '../tts.css';
@@ -57,8 +54,8 @@ import '../tts.css';
 import './kokoro-native.css';
 
 const ATTRIBUTION = 'Kokoro-82M by hexgrad (Apache-2.0) via sherpa-onnx (Apache-2.0)';
-/** The one native model download, shared by every mount of this panel. */
-export const KOKORO_DOWNLOAD_ID = 'kokoro';
+/** Re-exported so every existing caller and test can keep importing it from the panel. */
+export { KOKORO_DOWNLOAD_ID };
 const SPEED_TEST_SENTENCE =
   'The half-life of digoxin is about thirty-six hours, prolonged in renal failure.';
 const THREAD_OPTIONS = [1, 2, 4] as const;
@@ -183,71 +180,12 @@ export default function KokoroNativePanel(): React.JSX.Element {
     return () => window.clearTimeout(timer);
   }, [copied]);
 
-  /**
-   * Download the archive, then load the model — outside the component, so leaving
-   * Settings cannot stop it. The native plugin downloads on its own io thread and
-   * keeps going after the WebView stops listening.
-   */
-  const runDownload = useCallback(async (report: DownloadReporter): Promise<void> => {
-    const forward = (stage: KokoroStage): void => {
-      if (stage === 'download' || stage === 'unpack' || stage === 'load') report({ stage });
-    };
-    // The catch needs the stage that actually failed, not the last rendered one.
-    let failedAt: KokoroStage = 'status';
-    const attempt = async (): Promise<void> => {
-      await kokoroNativeEngine.prepare(
-        (value) => report({ fraction: clamp01(value) }),
-        (next) => {
-          failedAt = next;
-          forward(next);
-        }
-      );
-    };
-
-    try {
-      await attempt();
-      // 'auto' engine choice only picks a model with a stored RTF, so measure right away.
-      void measureRtf(kokoroNativeEngine).catch(() => undefined);
-      return;
-    } catch (err) {
-      // BUSY is not a failure: the plugin refused a second download because the
-      // first one (a previous mount, or the native side itself) is still running.
-      // Wait for that one instead of reporting "download error".
-      if (!isBusyError(err)) throw tagDownloadStage(err, failedAt);
-    }
-
-    report({ stage: 'download' });
-    try {
-      await followRunningDownload({
-        status: () => Kokoro.status({ model: DEFAULT_KOKORO_MODEL }),
-        listen: async (onFraction) => {
-          const handle = await Kokoro.addListener('downloadProgress', (progress) =>
-            onFraction(progress.fraction)
-          );
-          return () => {
-            void handle.remove().catch(() => undefined);
-          };
-        },
-        onProgress: (value) => report({ fraction: value }),
-        onUnpacking: () => {
-          failedAt = 'unpack';
-          forward('unpack');
-        },
-      });
-      // The archive is complete; load it the way the first call would have.
-      failedAt = 'load';
-      await attempt();
-    } catch (err) {
-      throw tagDownloadStage(err, failedAt);
-    }
-  }, []);
-
   /** Start (or resume) the download of the model; `prepare()` fetches fp32. */
   const downloadNow = async (): Promise<void> => {
     setFailure(null);
     setMeasure(null);
     setCopied('idle');
-    void startDownload(KOKORO_DOWNLOAD_ID, runDownload);
+    void startDownload(KOKORO_DOWNLOAD_ID, runKokoroNativeDownload);
   };
 
   const remove = async (model?: KokoroModelKey): Promise<void> => {

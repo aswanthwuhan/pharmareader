@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.4.0 — 2026-11-13
+Android, Windows and the web app. Installs over 0.3.x without losing data.
+
+**New — a guided tour**
+- A first-time tour lights up each real control and says what it does: importing, the player, Text and Page view, highlights and cards, voices, PDF layout and backup. Skip it any time; replay it from Settings → About → How to use PharmaReader.
+
+**Changed — the reader gives the page the screen**
+- The player is one row (speed, previous, play, next, position, more) and the PDF page controls are one row under the page. On a small phone the page gets about half as much height again, and runs edge to edge.
+- A PDF now opens on the printed page. Text is one tap away, and the choice is remembered per book.
+- The Library lists your books first; tips and reminders sit below them. Sheets stay inside the reading column on wide screens.
+- Small-phone fixes across the app: touch targets under 44 px, controls set too close together, a Syllabus menu that ran off short screens, and loading spinners that froze with reduced motion on.
+
+**Changed — the read-along highlight no longer covers the words**
+- The sentence being read has a light wash with no box around it, and the word being spoken is a stronger band of the same colour. Page view now marks the spoken word too.
+- You choose the colour, fill or underline, and the strength of both, in Aa in the reader or Settings → Reading aloud.
+
+**Changed — Kokoro is the recommended voice**
+- The voice button in the reader offers Kokoro without leaving the book: one download, then it works offline, and it takes over from the next sentence. The app asks once on the first Play; the phone voice keeps reading if you say not now.
+- Settings → Voice shows the voices of the selected engine only. Kokoro voices can be tested and one set as the default there.
+- On iPhone and iPad the app warns that the phone voice may not start and recommends Kokoro where the device can run it.
+
+**New — PDF layout detection, asked at import**
+- Importing a PDF asks what kind it is. Textbook or complex pages uses layout detection so columns and tables are read in order (the model downloads once if needed); Simple book skips it.
+- Settings → PDF layout can run layout detection on any PDF already in the Library.
+
+**New — save audio for several chapters**
+- Playback options → Save audio for more… queues several chapters, or a page range in a PDF, to be rendered ahead and kept for offline play. Chapters already saved with the current voice are marked.
+
 ## 0.3.10 — 2026-11-13
 Web app only (GitHub Pages). Installs over 0.3.9 without losing data.
 

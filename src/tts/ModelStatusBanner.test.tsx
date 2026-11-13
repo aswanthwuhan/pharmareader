@@ -16,6 +16,7 @@ const harness = vi.hoisted(() => {
     kokoroReady: false,
     preferred: false,
     native: false,
+    platform: 'android',
     voices: [] as unknown[],
   };
 
@@ -49,7 +50,7 @@ const harness = vi.hoisted(() => {
 vi.mock('@capacitor/core', () => ({
   Capacitor: {
     isNativePlatform: () => harness.state.native,
-    getPlatform: () => 'android',
+    getPlatform: () => harness.state.platform,
   },
 }));
 
@@ -127,7 +128,9 @@ beforeEach(() => {
   harness.state.kokoroReady = false;
   harness.state.preferred = false;
   harness.state.native = false;
+  harness.state.platform = 'android';
   harness.state.voices = [];
+  useUserAgent(DESKTOP_UA);
 });
 
 afterEach(async () => {
@@ -138,6 +141,16 @@ afterEach(async () => {
   await db.delete();
   await db.open();
 });
+
+// `isIos()` reads the user agent, so an iPhone is a property of the test, not of jsdom.
+const IPHONE_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+const DESKTOP_UA =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+function useUserAgent(userAgent: string): void {
+  Object.defineProperty(navigator, 'userAgent', { value: userAgent, configurable: true });
+}
 
 describe('ModelStatusBanner', () => {
   it('warns when the chosen model is missing and names the built-in voice fallback', async () => {
@@ -183,10 +196,12 @@ describe('ModelStatusBanner', () => {
 
     const banner = view.querySelector('.banner-info');
     expect(banner).not.toBeNull();
+    // The iPhone headline belongs to the iPhone only.
+    expect(banner!.querySelector('.banner-title')).toBeNull();
     // The reader's short-window query hides the tip by this attribute.
     expect(banner!.getAttribute('data-dismissible')).toBe('true');
     expect(banner!.textContent).toContain(
-      "Using your phone's built-in voice. Download Kokoro or Pocket TTS in Settings for a more natural voice.",
+      "Using your phone's built-in voice. Kokoro is higher quality and sounds more natural — download it once, and it works offline.",
     );
 
     const dismiss = banner!.querySelector<HTMLButtonElement>('button[aria-label="Dismiss tip"]');
@@ -287,5 +302,79 @@ describe('ModelStatusBanner', () => {
     const view = await mount();
 
     expect(view.querySelector('.banner-error')).toBeNull();
+  });
+
+  it('warns an iPhone that the phone voice may not work, and offers Kokoro', async () => {
+    useUserAgent(IPHONE_UA);
+    await setSetting('tts.engine', 'auto');
+    const view = await mount();
+
+    // Never the dismissible tip: the reader hides those in Page view and short windows.
+    expect(view.querySelector('.banner-info')).toBeNull();
+    const banner = view.querySelector('.banner-warning');
+    expect(banner).not.toBeNull();
+    expect(banner!.querySelector('.banner-title')?.textContent).toBe(
+      'The phone voice may not work on iPhone and iPad',
+    );
+    expect(banner!.textContent).toContain(
+      'Safari does not always start the built-in voice. Kokoro runs inside the app, sounds more natural, and is the recommended voice here.',
+    );
+    expect(banner!.getAttribute('data-dismissible')).toBeNull();
+    expect(banner!.querySelector('button[aria-label="Dismiss tip"]')).toBeNull();
+    expect(banner!.textContent).toContain(
+      'Every downloadable voice is listed and can be tested in Settings → On-device voice models.',
+    );
+
+    // The action opens the Kokoro sheet instead of leaving the page.
+    const action = banner!.querySelector<HTMLButtonElement>('button.rd-banner-link');
+    expect(action?.textContent).toBe('Download Kokoro');
+    await act(async () => {
+      action!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(view.querySelector('.voice-prompt')).not.toBeNull();
+  });
+
+  it('warns on an iPhone when the System voices are the chosen engine', async () => {
+    useUserAgent(IPHONE_UA);
+    await setSetting('tts.engine', 'system');
+    const view = await mount();
+
+    const banner = view.querySelector('.banner-warning');
+    expect(banner?.querySelector('.banner-title')?.textContent).toBe(
+      'The phone voice may not work on iPhone and iPad',
+    );
+    expect(banner?.getAttribute('data-dismissible')).toBeNull();
+  });
+
+  it('asks for a newer iOS instead of offering Kokoro where it cannot run', async () => {
+    useUserAgent(IPHONE_UA);
+    // A native iOS shell has no Kokoro engine, which is also what an older Safari
+    // reports (no lookbehind, no SIMD): the same gate decides both.
+    harness.state.native = true;
+    harness.state.platform = 'ios';
+    await setSetting('tts.engine', 'system');
+    const view = await mount();
+
+    const banner = view.querySelector('.banner-warning');
+    expect(banner).not.toBeNull();
+    expect(banner!.querySelector('.banner-title')?.textContent).toBe(
+      'The phone voice may not work on iPhone and iPad',
+    );
+    expect(banner!.textContent).toContain(
+      "Needs iOS 16.4 or newer — your phone's built-in voice still works.",
+    );
+    expect(banner!.textContent).not.toContain('Download Kokoro');
+    expect(banner!.querySelector('button')).toBeNull();
+    expect(banner!.getAttribute('data-dismissible')).toBeNull();
+  });
+
+  it('says nothing on an iPhone once Kokoro is the engine', async () => {
+    useUserAgent(IPHONE_UA);
+    harness.state.kokoroReady = true;
+    harness.state.preferred = true;
+    await setSetting('tts.engine', 'kokoro');
+    const view = await mount();
+
+    expect(view.querySelector('.banner')).toBeNull();
   });
 });

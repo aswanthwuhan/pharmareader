@@ -12,12 +12,11 @@ import { planChunks } from '../neural/clauseChunk';
 import { splitForModel } from '../neural/modelText';
 import { modelState, type KokoroModelKey } from './kokoroDownload';
 import type { KokoroStage } from './kokoroFailure';
+import { DEFAULT_KOKORO_SID, KOKORO_VOICE_SETTING } from './kokoroSettings';
 import { isKokoroNativeAvailable, Kokoro, type KokoroStatus } from './kokoroPlugin';
 import { joinWavs } from './wavJoin';
 
-/** Voice used when nothing is configured: `af_heart` (sid 3). */
-export const DEFAULT_KOKORO_SID = 3;
-export const KOKORO_VOICE_SETTING = 'tts.voice.kokoro';
+export { DEFAULT_KOKORO_SID, KOKORO_VOICE_SETTING };
 export const KOKORO_THREADS_SETTING = 'tts.kokoro.threads';
 /**
  * Two threads: the model runs at roughly 0.75x real time on a mid-range phone without

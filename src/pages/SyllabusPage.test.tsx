@@ -37,6 +37,7 @@ afterEach(async () => {
     root = null;
   }
   container.remove();
+  vi.restoreAllMocks();
   await db.delete();
   await db.open();
 });
@@ -64,5 +65,65 @@ describe('SyllabusPage progress cost', () => {
 
     expect(container.querySelectorAll('.syl-node')).toHaveLength(26);
     expect(progress.topicProgressAll).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('SyllabusPage actions menu', () => {
+  it('flips above the button when the menu would run off a short screen', async () => {
+    // jsdom lays nothing out, so the menu's real bottom is faked; the page
+    // reads it after the menu mounts and decides whether to flip it.
+    let bottom = 120;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const height = this.classList.contains('syl-menu') ? 140 : 20;
+      return {
+        top: this.classList.contains('syl-menu') ? bottom - height : 0,
+        bottom,
+        left: 0,
+        right: 200,
+        width: 200,
+        height,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+
+    await act(async () => {
+      root?.render(
+        <MemoryRouter>
+          <SyllabusPage />
+        </MemoryRouter>,
+      );
+    });
+    await waitFor(() => container.textContent?.includes('General Pharmacology') ?? false, 'the domain list');
+
+    // A row only offers its actions once it is open.
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.syl-twisty')?.click();
+    });
+    await waitFor(() => container.querySelector('.syl-menu-btn') !== null, 'the Actions button');
+    const actions = container.querySelector<HTMLButtonElement>('.syl-menu-btn')!;
+
+    // Room to spare: the menu hangs below the button, as it always has.
+    await act(async () => {
+      actions.click();
+    });
+    await waitFor(() => container.querySelector('.syl-menu') !== null, 'the first menu');
+    expect(container.querySelector('.syl-menu')?.hasAttribute('data-placement')).toBe(false);
+
+    // A menu whose bottom is past the viewport flips to open upwards; the
+    // placement is re-measured for every menu, not remembered from the last.
+    await act(async () => {
+      actions.click();
+    });
+    await waitFor(() => container.querySelector('.syl-menu') === null, 'the menu closed');
+    bottom = window.innerHeight + 40;
+    await act(async () => {
+      actions.click();
+    });
+    await waitFor(
+      () => container.querySelector(".syl-menu[data-placement='up']") !== null,
+      'the menu flipped upwards',
+    );
   });
 });

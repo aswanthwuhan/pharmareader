@@ -6,6 +6,7 @@ import { db } from '../core/db';
 import { installBackBridge } from '../core/backButton';
 import type { BookRecord } from '../core/types';
 import ReaderView from './ReaderView';
+import { READ_ALONG_COLOUR_KEY, READ_ALONG_STYLE_KEY } from './readAlong';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -67,11 +68,18 @@ vi.mock('../tts/registry', () => ({
     engine: {
       id: registryMock.engineId,
       label: registryMock.engineId === 'system' ? 'System voices' : 'Kokoro',
-      capabilities: { streaming: true, prerender: false, wordBoundaries: true, needsDownload: false },
+      capabilities: {
+        streaming: true,
+        // Kokoro is the engine that can store audio; the phone voice cannot.
+        prerender: registryMock.engineId === 'kokoro',
+        wordBoundaries: true,
+        needsDownload: false,
+      },
       isReady: async () => true,
       prepare: async () => undefined,
       listVoices: async () => [],
       speak: async () => undefined,
+      synthesize: async () => undefined,
       stop() {},
       pause() {},
       resume() {},
@@ -82,6 +90,113 @@ vi.mock('../tts/registry', () => ({
 // pdfjs is only reached through the lazily loaded page view, but mock it so a
 // stray import can never touch a real worker or canvas in jsdom. The page view
 // loads the legacy build plus a worker wrapper module (see src/import/pdfWorker.ts).
+// The single-chapter action and the queue both render through this binding. The
+// fake records the chapters it was asked for, can hold a chapter mid-save, and
+// marks a sentence saved exactly like `putAudio` would.
+const prerenderMock = vi.hoisted(() => {
+  type Progress = {
+    done: number;
+    total: number;
+    synthesised: number;
+    skipped: number;
+    failed: number;
+    id: string;
+  };
+  type Report = {
+    aborted: boolean;
+    done: number;
+    total: number;
+    synthesised: number;
+    skipped: number;
+    failed: number;
+    durationMs: number;
+  };
+  const calls: { ids: string[]; signal?: AbortSignal }[] = [];
+  const failedTexts: string[] = [];
+  const saved = new Set<string>();
+  let gate: Promise<void> | null = null;
+  let release: (() => void) | null = null;
+
+  return {
+    calls,
+    failedTexts,
+    /** Hold every item until `finish()`, so the run can be watched mid-chapter. */
+    hold(): void {
+      gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    },
+    finish(): void {
+      release?.();
+      release = null;
+      gate = null;
+    },
+    markSaved(ids: string[]): void {
+      for (const id of ids) saved.add(id);
+    },
+    async prerenderChapter(
+      _engine: unknown,
+      items: { id: string; text: string }[],
+      opts: { signal?: AbortSignal },
+      onProgress?: (progress: Progress) => void
+    ): Promise<Report> {
+      calls.push({ ids: items.map((item) => item.id), signal: opts.signal });
+      let done = 0;
+      let failed = 0;
+      for (const item of items) {
+        if (opts.signal?.aborted) {
+          return {
+            aborted: true,
+            done,
+            total: items.length,
+            synthesised: done - failed,
+            skipped: 0,
+            failed,
+            durationMs: 0,
+          };
+        }
+        if (gate) await gate;
+        if (failedTexts.includes(item.text)) failed += 1;
+        else saved.add(item.id);
+        done += 1;
+        onProgress?.({
+          done,
+          total: items.length,
+          synthesised: done - failed,
+          skipped: 0,
+          failed,
+          id: item.id,
+        });
+      }
+      return {
+        aborted: false,
+        done,
+        total: items.length,
+        synthesised: done - failed,
+        skipped: 0,
+        failed,
+        durationMs: 0,
+      };
+    },
+    async isPrerendered(_engine: unknown, items: { id: string }[]): Promise<boolean> {
+      return items.length > 0 && items.every((item) => saved.has(item.id));
+    },
+    reset(): void {
+      calls.length = 0;
+      failedTexts.length = 0;
+      saved.clear();
+      release?.();
+      release = null;
+      gate = null;
+    },
+  };
+});
+
+vi.mock('../tts/neural/prerender', () => ({
+  prerenderChapter: prerenderMock.prerenderChapter,
+  isPrerendered: prerenderMock.isPrerendered,
+}));
+
 vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
   GlobalWorkerOptions: {},
   getDocument: () => ({ promise: Promise.resolve({ numPages: 1 }), destroy: () => undefined }),
@@ -287,6 +402,7 @@ beforeEach(async () => {
   await db.open();
   playerMock.calls.length = 0;
   registryMock.engineId = 'system';
+  prerenderMock.reset();
   playbackMock.start.mockClear();
   playbackMock.setState.mockClear();
   playbackMock.stop.mockClear();
@@ -746,11 +862,16 @@ function makeListBook(texts: string[]): BookRecord {
   };
 }
 
+function presentPdfFile(): Blob {
+  return { size: 4, type: 'application/pdf' } as unknown as Blob;
+}
+
 /** A PDF-backed book: three sentences, one per page. */
 function makePdfBook(): BookRecord {
   const rect = (page: number) => [{ page, x: 10, y: 10, w: 40, h: 8 }];
   return {
     ...makeBook({ format: 'pdf' }),
+    fileBlob: presentPdfFile(),
     parsed: {
       title: 'Pharmacology Notes',
       format: 'pdf',
@@ -884,6 +1005,13 @@ describe('reader: playback start and page stepping', () => {
     await db.books.put(makePdfBook());
     await renderReader();
     await waitForEngine();
+
+    // A fresh PDF opens on its drawn page now; the player's page label belongs
+    // to the text view, so step into the text first.
+    await waitFor(() => container.querySelector('.rd-pdf') !== null, 'page view');
+    await act(async () => {
+      buttonByText('Text')?.click();
+    });
     await waitFor(() => container.querySelector('.rd-pages-label')?.textContent === 'Page 1 of 3', 'page label');
 
     await act(async () => {
@@ -1692,5 +1820,299 @@ describe('reader: fixes around leaving, chapter jumps and paused stepping', () =
     expect(container.querySelector('.rd-page--fullscreen')).toBeNull();
     expect((await db.settings.get('reader.fullscreen'))?.value).toBe(false);
     expect(systemUiMock.setImmersive).toHaveBeenLastCalledWith(false);
+  });
+});
+
+describe('reader: the read-along mark and the PDF default view', () => {
+  function page(): HTMLElement {
+    return container.querySelector<HTMLElement>('.rd-page')!;
+  }
+
+  function raVar(name: string): string {
+    return page().style.getPropertyValue(name);
+  }
+
+  function typeSheet(): Element | null {
+    return container.querySelector('[role="dialog"][aria-label="Text size and spacing"]');
+  }
+
+  it('repaints the sentence being read from the type sheet', async () => {
+    await db.books.put(makeBook());
+    await renderReader();
+    await waitForEngine();
+
+    // The default mark is a yellow wash behind the words at 30%: no frame.
+    expect(page().getAttribute('data-ra-style')).toBe('fill');
+    expect(raVar('--ra-color')).toBe('var(--hl-yellow)');
+    expect(raVar('--ra-ink')).toBe('var(--hl-yellow-ink)');
+    expect(raVar('--ra-alpha')).toBe('30');
+
+    await act(async () => {
+      buttonByLabel('Text size and spacing')?.click();
+    });
+    const sheet = typeSheet()!;
+    expect(sheet.textContent).toContain('Read-along highlight');
+    // The preview is the real sentence span, not a copy of the look.
+    expect(sheet.querySelector('.rd-ra-preview .rd-s.reading')).not.toBeNull();
+
+    await act(async () => {
+      [...sheet.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent === 'Underline')
+        ?.click();
+    });
+    await waitFor(() => page().getAttribute('data-ra-style') === 'underline', 'underline style');
+    expect((await db.settings.get(READ_ALONG_STYLE_KEY))?.value).toBe('underline');
+
+    await act(async () => {
+      sheet.querySelector<HTMLButtonElement>('[aria-label="Blue read-along colour"]')?.click();
+    });
+    await waitFor(() => raVar('--ra-color') === 'var(--hl-blue)', 'blue fill');
+    await waitFor(() => raVar('--ra-ink') === 'var(--hl-blue-ink)', 'blue ink');
+    expect((await db.settings.get(READ_ALONG_COLOUR_KEY))?.value).toBe('blue');
+
+    const strength = sheet.querySelector<HTMLInputElement>('input[type="range"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(strength, '45');
+      strength.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await waitFor(() => raVar('--ra-alpha') === '45', 'stronger fill');
+    await waitFor(() => (typeSheet()?.textContent ?? '').includes('45%'), 'strength shown');
+  });
+
+  it('opens a PDF on its drawn page, with the type sheet still reachable', async () => {
+    await db.books.put(makePdfBook());
+    await renderReader();
+    await waitForEngine();
+
+    await waitFor(() => container.querySelector('.rd-pdf') !== null, 'page view by default');
+    expect(container.querySelector('.rd-page--page')).not.toBeNull();
+    expect(container.querySelector('.rd-text')).toBeNull();
+    // Nothing is stored until the reader chooses a view.
+    expect(await db.settings.get(`reader.mode.${BOOK_ID}`)).toBeUndefined();
+
+    // The "Aa" sheet used to be hidden on a drawn page; it now carries the
+    // read-along controls too, so it has to be reachable there.
+    await act(async () => {
+      buttonByLabel('Text size and spacing')?.click();
+    });
+    await waitFor(() => typeSheet() !== null, 'type sheet on a drawn page');
+  });
+
+  it('remembers a switch to the text view for that PDF', async () => {
+    await db.books.put(makePdfBook());
+    await renderReader();
+    await waitForEngine();
+    await waitFor(() => container.querySelector('.rd-pdf') !== null, 'page view by default');
+
+    await act(async () => {
+      buttonByText('Text')?.click();
+    });
+    await waitFor(() => container.querySelector('.rd-text') !== null, 'text view');
+    await waitFor(
+      async () => (await db.settings.get(`reader.mode.${BOOK_ID}`))?.value === 'text',
+      'choice stored',
+    );
+  });
+
+  it('keeps a stored text choice for that PDF on the next visit', async () => {
+    await db.settings.put({ key: `reader.mode.${BOOK_ID}`, value: 'text' });
+    await db.books.put(makePdfBook());
+    await renderReader();
+    await waitForEngine();
+
+    await waitFor(() => container.querySelector('.rd-text') !== null, 'text view from the stored choice');
+    expect(container.querySelector('.rd-page--page')).toBeNull();
+  });
+
+  it('opens a PDF whose file is gone in text instead of an empty page', async () => {
+    await db.books.put({ ...makePdfBook(), fileBlob: new Blob([]) });
+    await renderReader();
+    await waitForEngine();
+
+    await waitFor(() => container.querySelector('.rd-text') !== null, 'text view');
+    expect(container.querySelector('.rd-page--page')).toBeNull();
+  });
+
+  it('does not restore a remembered page view when the file is gone', async () => {
+    await db.settings.put({ key: `reader.mode.${BOOK_ID}`, value: 'page' });
+    await db.books.put({ ...makePdfBook(), fileBlob: new Blob([]) });
+    await renderReader();
+    await waitForEngine();
+
+    await waitFor(() => container.querySelector('.rd-text') !== null, 'text view despite the stored page choice');
+    expect(container.querySelector('.rd-page--page')).toBeNull();
+  });
+});
+
+describe('reader: saving audio ahead', () => {
+  async function openQueueSheet(): Promise<void> {
+    await act(async () => {
+      buttonByLabel('Playback options')?.click();
+    });
+    await waitFor(
+      () => container.querySelector('[data-tour="more"]')?.getAttribute('aria-expanded') === 'true',
+      'playback options open',
+    );
+    await act(async () => {
+      buttonByText('Save audio for more…')?.click();
+    });
+    await waitFor(() => container.querySelector('.aq-sheet') !== null, 'save audio sheet');
+  }
+
+  function queueRows(): HTMLElement[] {
+    return [...container.querySelectorAll<HTMLElement>('.aq-row')];
+  }
+
+  it('offers no saved-audio action when the voice cannot store audio', async () => {
+    await db.books.put(makeBook());
+    await renderReader();
+    await waitForEngine();
+
+    await act(async () => {
+      buttonByLabel('Playback options')?.click();
+    });
+    await waitFor(
+      () => container.querySelector('[data-tour="more"]')?.getAttribute('aria-expanded') === 'true',
+      'playback options open',
+    );
+    expect(buttonByText('Save chapter audio')).toBeNull();
+    expect(buttonByText('Save audio for more…')).toBeNull();
+  });
+
+  it('lists the chapters with their sentence counts and what is already saved', async () => {
+    registryMock.engineId = 'kokoro';
+    prerenderMock.markSaved(['0-0-0', '0-0-1']);
+    await db.books.put(makeBook());
+    await renderReader();
+    await waitForEngine();
+    await openQueueSheet();
+
+    await waitFor(() => queueRows().length === 2, 'chapter list');
+    const rows = queueRows();
+    expect(rows[0].textContent).toContain('Kinetics');
+    expect(rows[0].textContent).toContain('2 sentences');
+    await waitFor(() => rows[0].textContent?.includes('Saved') === true, 'saved mark');
+    expect(rows[1].textContent).toContain('Dynamics');
+    expect(rows[1].textContent).toContain('1 sentence');
+    expect(rows[1].textContent).not.toContain('Saved');
+  });
+
+  it('saves the chosen chapters one after another and shows where it is', async () => {
+    registryMock.engineId = 'kokoro';
+    await db.books.put(makeBook());
+    await renderReader();
+    await waitForEngine();
+    await openQueueSheet();
+
+    await act(async () => {
+      buttonByText('Select all')?.click();
+    });
+    const primary = buttonByText('Save 2 chapters');
+    expect(primary?.disabled).toBe(false);
+
+    prerenderMock.hold();
+    await act(async () => {
+      primary?.click();
+    });
+    await waitFor(
+      () => container.textContent?.includes('Saving chapter 1 of 2 — 0 of 2 sentences') === true,
+      'queue progress line',
+    );
+    await act(async () => {
+      prerenderMock.finish();
+    });
+
+    await waitFor(() => prerenderMock.calls.length === 2, 'both chapters saved');
+    expect(prerenderMock.calls.map((call) => call.ids)).toEqual([
+      ['0-0-0', '0-0-1'],
+      ['1-0-0'],
+    ]);
+    await waitFor(() => container.querySelector('.aq-status') === null, 'queue finished');
+    await waitFor(() => (container.textContent ?? '').includes('Saved'), 'saved marks after the run');
+  });
+
+  it('stops the queue after the current sentence and leaves the rest unsaved', async () => {
+    registryMock.engineId = 'kokoro';
+    await db.books.put(makeBook());
+    await renderReader();
+    await waitForEngine();
+    await openQueueSheet();
+
+    await act(async () => {
+      buttonByText('Select all')?.click();
+    });
+    prerenderMock.hold();
+    await act(async () => {
+      buttonByText('Save 2 chapters')?.click();
+    });
+    await waitFor(() => prerenderMock.calls.length === 1, 'first chapter started');
+
+    await act(async () => {
+      buttonByText('Stop saving')?.click();
+    });
+    await act(async () => {
+      prerenderMock.finish();
+    });
+
+    await waitFor(() => container.querySelector('.aq-status') === null, 'queue stopped');
+    expect(prerenderMock.calls).toHaveLength(1);
+    expect(prerenderMock.calls[0].signal?.aborted).toBe(true);
+  });
+
+  it('names a chapter that fails and keeps going with the rest', async () => {
+    registryMock.engineId = 'kokoro';
+    prerenderMock.failedTexts.push('Absorption is the first step.');
+    await db.books.put(makeBook());
+    await renderReader();
+    await waitForEngine();
+    await openQueueSheet();
+
+    await act(async () => {
+      buttonByText('Select all')?.click();
+    });
+    await act(async () => {
+      buttonByText('Save 2 chapters')?.click();
+    });
+
+    await waitFor(() => prerenderMock.calls.length === 2, 'queue continued past the failure');
+    await waitFor(
+      () => (container.textContent ?? '').includes('Could not save Kinetics.') === true,
+      'failure named',
+    );
+    expect(container.querySelector('.banner-error')?.textContent).toContain('Could not save Kinetics.');
+  });
+
+  it('saves a PDF page range as the sentences on those pages', async () => {
+    registryMock.engineId = 'kokoro';
+    await db.books.put(makePdfBook());
+    await renderReader();
+    await waitForEngine();
+    await waitFor(() => container.querySelector('.rd-pdf') !== null, 'page view');
+    await openQueueSheet();
+
+    await act(async () => {
+      buttonByText('Pages')?.click();
+    });
+    const inputs = [...container.querySelectorAll<HTMLInputElement>('.aq-page-input')];
+    expect(inputs).toHaveLength(2);
+    const typePage = async (input: HTMLInputElement, value: string) => {
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    };
+    await typePage(inputs[0], '2');
+    await typePage(inputs[1], '3');
+    await waitFor(
+      () => (container.textContent ?? '').includes('2 sentences on pages 2–3.'),
+      'page range count',
+    );
+
+    await act(async () => {
+      buttonByText('Save pages 2–3')?.click();
+    });
+    await waitFor(() => prerenderMock.calls.length === 1, 'page range queued');
+    // Pages 2 and 3 hold one sentence each: page 1 is left alone.
+    expect(prerenderMock.calls[0]?.ids).toEqual(['0-0-1', '0-0-2']);
   });
 });

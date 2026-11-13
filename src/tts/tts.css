@@ -247,9 +247,11 @@
   gap: var(--space-1);
 }
 
+/* Edit sits beside Delete, the loudest pair in the list: a 2px seam is a
+   mis-tap on the one button that cannot be undone. */
 .tts-rule-actions {
   display: flex;
-  gap: 2px;
+  gap: var(--space-2);
 }
 
 .tts-rule-action {
@@ -321,10 +323,13 @@
   }
 }
 
+/* The label is the target, so it answers on the full 44px row like every other
+   toggle in Settings; the box stays on the first line of a wrapped label. */
 .tts-check {
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
+  min-height: var(--tap);
   font-size: var(--fs-sm);
   line-height: var(--lh-snug);
 }
@@ -530,4 +535,130 @@
   .tts-rule .badge {
     display: none;
   }
+}
+
+/* A text action inside a banner (opens the Kokoro sheet instead of leaving the page). */
+button.rd-banner-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--link);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* Where every downloadable voice can be heard, under the banner action. */
+.banner .rd-banner-note {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-base);
+}
+
+/* Kokoro's voices. A plain list that grows with the page: no inner scroll box, and
+   every row is a full 44px target with the radio, the name and its own Test. */
+.tts-voice-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tts-voice-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--tap);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.tts-voice-option:last-child {
+  border-bottom: 0;
+}
+
+.tts-voice-choice {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: var(--tap);
+  cursor: pointer;
+}
+
+.tts-voice-radio {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.tts-voice-label {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--space-2);
+  min-width: 0;
+}
+
+.tts-voice-name {
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.tts-voice-lang {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.tts-voice-default {
+  color: var(--accent);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tts-voice-test {
+  flex: none;
+}
+
+.tts-voice-absent {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+}
+
+.tts-voice-absent p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+/* iPhone: Safari may never start the phone voice, so the engine choice carries a
+   warning of its own. Warning ink, no box, and no way to dismiss it. */
+.tts-ios-warning {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--warning);
+}
+
+.tts-ios-warning > p:first-child {
+  margin: 0;
+  color: var(--warning);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
 }

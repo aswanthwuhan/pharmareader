@@ -279,6 +279,13 @@
   box-shadow: var(--shadow-pop);
 }
 
+/* Five 44px rows are 236px tall: on a phone the "Actions" button of a low row
+   has no room below it, so the page marks the menu for the other side. */
+.syl-menu[data-placement='up'] {
+  top: auto;
+  bottom: calc(100% + var(--space-1));
+}
+
 .syl-menu-item {
   display: flex;
   align-items: center;
@@ -569,12 +576,21 @@
   color: var(--muted);
 }
 
-/* A nested expander: 32px is enough inside a 44px option row. */
+/* A nested expander: 32px is enough inside a 44px option row, but it still has
+   to answer on a 44px box, because the row's own tap selects instead. The extra
+   ring is drawn out of flow, so nothing in the row moves. */
 .tp-twisty {
+  position: relative;
   flex: 0 0 2rem;
   width: 2rem;
   height: 2rem;
   margin-top: calc((var(--fs-sm) * var(--lh-snug) - 2rem) / 2);
+}
+
+.tp-twisty::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
 }
 
 .tp-chevron {

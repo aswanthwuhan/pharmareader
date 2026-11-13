@@ -5,6 +5,7 @@ import { setSetting, useSetting, getSetting } from '../core/settings';
 import { resetDownload, startDownload, useDownload, type DownloadState } from '../tts/downloads';
 import { measureLayoutMs } from './layout/benchmark';
 import { reanalyseBook, type ReanalyseResult } from './index';
+import { IMPORT_LAYOUT_KEY, IMPORT_LAYOUT_OPTIONS, type ImportLayoutChoice } from './importLayout';
 import type { LayoutMode } from './pdf';
 import {
   LAYOUT_MODEL,
@@ -32,6 +33,12 @@ type ReanalyseState =
   | { kind: 'idle' }
   | { kind: 'running'; note: string; done: number; total: number }
   | { kind: 'done'; summary: string };
+
+/** One book being re-read from the picker below. */
+type BookRun =
+  | { kind: 'idle' }
+  | { kind: 'running'; note: string }
+  | { kind: 'done'; note: string };
 
 /** What the panel needs of a PDF: never the parsed document or the file. */
 type PdfBook = Pick<BookRecord, 'id' | 'title' | 'layout'>;
@@ -98,10 +105,15 @@ export default function LayoutModelPanel() {
   const [measureError, setMeasureError] = useState<string | null>(null);
   const [pdfs, setPdfs] = useState<PdfBook[]>([]);
   const [reanalyse, setReanalyse] = useState<ReanalyseState>({ kind: 'idle' });
+  /** The PDF picked for a one-book re-read, and that run's state. */
+  const [pickedBook, setPickedBook] = useState<string>('');
+  const [bookRun, setBookRun] = useState<BookRun>({ kind: 'idle' });
+  const [bookError, setBookError] = useState<string | null>(null);
   const alive = useRef(true);
   // The measurement already started for the finished download this mount saw.
   const measured = useRef(false);
   const mode = useSetting<LayoutMode>('import.layout', 'auto');
+  const ask = useSetting<ImportLayoutChoice>(IMPORT_LAYOUT_KEY, 'ask');
   const speed = useSetting<number>(SPEED_KEY, 0);
 
   useEffect(() => {
@@ -230,6 +242,32 @@ export default function LayoutModelPanel() {
     setReanalyse({ kind: 'done', summary: describeRun(books.length, modelBooks, failed, totals) });
   };
 
+  /**
+   * Read one book again with detection. The same path the book action sheet's
+   * column choice uses (`reanalyseBook`), so highlights, bookmarks and the
+   * reading position move exactly as they do there.
+   */
+  const runBook = async () => {
+    const book = pdfs.find((entry) => entry.id === pickedBook);
+    if (!book) return;
+
+    setBookError(null);
+    setBookRun({ kind: 'running', note: book.title });
+    try {
+      const result = await reanalyseBook(book.id, (note) => {
+        if (alive.current) setBookRun({ kind: 'running', note: `${book.title} — ${note}` });
+      });
+      const after = await listPdfs();
+      if (!alive.current) return;
+      setPdfs(after);
+      setBookRun({ kind: 'done', note: describeBookRun(book.title, result) });
+    } catch (error) {
+      if (!alive.current) return;
+      setBookRun({ kind: 'idle' });
+      setBookError(messageOf(error));
+    }
+  };
+
   if (state.kind === 'loading') {
     return (
       <div className={styles.panel}>
@@ -243,6 +281,7 @@ export default function LayoutModelPanel() {
   const chip = chipFor(state);
   const busy = state.kind === 'downloading' || measuring;
   const speedLine = describeSpeed(speed);
+  const blocked = bookBlockedReason(state, mode);
 
   return (
     <div className={styles.panel}>
@@ -314,6 +353,86 @@ export default function LayoutModelPanel() {
           </select>
           <span className={styles.hint}>Automatic uses the model where the text alone is unsure.</span>
         </label>
+
+        {state.kind !== 'unsupported' && (
+          <label className={styles.field}>
+            <span className="field-label">Ask when a PDF is imported</span>
+            <select
+              className="input"
+              value={ask}
+              onChange={(event) => void setSetting(IMPORT_LAYOUT_KEY, event.target.value)}
+            >
+              {IMPORT_LAYOUT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <span className={styles.hint}>A saved answer skips the question; Automatic above still decides whether the model runs.</span>
+          </label>
+        )}
+      </div>
+
+      <div className={styles.block} role="group" aria-labelledby="layout-book-title">
+        <header className={styles.head}>
+          <h3 id="layout-book-title" className={styles.title}>
+            Run layout detection on a book
+          </h3>
+        </header>
+
+        <label className={styles.field}>
+          <span className="field-label">Book</span>
+          <select
+            className="input"
+            value={pickedBook}
+            onChange={(event) => {
+              setPickedBook(event.target.value);
+              setBookRun({ kind: 'idle' });
+              setBookError(null);
+            }}
+            disabled={pdfs.length === 0 || bookRun.kind === 'running'}
+          >
+            <option value="">{pdfs.length === 0 ? 'No PDFs in the library yet' : 'Choose a PDF'}</option>
+            {pdfs.map((book) => (
+              <option key={book.id} value={book.id}>
+                {bookLabel(book)}
+              </option>
+            ))}
+          </select>
+          <span className={styles.hint}>
+            Re-reading replaces the book’s text and reading order. Highlights and bookmarks move to the same text
+            where it is still there; a highlight whose text is gone stays in your notes without a place in the book,
+            and the reading position moves to the nearest text that is still there. Cards are not changed.
+          </span>
+        </label>
+
+        <div className={styles.redo}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => void runBook()}
+            disabled={!pickedBook || bookRun.kind === 'running' || blocked !== null}
+          >
+            {bookRun.kind === 'running' ? 'Reading the book again…' : 'Run layout detection'}
+          </button>
+          {blocked && <p className={styles.hint}>{blocked}</p>}
+          {bookRun.kind === 'running' && (
+            <p className={styles.progressNote} role="status" aria-live="polite">
+              {bookRun.note}
+            </p>
+          )}
+          {bookRun.kind === 'done' && (
+            <p className={styles.resultNote} role="status" aria-live="polite">
+              {bookRun.note}
+            </p>
+          )}
+          {bookError && (
+            <p className={styles.measureError} role="alert">
+              {bookError}
+            </p>
+          )}
+          <p className={styles.hint}>To read every older PDF at once, use Advanced below.</p>
+        </div>
       </div>
 
       <details className="disc-sub">
@@ -408,6 +527,60 @@ export default function LayoutModelPanel() {
       </details>
     </div>
   );
+}
+
+/** What a book's option in the picker says about its current layout. */
+function bookLabel(book: PdfBook): string {
+  const detected =
+    book.layout === 'model' ? 'detection applied' : book.layout === 'heuristic' ? 'text layout only' : 'layout not recorded';
+  return `${book.title} — ${detected}`;
+}
+
+/**
+ * Why one book cannot be re-read yet, in one line, or null when it can. The
+ * re-read path reads the device-wide mode, so a reader on "Text layout only"
+ * would press the button and get no model at all.
+ */
+function bookBlockedReason(state: ModelState, mode: LayoutMode): string | null {
+  if (state.kind === 'unsupported') return 'This browser cannot store the layout model, so detection cannot run here.';
+  if (state.kind === 'downloading') return 'The layout model is downloading above; run detection when it finishes.';
+  if (state.kind === 'error') return 'The layout model is not working; fix the download above first.';
+  if (state.kind !== 'ready') return 'Download the layout model above first.';
+  if (mode !== 'auto') return 'Set Layout for new PDFs to Automatic to run detection.';
+  return null;
+}
+
+/** One book's outcome, in the same words as the library-wide summary where the news is the same. */
+export function describeBookRun(title: string, result: ReanalyseResult): string {
+  const parts = [`“${title}” read again`];
+  if (result.layout === 'model') {
+    parts.push(
+      result.modelPages ? `with the model, which laid out ${plural(result.modelPages, 'page')}` : 'with the model',
+    );
+  } else if (result.modelPages > 0) {
+    parts.push(
+      `with the text layout only after the model stopped (it laid out ${plural(result.modelPages, 'page')} first)`,
+    );
+  } else {
+    parts.push('with the text layout only; the model was not used');
+  }
+
+  const kept = result.highlightsKept;
+  const unlinked = result.highlightsUnlinked;
+  parts.push(
+    unlinked === 0
+      ? `${plural(kept, 'highlight')} carried across`
+      : `${plural(kept, 'highlight')} carried across, ${unlinked} could not be found again and ${
+          unlinked === 1 ? 'is' : 'are'
+        } kept in your notes without a place in the text`,
+  );
+  if (result.bookmarksMoved > 0) {
+    parts.push(`${plural(result.bookmarksMoved, 'bookmark')} moved to the nearest text that is still there`);
+  }
+  if (!result.positionKept) parts.push('the reading position was moved to the nearest text that is still there');
+
+  // The reason the model fell short, in its own sentence: the summary above only says that it did.
+  return `${parts.join('; ')}.${result.modelNote ? ` ${result.modelNote}` : ''}`;
 }
 
 /** The status chip: a word, a tone, and nothing the user has to interpret. */

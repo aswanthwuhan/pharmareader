@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AudioCacheRecord, TtsEngine } from '../../core/types';
-import { runPrerender, type PrerenderDeps } from './prerenderCore';
+import { runIsPrerendered, runPrerender, type PrerenderDeps } from './prerenderCore';
 
 const blob = new Blob([new Uint8Array(4)]);
 
@@ -243,5 +243,33 @@ describe('runPrerender', () => {
   it('refuses engines that cannot synthesize', async () => {
     const engine = { ...fakeEngine(), synthesize: undefined } as unknown as TtsEngine;
     await expect(runPrerender(engine, items, {}, undefined, fakeDeps())).rejects.toThrow(/cannot pre-render/);
+  });
+});
+
+describe('runIsPrerendered', () => {
+  it('is true only when every item is in the audio cache', async () => {
+    const all = fakeDeps({
+      getAudio: vi.fn(async (key: string) => ({ key, engine: 'pocket', audio: blob, durationMs: 1, createdAt: 0 })),
+    });
+    await expect(runIsPrerendered(fakeEngine(), items, { rate: 1 }, all)).resolves.toBe(true);
+
+    const none = fakeDeps();
+    await expect(runIsPrerendered(fakeEngine(), items, { rate: 1 }, none)).resolves.toBe(false);
+  });
+
+  it('stops reading at the first missing sentence', async () => {
+    const getAudio = vi.fn(async (key: string) =>
+      key === 'key:expanded:one' ? { key, engine: 'pocket', audio: blob, durationMs: 1, createdAt: 0 } : null
+    );
+    const deps = fakeDeps({ getAudio });
+
+    await expect(runIsPrerendered(fakeEngine(), items, {}, deps)).resolves.toBe(false);
+    expect(getAudio).toHaveBeenCalledTimes(2);
+  });
+
+  it('is false for an empty chapter and for an engine that cannot synthesize', async () => {
+    await expect(runIsPrerendered(fakeEngine(), [], {}, fakeDeps())).resolves.toBe(false);
+    const engine = { ...fakeEngine(), synthesize: undefined } as unknown as TtsEngine;
+    await expect(runIsPrerendered(engine, items, {}, fakeDeps())).resolves.toBe(false);
   });
 });

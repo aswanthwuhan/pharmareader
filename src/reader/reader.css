@@ -16,7 +16,7 @@
 .page.rd-page {
   /* The fixed player is the reader's floor: track + caption + controls + its
      own padding. The last line of a chapter must be able to scroll above it. */
-  --rd-player-h: 120px;
+  --rd-player-h: 68px;
   /* The app frame pads every page away from the top edge; the reader's bar is
      the top edge itself, so it takes that padding back and adds the notch. */
   margin-top: calc(-1 * max(var(--space-4), env(safe-area-inset-top, 0px)));
@@ -109,13 +109,13 @@
 }
 
 /* A view switch, not a form control: a sunken track with the active half
-   raised onto the surface. The 48px target still fits the 56px bar; the track
-   grows with its buttons. */
+   raised onto the surface. The target is 44px in the compact 48px bar and 48px
+   elsewhere; the track's 1px inset keeps the compact bar at its own height. */
 .rd-seg {
   display: inline-flex;
   flex: none;
   gap: 2px;
-  padding: 2px;
+  padding: 1px 2px;
   border: 1px solid var(--border);
   border-radius: var(--radius-full);
   background: var(--surface-sunken);
@@ -266,12 +266,44 @@
     border-color var(--dur-2) var(--ease-standard);
 }
 
-/* The sentence being spoken takes a quiet teal wash and a hairline teal frame:
-   enough to find her place mid-sentence, never a box drawn around the text. */
+/* The sentence being spoken: a wash behind the words at the reader's chosen
+   strength, never a frame around them — a box around the text was what made
+   the voice hard to read. ReaderView sets --ra-color/-ra-ink/-ra-alpha and
+   data-ra-style on the page; the plain token before the color-mix is the
+   Safari 16.2 fallback (same pattern as reader/LayoutOverlay.module.css),
+   where the wash is the token at full strength. The 1px transparent frame on
+   .rd-s stays, so moving the voice never shifts a word. */
 .rd-s.reading {
-  background: var(--accent-soft);
-  border-color: var(--accent);
+  background: var(--ra-color, var(--accent-soft));
+  background: color-mix(
+    in srgb,
+    var(--ra-color, var(--accent-soft)) calc(var(--ra-alpha, 30) * 1%),
+    transparent
+  );
   border-radius: var(--radius-xs);
+}
+
+/* Dark-theme --hl-* tokens are already rgba(…, 0.24–0.26): mixing one with
+   transparent at the reader's strength multiplies to nothing, so dark mixes
+   the opaque ink token instead. */
+@media (prefers-color-scheme: dark) {
+  .rd-s.reading {
+    background: var(--ra-ink, var(--accent));
+    background: color-mix(
+      in srgb,
+      var(--ra-ink, var(--accent)) calc(var(--ra-alpha, 30) * 1%),
+      transparent
+    );
+  }
+}
+
+/* Underline: nothing over the words at all — a 2px rule under every line of a
+   wrapped sentence (box-decoration-break keeps one per fragment). A sentence
+   with a saved highlight keeps its fill (:not([data-hl])), and gets the rule
+   from the rule below. */
+[data-ra-style='underline'] .rd-s.reading:not([data-hl]) {
+  background: none;
+  box-shadow: inset 0 -2px 0 var(--ra-ink, var(--accent));
 }
 
 .rd-s[data-hl='yellow'] {
@@ -294,6 +326,13 @@
   color: var(--hl-pink-ink);
 }
 
+/* Both at once: the reader's saved colour keeps its exact fill (the rules
+   above win on background), and a 2px rule in the read-along ink says which
+   sentence the voice is on — so one never hides the other. */
+.rd-s[data-hl].reading {
+  box-shadow: inset 0 -2px 0 var(--ra-ink, var(--accent));
+}
+
 /* Selected (not yet highlighted) sentences: the same wash, with a bar under
    each fragment so a multi-line selection still reads as one run. */
 .rd-s.selected {
@@ -307,19 +346,70 @@
   border-bottom: 1px dotted var(--accent);
 }
 
-/* The word being spoken, inside the spoken sentence. A wash would fight the
-   reading frame and a highlight colour would read as an annotation, so the word
-   leans on weight and an underline instead. */
+/* The word being spoken: the same read-along colour laid on again, over the
+   sentence's wash and at its own strength — a band of colour inside the
+   sentence rather than a second frame, and never a weight change (bold reflows
+   the line every time the word moves). --ra-word-alpha already carries a floor
+   above the sentence's strength (see reader/readAlong.ts), and the plain token
+   before the color-mix is the Safari 16.2 fallback. */
 .rd-word {
-  font-weight: var(--fw-semibold);
+  border-radius: var(--radius-xs);
   color: var(--text);
-  text-decoration: underline;
-  text-decoration-color: var(--accent);
-  text-decoration-thickness: 2px;
-  text-underline-offset: 0.18em;
-  background: none;
+  background: var(--ra-color, var(--accent-soft));
+  /* A pale marker at any opacity is still pale: the word deepens the same
+     colour with a share of its ink (17.5% at the default), opaque, so it reads
+     as a stronger band on the wash and the print keeps better than 9:1. */
+  background: color-mix(
+    in srgb,
+    var(--ra-ink, var(--accent)) calc(var(--ra-word-alpha, 70) * 0.25%),
+    var(--ra-color, var(--accent-soft))
+  );
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
+}
+
+/* Dark-theme --hl-* tokens are already translucent, so dark mixes the opaque
+   ink, exactly like the sentence wash above. */
+@media (prefers-color-scheme: dark) {
+  /* Dark ink is a bright marker: light type on it fails contrast, so the word
+     is set in the page colour on a bar that never drops below 60%. */
+  .rd-word {
+    color: var(--bg);
+    background: var(--ra-ink, var(--accent));
+    background: color-mix(
+      in srgb,
+      var(--ra-ink, var(--accent)) max(60%, calc(var(--ra-word-alpha, 70) * 1%)),
+      transparent
+    );
+  }
+
+  [data-ra-word='underline'] .rd-word {
+    color: var(--text);
+  }
+}
+
+/* A sentence the reader already highlighted sits at full fill, so a wash of the
+   same colour would vanish into it: inside a highlight the word takes the ink
+   instead, which darkens whatever fill is underneath. The share is the word's
+   strength scaled down, so the print stays legible at the top of the slider. */
+.rd-s[data-hl] .rd-word {
+  background: var(--ra-ink, var(--accent));
+  background: color-mix(
+    in srgb,
+    var(--ra-ink, var(--accent)) calc(var(--ra-word-alpha, 70) * 0.45%),
+    transparent
+  );
+}
+
+/* The reader asked for the rule instead: the mark this app used before the
+   fill — 2px in the read-along ink, and nothing over the words. */
+[data-ra-word='underline'] .rd-word {
+  border-radius: 0;
+  background: none;
+  text-decoration: underline;
+  text-decoration-color: var(--ra-ink, var(--accent));
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.18em;
 }
 
 /* Text the voice will not read (tables, figures, footnotes by default): still
@@ -958,11 +1048,27 @@
   box-shadow: inset 0 0 0 1px var(--hl-pink-ink);
 }
 
+/* Teal has no highlight pair of its own: the accent is the palette's one teal.
+   The read-along colour uses it, and this is what its swatch shows. */
+.rd-swatch-teal span {
+  background: var(--selection-bg);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* A chosen read-along colour keeps a ring and a wash, so which one is picked
+   never rests on hue alone. */
+.rd-swatch[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
 .rd-select-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1);
+  /* Seven 44px actions wrap three to a row: a 4px seam between them is the
+     width of a finger's drift, so each row keeps a step of the scale. */
+  gap: var(--space-2);
   margin-inline: calc(-1 * var(--space-2));
   padding-top: var(--space-2);
   border-top: 1px solid var(--border);
@@ -1141,17 +1247,45 @@ body:has(.rd-sheet) {
   }
 }
 
-/* The spoken sentence: the same yellow the reader highlights with, washed over
-   the page so the printed words stay legible underneath. The wash is the token
-   at full strength (in the dark theme it is already a 26% tint — halving it
-   again made it invisible), and a 2px ink edge is what reads on any page. */
+/* The spoken sentence on a drawn page: the same wash at the reader's strength,
+   or a 2px rule along the rect's bottom edge. No frame — an outline around the
+   words read as a box drawn around them. Multiply keeps the print underneath
+   at full contrast; the dark theme only dims the sheet (brightness .86), so
+   multiply still leaves black text black there where a plain wash would grey
+   the glyphs. The plain token before the color-mix is the Safari 16.2
+   fallback. */
 .rd-pdf-rect {
   position: absolute;
-  border: 2px solid var(--hl-yellow-ink);
   border-radius: var(--radius-xs);
-  background: var(--hl-yellow);
+  background: var(--ra-color, var(--hl-yellow));
+  /* Multiply only ever darkens the paper, never the print, so the page takes
+     2.5x the text view's strength: 30% of a pale marker on white is invisible. */
+  background: color-mix(
+    in srgb,
+    var(--ra-color, var(--hl-yellow)) min(100%, calc(var(--ra-alpha, 30) * 2.5%)),
+    transparent
+  );
   mix-blend-mode: multiply;
   pointer-events: none;
+}
+
+/* Dark tints are already translucent, so dark mixes from the opaque ink. */
+@media (prefers-color-scheme: dark) {
+  .rd-pdf-rect {
+    background: var(--ra-ink, var(--hl-yellow-ink));
+    background: color-mix(
+      in srgb,
+      var(--ra-ink, var(--hl-yellow-ink)) calc(var(--ra-alpha, 30) * 1%),
+      transparent
+    );
+  }
+}
+
+/* Underline: nothing over the print, a rule on the rect's bottom edge. */
+[data-ra-style='underline'] .rd-pdf-rect {
+  border-radius: 0;
+  background: none;
+  border-bottom: 2px solid var(--ra-ink, var(--hl-yellow-ink));
 }
 
 .rd-pdf-controls {
@@ -1346,6 +1480,67 @@ body:has(.rd-sheet) {
   font-weight: var(--fw-semibold);
 }
 
+/* -- settings: the read-along mark ----------------------------------------- */
+
+/* The preview is a real sentence span, so it shows the exact CSS the reader
+   gets; the frame keeps it from reading as book text in Settings. */
+.rd-ra-preview {
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  font-family: var(--font-read);
+  font-size: 17px;
+  line-height: 1.6;
+  text-wrap: pretty;
+}
+
+.rd-ra-preview .rd-s {
+  cursor: default;
+}
+
+/* The five swatches need the row's width on a phone: let the row wrap and
+   keep the label on its own line when it cannot fit beside them. */
+.rd-ra-row {
+  flex-wrap: wrap;
+  row-gap: var(--space-1);
+  cursor: default;
+}
+
+.rd-ra-colours {
+  margin-bottom: 0;
+  margin-left: auto;
+}
+
+/* Strength: label and value on one line, the slider under them. */
+.rd-ra-strength-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.rd-ra-value {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+/* The spoken word's half of the group: a quiet heading of its own, since the
+   legend above covers the whole read-along mark. */
+.rd-ra-subhead {
+  margin: var(--space-5) 0 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
+/* The line that points at the word-highlight switch when it is off. */
+.rd-ra-off {
+  margin-bottom: 0;
+}
+
 /* -- selection playback ---------------------------------------------------- */
 
 /* Two small ways back into the text once a selection has been read out. */
@@ -1353,7 +1548,7 @@ body:has(.rd-sheet) {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: var(--space-1);
+  gap: var(--space-2);
   padding: 0 var(--space-3) var(--space-2);
 }
 
@@ -1468,79 +1663,165 @@ body:has(.rd-sheet) {
   font: inherit;
 }
 
-/* -- narrow phones: the voice pill gets its own line ----------------------- */
+/* -- compact chrome ---------------------------------------------------------
+   The words are the screen. The player is one row at every size - speed, step,
+   play, step, position, "…" - and Page view's controls are one row under the
+   page, so a 640px phone gives the page about 480px instead of 290px. */
 
-/* Below 360px the transport row is a few pixels short even with every control
-   at its narrowest, so the voice pill was clipped to "● Ph…". It wraps to a
-   second line instead, and the page reserves the taller player. */
-@media (max-width: 359.98px) and (min-height: 501px) {
-  .page.rd-page {
-    --rd-player-h: 172px;
+.rd-bar {
+  min-height: calc(48px + env(safe-area-inset-top, 0px));
+  gap: 0;
+}
+
+.rd-bar-btn,
+.rd-bar-text {
+  width: 44px;
+}
+
+.rd-bar-title {
+  padding-inline: var(--space-1);
+}
+
+/* 44px, not 40: the switch is one of the two things a thumb reaches for first,
+   and the 48px bar still holds it with the track's inset at 1px. */
+.rd-seg-btn {
+  min-height: 44px;
+  padding: 0 10px;
+}
+
+.rd-player {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  padding-bottom: calc(var(--space-1) + env(safe-area-inset-bottom, 0px));
+}
+
+.rd-player-track {
+  grid-area: 1 / 1 / 2 / -1;
+}
+
+/* The two rows the player opens on demand sit above the transport, and the
+   page reserves that line only while one of them is there. */
+.rd-from-here,
+.rd-sel-done {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  margin-top: var(--space-2);
+}
+
+.page.rd-page:has(.rd-from-here, .rd-sel-done) {
+  --rd-player-h: 124px;
+}
+
+.rd-player-controls {
+  grid-area: 3 / 1 / 4 / 2;
+  gap: var(--space-1);
+  margin: 0;
+  padding: var(--space-1) 0 0 var(--space-2);
+}
+
+.rd-player-caption {
+  grid-area: 3 / 2 / 4 / 3;
+  min-height: 0;
+  max-width: none;
+  margin: 0;
+  padding: var(--space-1) var(--space-1) 0 var(--space-2);
+}
+
+.rd-player-controls .rd-icon-btn,
+.rd-player-caption > .rd-icon-btn {
+  width: 44px;
+}
+
+.rd-play {
+  width: 52px;
+  height: 52px;
+}
+
+.rd-speed {
+  padding: 0 var(--space-2);
+}
+
+.rd-engine {
+  margin-left: var(--space-1);
+}
+
+/* A phone has room for the position or for its label, not both; the voice name
+   and the page stepper come back when the row is wide enough to hold them. */
+@media (max-width: 479.98px) {
+  .rd-engine,
+  .rd-player-caption .rd-pages,
+  .rd-player-saved {
+    display: none;
   }
+}
 
-  .rd-player-controls {
-    flex-wrap: wrap;
-    row-gap: var(--space-1);
+@media (max-width: 399.98px) {
+  .rd-count-word {
+    display: none;
   }
+}
 
-  .rd-engine {
-    flex: none;
+/* -- Page view: the page gets everything the chrome does not need ---------- */
+
+.rd-pdf {
+  gap: var(--space-1);
+  padding-top: var(--space-2);
+}
+
+.page.rd-page.rd-page--page {
+  padding-bottom: calc(var(--rd-player-h) + env(safe-area-inset-bottom, 0px));
+}
+
+/* Page view turns pages; chapters are a Contents-drawer walk there. */
+.page.rd-page--page .rd-chapter-nav {
+  display: none;
+}
+
+/* On a phone the page runs window edge to edge: 32px more print. */
+@media (max-width: 899.98px) {
+  .rd-pdf-wrap {
+    margin-inline: calc(-1 * var(--space-4));
+    border-inline: 0;
+    border-radius: 0;
+  }
+}
+
+/* The counter sits between Previous and Next, so those two are a field's width
+   apart; the zoom cluster is four 48px buttons in a row and needs the seam. */
+.rd-pdf-controls {
+  padding-block: 0;
+}
+
+.rd-pdf-nav {
+  gap: 0;
+}
+
+.rd-pdf-zoom {
+  gap: var(--space-2);
+}
+
+.rd-pdf-controls .btn {
+  min-width: 40px;
+  min-height: 44px;
+  padding-inline: var(--space-2);
+  font-size: var(--fs-xs);
+}
+
+.rd-pdf-count {
+  min-width: 3.5em;
+}
+
+/* A phone pinches; the two zoom buttons would cost the page a second row. */
+@media (max-width: 479.98px) {
+  .rd-pdf-zoom .btn:not([aria-pressed]) {
+    display: none;
   }
 }
 
 /* -- short windows: a phone on its side ------------------------------------ */
 
-/* 320px of height cannot hold a 56px bar, the voice tip banner and a 120px
-   player and still leave a line of text. The player becomes one row - speed,
-   step, play, voice and the "…" for the rest - and the caption's position line
-   and page stepping stand down: the hairline still shows progress, the text
-   still scrolls, and the PDF toolbar still turns pages. Both come back on a
-   wide short window, where there is room beside the controls. */
 @media (max-height: 500px) {
-  .page.rd-page {
-    --rd-player-h: 68px;
-  }
-
-  .rd-player {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    padding-bottom: calc(var(--space-1) + env(safe-area-inset-bottom, 0px));
-  }
-
-  .rd-player-track {
-    grid-area: 1 / 1 / 2 / -1;
-  }
-
-  .rd-player-caption {
-    grid-area: 2 / 2 / 3 / 3;
-    min-height: 0;
-    padding-inline: var(--space-1) 0;
-  }
-
-  .rd-player-controls {
-    grid-area: 2 / 1 / 3 / 2;
-    gap: var(--space-1);
-    padding-inline: var(--space-3) 0;
-  }
-
-  .rd-player-meta,
-  .rd-player-caption .rd-pages {
-    display: none;
-  }
-
-  /* The two rows the player opens on demand get their own line, and the page
-     reserves that line only while one of them is there. */
-  .rd-from-here,
-  .rd-sel-done {
-    grid-column: 1 / -1;
-    grid-row: 3;
-  }
-
-  .page.rd-page:has(.rd-from-here, .rd-sel-done) {
-    --rd-player-h: 124px;
-  }
-
   /* A popover must not open off the top edge of a 320px window. */
   .rd-pop {
     max-height: calc(100dvh - var(--rd-player-h) - var(--space-6));
@@ -1548,9 +1829,9 @@ body:has(.rd-sheet) {
     overscroll-behavior: contain;
   }
 
-  /* The voice tip may leave a short window: the player's own voice pill says
-     the same thing, and the tip is back in portrait. A warning or a call to
-     action stays, one size down, because it has nowhere else to appear. */
+  /* The voice tip may leave a short window: the tip is back in portrait. A
+     warning or a call to action stays, one size down, because it has nowhere
+     else to appear. */
   .banner[data-context='reader'][data-dismissible] {
     display: none;
   }
@@ -1562,14 +1843,88 @@ body:has(.rd-sheet) {
   }
 }
 
-/* A wide short window has room for the position line and the page stepper
-   beside the controls, so neither is lost there. */
-@media (max-height: 500px) and (min-width: 700px) {
-  .rd-player-meta {
-    display: grid;
+/* -- narrow bar ------------------------------------------------------------ */
+
+/* Beside a view switch the title has ~80px: two short lines read, one
+   ellipsis ("nm…") does not. */
+@media (max-width: 479.98px) {
+  .rd-bar-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
+    font-size: var(--fs-xs);
+    line-height: 1.2;
   }
 
-  .rd-player-caption .rd-pages {
-    display: flex;
+  /* The voice tip is a note, not a page: one size down on a phone. */
+  .banner[data-context='reader'] {
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--fs-xs);
+  }
+}
+
+/* shortcut: under 340px a PDF's bar cannot hold the switch and full screen; full screen goes. Upgrade to an overflow menu if 320px phones matter. */
+@media (max-width: 339.98px) {
+  .rd-seg ~ .rd-bar-btn[aria-pressed] {
+    display: none;
+  }
+}
+
+/* The word the voice is on, inside the sentence's wash: the ink of the same
+   read-along colour laid over the rect and multiplied, exactly like the rect
+   itself. The pale fill cannot mark the word on paper — the rect already
+   reaches 100% of it from a 40% sentence strength, so above that a word in the
+   fill would be a second identical wash. The ink darkens the sheet at any
+   pair; it is capped at 70% so the print keeps its contrast at the top of the
+   slider, and the plain token before the color-mix is the Safari 16.2
+   fallback. */
+.rd-pdf-word {
+  position: absolute;
+  border-radius: var(--radius-xs);
+  background: var(--ra-ink, var(--hl-yellow-ink));
+  /* Same deepened marker as the Text view, multiplied onto the wash: a golden
+     band, not an ink patch over the print. */
+  background: color-mix(
+    in srgb,
+    var(--ra-ink, var(--hl-yellow-ink)) calc(var(--ra-word-alpha, 70) * 0.25%),
+    var(--ra-color, var(--hl-yellow))
+  );
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+
+/* The reader asked for the rule: nothing over the print, a 2px line along the
+   word's bottom edge. */
+[data-ra-word='underline'] .rd-pdf-word {
+  border-radius: 0;
+  background: none;
+  border-bottom: 2px solid var(--ra-ink, var(--hl-yellow-ink));
+}
+
+/* Dark-theme ink is a bright amber — it has to mark glyphs on a black page —
+   and the rect above reaches it in full from 40% strength, so on the white
+   sheet a brighter word would end up lighter than the sentence. Dark therefore
+   steps the ink down toward the page background first: the word stays a darker
+   band of the same colour at every strength, and the print keeps its contrast. */
+@media (prefers-color-scheme: dark) {
+  .rd-pdf-word {
+    --ra-pdf-word-ink: color-mix(
+      in srgb,
+      var(--ra-ink, var(--hl-yellow-ink)) 55%,
+      var(--bg)
+    );
+    background: var(--ra-pdf-word-ink);
+    background: color-mix(
+      in srgb,
+      var(--ra-pdf-word-ink) min(100%, calc(var(--ra-word-alpha, 70) * 1%)),
+      transparent
+    );
+  }
+
+  [data-ra-word='underline'] .rd-pdf-word {
+    background: none;
+    border-bottom-color: var(--ra-pdf-word-ink);
   }
 }

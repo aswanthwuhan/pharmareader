@@ -32,6 +32,8 @@ interface Props {
   page: number;
   /** Rectangles of the current sentence, on any page. */
   rects: PdfRect[];
+  /** Rectangles of the word being spoken, inside `rects`. */
+  wordRects?: PdfRect[];
   onPageChange(page: number): void;
   /** Full screen offers "fit page" as well, for seeing a whole figure at once. */
   fullscreen?: boolean;
@@ -67,6 +69,7 @@ export default function PdfView({
   file,
   page,
   rects,
+  wordRects,
   onPageChange,
   fullscreen = false,
   layoutBlocks = [],
@@ -426,6 +429,23 @@ export default function PdfView({
                   />
                 ))
             : null}
+          {scale > 0
+            ? (wordRects ?? [])
+                .filter((rect) => rect.page === painted)
+                .map((rect, i) => (
+                  <div
+                    key={`w-${rect.page}-${i}`}
+                    className="rd-pdf-word"
+                    aria-hidden="true"
+                    style={{
+                      left: `${rect.x * scale}px`,
+                      top: `${rect.y * scale}px`,
+                      width: `${Math.max(rect.w * scale, 2)}px`,
+                      height: `${Math.max(rect.h * scale, 2)}px`,
+                    }}
+                  />
+                ))
+            : null}
           {scale > 0 && layout && onSaveOrder ? (
             <LayoutOverlay
               blocks={layoutBlocks}
@@ -462,7 +482,7 @@ export default function PdfView({
             <Glyph>{icons.back}</Glyph>
           </button>
           <span className="rd-pdf-count" aria-live="polite">
-            {loading ? '…' : `Page ${painted} / ${pageCount || '?'}`}
+            {loading ? '…' : `${painted} / ${pageCount || '?'}`}
           </span>
           <button
             type="button"

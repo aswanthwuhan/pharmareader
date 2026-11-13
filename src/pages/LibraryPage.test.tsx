@@ -4,8 +4,10 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installBackBridge } from '../core/backButton';
 import { db } from '../core/db';
+import { getSetting } from '../core/settings';
 import type { BookRecord, ColumnMode } from '../core/types';
-import { deleteBook, setBookColumns } from '../import';
+import { deleteBook, importFileDetailed, setBookColumns } from '../import';
+import { IMPORT_LAYOUT_KEY } from '../import/importLayout';
 import LibraryPage from './LibraryPage';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -14,12 +16,41 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 vi.mock('../import', () => ({
   deleteBook: vi.fn(async () => undefined),
+  detectFormat: vi.fn((file: { name?: string }) =>
+    (file.name ?? '').toLowerCase().endsWith('.pdf') ? 'pdf' : 'txt',
+  ),
   importFileDetailed: vi.fn(async () => []),
   importText: vi.fn(async () => ({ bookId: 'x', title: 'x', format: 'txt', warnings: [] })),
   importUrl: vi.fn(async () => ({ bookId: 'x', title: 'x', format: 'html', warnings: [] })),
   setBookColumns: vi.fn(async () => undefined),
 }));
 vi.mock('../tts/ModelStatusBanner', () => ({ default: () => null }));
+
+/** The layout model's disk and download functions, replaced by a scriptable stand-in. */
+const layout = vi.hoisted(() => ({
+  ready: false,
+  downloads: 0,
+  progress: null as null | ((fraction: number) => void),
+  finish: null as null | (() => void),
+  fail: null as null | ((error: unknown) => void),
+}));
+
+vi.mock('../import/layout/model', () => ({
+  LAYOUT_MODEL: { label: 'PP-DocLayout-L', bytes: 33_581_278 },
+  isLayoutModelReady: () => Promise.resolve(layout.ready),
+  downloadLayoutModel: (onProgress?: (fraction: number) => void) => {
+    layout.downloads += 1;
+    layout.progress = onProgress ?? null;
+    return new Promise<void>((resolve, reject) => {
+      layout.finish = () => {
+        layout.ready = true;
+        onProgress?.(1);
+        resolve();
+      };
+      layout.fail = reject;
+    });
+  },
+}));
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -64,6 +95,8 @@ function renderLibrary(): Promise<void> {
       <MemoryRouter initialEntries={['/']}>
         <Routes>
           <Route path="/" element={<LibraryPage />} />
+          {/* A successful single-file import navigates to the reader. */}
+          <Route path="/read/:id" element={<p>Reader</p>} />
         </Routes>
       </MemoryRouter>
     );
@@ -137,9 +170,54 @@ async function chooseColumns(value: string): Promise<void> {
   });
 }
 
+/* --- The PDF-kind question ------------------------------------------------- */
+
+function questionSheet(): HTMLElement | null {
+  return container.querySelector<HTMLElement>('.import-sheet');
+}
+
+function questionButton(label: string): HTMLButtonElement | undefined {
+  return [...container.querySelectorAll<HTMLButtonElement>('.import-choice')].find(
+    (button) => button.querySelector('.import-choice-title')?.textContent === label,
+  );
+}
+
+function makeFile(name: string, type = 'application/pdf'): File {
+  return new File(['%PDF-1.4'], name, { type });
+}
+
+async function pickFiles(...files: File[]): Promise<void> {
+  const input = container.querySelector<HTMLInputElement>('input[type="file"]');
+  if (!input) throw new Error('file input missing');
+  Object.defineProperty(input, 'files', { value: files, configurable: true });
+  await act(async () => {
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  });
+}
+
+async function answerQuestion(label: string, remember = false): Promise<void> {
+  const box = container.querySelector<HTMLInputElement>('.import-remember input[type="checkbox"]');
+  await act(async () => {
+    if (remember && box) box.click();
+    questionButton(label)?.click();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+}
+
 beforeEach(async () => {
   vi.mocked(deleteBook).mockClear();
   vi.mocked(setBookColumns).mockClear();
+  vi.mocked(importFileDetailed).mockReset();
+  vi.mocked(importFileDetailed).mockResolvedValue({ bookId: 'new-book' });
+  // jsdom has no Cache Storage; the model module is mocked, but the page still
+  // asks whether this device can store a model at all.
+  (globalThis as { caches?: unknown }).caches = {};
+  layout.ready = false;
+  layout.downloads = 0;
+  layout.progress = null;
+  layout.finish = null;
+  layout.fail = null;
   await db.delete();
   await db.open();
   container = document.createElement('div');
@@ -157,6 +235,7 @@ afterEach(async () => {
   container.remove();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  delete (globalThis as { caches?: unknown }).caches;
   await db.delete();
   await db.open();
 });
@@ -540,19 +619,19 @@ describe('library: update banner', () => {
   it('shows the banner for a newer release the reader opted in to check', async () => {
     await db.books.put(makeBook());
     await optIn();
-    const fetchMock = vi.fn(async () => releaseResponse('v0.4.0'));
+    const fetchMock = vi.fn(async () => releaseResponse('v9.9.9'));
     vi.stubGlobal('fetch', fetchMock);
     await renderLibrary();
 
     await waitFor(() => updateBanner() !== null, 'update banner');
-    expect(updateBanner()?.textContent).toContain('PharmaReader 0.4.0 is available');
+    expect(updateBanner()?.textContent).toContain('PharmaReader 9.9.9 is available');
     // The banner carries the design's leading icon, decorative and hidden.
     expect(updateBanner()?.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
 
     const download = updateBanner()?.querySelector<HTMLAnchorElement>('a');
     expect(download?.textContent).toBe('Download');
     expect(download?.getAttribute('href')).toBe(
-      'https://github.com/aswanthwuhan/pharmareader/releases/tag/v0.4.0',
+      'https://github.com/aswanthwuhan/pharmareader/releases/tag/v9.9.9',
     );
     expect(download?.getAttribute('target')).toBe('_blank');
     expect(download?.getAttribute('rel')).toContain('noopener');
@@ -560,7 +639,7 @@ describe('library: update banner', () => {
 
   it('stays quiet when the update check is off, even with a newer release', async () => {
     await db.books.put(makeBook());
-    const fetchMock = vi.fn(async () => releaseResponse('v0.4.0'));
+    const fetchMock = vi.fn(async () => releaseResponse('v9.9.9'));
     vi.stubGlobal('fetch', fetchMock);
     await renderLibrary();
 
@@ -574,7 +653,7 @@ describe('library: update banner', () => {
     await optIn();
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => releaseResponse('v0.4.0')),
+      vi.fn(async () => releaseResponse('v9.9.9')),
     );
     await renderLibrary();
     await waitFor(() => updateBanner() !== null, 'update banner');
@@ -587,6 +666,141 @@ describe('library: update banner', () => {
     });
     await waitFor(() => updateBanner() === null, 'banner dismissed');
     const row = await db.settings.get('app.updateDismissed');
-    expect(row?.value).toBe('0.4.0');
+    expect(row?.value).toBe('9.9.9');
+  });
+});
+
+describe('library: the PDF-kind question', () => {
+  function importCalls(): number {
+    return vi.mocked(importFileDetailed).mock.calls.length;
+  }
+
+  it('does not ask when no PDF is picked', async () => {
+    await renderLibrary();
+    await pickFiles(makeFile('notes.txt', 'text/plain'));
+
+    await waitFor(() => importCalls() === 1, 'import');
+    expect(questionSheet()).toBeNull();
+    // No answer, no override: other formats import exactly as before.
+    expect(vi.mocked(importFileDetailed).mock.calls[0][2]).toEqual({ pdfLayout: undefined });
+  });
+
+  it('asks about a PDF and reads it with detection', async () => {
+    layout.ready = true;
+    await renderLibrary();
+    await pickFiles(makeFile('Katzung.pdf'));
+
+    await waitFor(() => questionSheet() !== null, 'PDF question');
+    expect(questionSheet()?.textContent).toContain('What kind of PDF is this?');
+    expect(questionButton('Textbook or complex pages')).toBeDefined();
+    expect(questionButton('Simple book')).toBeDefined();
+    // The model is on disk, so the sheet has no download to offer.
+    expect(questionSheet()?.textContent).not.toContain('about 32 MB');
+
+    await answerQuestion('Textbook or complex pages');
+    await waitFor(() => importCalls() === 1, 'import');
+    expect(vi.mocked(importFileDetailed).mock.calls[0][2]).toEqual({ pdfLayout: 'auto' });
+    expect(questionSheet()).toBeNull();
+  });
+
+  it('asks once for several PDFs and applies the same answer to all', async () => {
+    layout.ready = true;
+    await renderLibrary();
+    await pickFiles(makeFile('one.pdf'), makeFile('two.pdf'));
+
+    await waitFor(() => questionSheet() !== null, 'PDF question');
+    expect(questionSheet()?.textContent).toContain('The same answer is used for all 2 PDFs you picked.');
+    expect(questionSheet()?.textContent).toContain('What kind of PDFs are these?');
+
+    await answerQuestion('Simple book');
+    await waitFor(() => importCalls() === 2, 'both imports');
+    for (const call of vi.mocked(importFileDetailed).mock.calls) {
+      expect(call[2]).toEqual({ pdfLayout: 'heuristic' });
+    }
+    expect(layout.downloads).toBe(0);
+  });
+
+  it('imports a simple book without the model, and says so', async () => {
+    await renderLibrary();
+    await pickFiles(makeFile('Novel.pdf'));
+
+    await waitFor(() => questionSheet() !== null, 'PDF question');
+    expect(questionSheet()?.textContent).toContain(
+      'Layout detection uses PP-DocLayout-L, about 32 MB. It downloads once, then works offline.',
+    );
+
+    await answerQuestion('Simple book');
+    await waitFor(() => importCalls() === 1, 'import');
+    expect(vi.mocked(importFileDetailed).mock.calls[0][2]).toEqual({ pdfLayout: 'heuristic' });
+    expect(layout.downloads).toBe(0);
+  });
+
+  it('downloads the model for a textbook when it is missing', async () => {
+    await renderLibrary();
+    await pickFiles(makeFile('Katzung.pdf'));
+    await waitFor(() => questionSheet() !== null, 'PDF question');
+
+    await answerQuestion('Textbook or complex pages');
+    await waitFor(() => layout.downloads === 1, 'download started');
+    expect(questionSheet()?.textContent).toContain('Downloading the layout model — 0 of 32 MB…');
+
+    await act(async () => {
+      layout.progress?.(0.5);
+    });
+    expect(questionSheet()?.textContent).toContain('16 of 32 MB');
+
+    await act(async () => {
+      layout.finish?.();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    await waitFor(() => importCalls() === 1, 'import after download');
+    expect(vi.mocked(importFileDetailed).mock.calls[0][2]).toEqual({ pdfLayout: 'auto' });
+  });
+
+  it('remembers the answer and skips the question next time', async () => {
+    layout.ready = true;
+    await renderLibrary();
+    await pickFiles(makeFile('one.pdf'), makeFile('two.pdf'));
+    await waitFor(() => questionSheet() !== null, 'first question');
+
+    await answerQuestion('Simple book', true);
+    await waitFor(() => importCalls() === 2, 'first imports');
+    expect(await getSetting(IMPORT_LAYOUT_KEY, 'ask')).toBe('simple');
+
+    await pickFiles(makeFile('three.pdf'), makeFile('four.pdf'));
+    await waitFor(() => importCalls() === 4, 'second imports');
+    expect(questionSheet()).toBeNull();
+    expect(vi.mocked(importFileDetailed).mock.calls[2][2]).toEqual({ pdfLayout: 'heuristic' });
+  });
+
+  it('does not ask where the model cannot run', async () => {
+    delete (globalThis as { caches?: unknown }).caches;
+    await renderLibrary();
+    await pickFiles(makeFile('Katzung.pdf'));
+
+    await waitFor(() => importCalls() === 1, 'import');
+    expect(questionSheet()).toBeNull();
+    expect(vi.mocked(importFileDetailed).mock.calls[0][2]).toEqual({ pdfLayout: undefined });
+    // Nothing was answered, so the question is still owed next time.
+    expect(await getSetting(IMPORT_LAYOUT_KEY, 'ask')).toBe('ask');
+  });
+
+  it('still imports, with a warning, when detection fails', async () => {
+    layout.ready = true;
+    vi.mocked(importFileDetailed).mockResolvedValue({
+      bookId: 'new-book',
+      warning: 'The layout model failed on 2 pages and was stopped; those pages were read with the text layout only.',
+    });
+    await renderLibrary();
+    await pickFiles(makeFile('Katzung.pdf'));
+    await waitFor(() => questionSheet() !== null, 'PDF question');
+
+    await answerQuestion('Textbook or complex pages');
+    await waitFor(() => container.querySelector('.banner-warning') !== null, 'warning banner');
+    const banner = container.querySelector('.banner-warning');
+    expect(banner?.textContent).toContain('Imported with a note');
+    expect(banner?.textContent).toContain('Katzung.pdf');
+    expect(banner?.textContent).toContain('read with the text layout only');
+    expect(questionSheet()).toBeNull();
   });
 });

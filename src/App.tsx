@@ -4,6 +4,7 @@ import { installBackBridge } from './core/backButton';
 import { db } from './core/db';
 import { getSetting, setSetting } from './core/settings';
 import { APP_VERSION, changelogSection, LAST_SEEN_VERSION_KEY, shouldShowWhatsNew } from './core/version';
+import Tutorial, { TUTORIAL_SEEN_KEY, TUTORIAL_START_EVENT } from './components/Tutorial';
 import WhatsNew from './components/WhatsNew';
 import LibraryPage from './pages/LibraryPage';
 import ReaderPage from './pages/ReaderPage';
@@ -89,17 +90,22 @@ export default function App() {
   // the reader last saw. A fresh install (empty library, no stored version) has
   // nothing to catch up on, so it is recorded quietly instead of greeted.
   const [whatsNewVersion, setWhatsNewVersion] = useState<string | null>(null);
+  // The tutorial greets a fresh install only (empty library, never seen); an
+  // upgrade gets "What's new" instead, and Settings → About replays it any time.
+  const [tutorialOpen, setTutorialOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
 
     async function greetReturningReader() {
       try {
-        const [lastSeen, bookCount] = await Promise.all([
+        const [lastSeen, bookCount, tutorialSeen] = await Promise.all([
           getSetting<string | undefined>(LAST_SEEN_VERSION_KEY, undefined),
           db.books.count(),
+          getSetting<boolean>(TUTORIAL_SEEN_KEY, false),
         ]);
         if (cancelled) return;
+        if (!tutorialSeen && bookCount === 0) setTutorialOpen(true);
 
         if (!shouldShowWhatsNew(lastSeen, bookCount) || !changelogSection(APP_VERSION)) {
           if (lastSeen !== APP_VERSION) await setSetting(LAST_SEEN_VERSION_KEY, APP_VERSION);
@@ -115,6 +121,12 @@ export default function App() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    const openTour = () => setTutorialOpen(true);
+    window.addEventListener(TUTORIAL_START_EVENT, openTour);
+    return () => window.removeEventListener(TUTORIAL_START_EVENT, openTour);
   }, []);
 
   // Reading is a focused surface: on a wide screen the global rail steps aside
@@ -157,7 +169,7 @@ export default function App() {
       {/* Reading owns the whole screen: the reader's app bar is the way back, and
           its player sheet sits where the tab bar would be. */}
       {reading ? null : (
-        <nav className="app-nav" aria-label="Main">
+        <nav className="app-nav" aria-label="Main" data-tour="nav">
           {NAV.map((item) => (
             <NavLink
               key={item.to}
@@ -172,6 +184,7 @@ export default function App() {
         </nav>
       )}
 
+      {tutorialOpen ? <Tutorial onClose={() => setTutorialOpen(false)} /> : null}
       {whatsNewVersion ? <WhatsNew version={whatsNewVersion} onClose={() => setWhatsNewVersion(null)} /> : null}
     </div>
   );

@@ -114,7 +114,7 @@ Constraints that design work must respect:
 
 1. **The text is the interface.** Chrome, colour and motion exist to get her to the words and
    out of the way again. If a decoration does not help her read, find, or remember, it goes.
-2. **Quiet competence over persuasion.** No onboarding carousel, no upsell, no celebration
+2. **Quiet competence over persuasion.** No sign-up or marketing carousel (the one guided tour points at real controls, can be skipped, and is replayable from Settings → About), no upsell, no celebration
    confetti. Show the state of things accurately and let her act.
 3. **Say what is true, including what failed.** "Looks scanned — OCR not supported yet" beats
    a spinner that never resolves. Errors name the file and the reason.

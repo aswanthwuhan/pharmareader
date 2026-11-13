@@ -70,6 +70,12 @@ export interface PdfParseOptions {
    * used when the text shows one.
    */
   columns?: ColumnMode;
+  /**
+   * Whether this parse may use the layout model. Left out, the reader's
+   * device-wide choice decides; the import question sets it for the book being
+   * imported, before the model is even read.
+   */
+  layout?: LayoutMode;
 }
 
 export async function parsePdf(
@@ -92,7 +98,7 @@ export async function parsePdf(
     const pageGutters: (Gutter | null)[] = [];
     let modelNote: string | undefined;
     try {
-      detector = await layoutDetector();
+      detector = await layoutDetector(options.layout);
     } catch (error) {
       // A machine without WebAssembly, or a corrupt download: read the text as
       // before rather than failing the whole import — and say so.
@@ -254,10 +260,11 @@ export async function parsePdf(
   }
 }
 
-/** The detector, when the setting allows it and the model is installed. */
-async function layoutDetector(): Promise<PageLayoutDetector | null> {
+/** The detector, when this parse allows it and the model is installed. */
+async function layoutDetector(override?: LayoutMode): Promise<PageLayoutDetector | null> {
   // A settings read that fails is not a model that failed: fall back to the default.
-  const mode = await getSetting<LayoutMode>('import.layout', 'auto').catch(() => 'auto' as LayoutMode);
+  const mode =
+    override ?? (await getSetting<LayoutMode>('import.layout', 'auto').catch(() => 'auto' as LayoutMode));
   if (mode === 'heuristic') return null;
   // Null when the model is not downloaded; a model that is there and will not
   // start throws, and the caller reports it.

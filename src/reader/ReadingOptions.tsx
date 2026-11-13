@@ -29,6 +29,7 @@ import {
   type SkipOptions,
 } from './reading';
 import type { BracketMode } from './spoken';
+import ReadAlongGroup from './ReadAlongGroup';
 import './reader.css';
 
 /** Keys that are a plain on/off switch. */
@@ -218,6 +219,8 @@ export default function ReadingOptions() {
           onChange={(event) => void setSetting(WORD_HIGHLIGHT_KEY, event.target.checked)}
         />
       </label>
+
+      <ReadAlongGroup />
 
       {heatWarning && (
         <p className="field-hint" role="note">

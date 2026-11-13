@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Link } from 'react-router-dom';
 import { db } from '../core/db';
@@ -216,6 +216,17 @@ export default function SyllabusPage() {
       document.removeEventListener('pointerdown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
     };
+  }, [menuFor]);
+
+  // The last topic's menu would open off a short phone: measure once it is on
+  // the page and flip it above the button (syllabus.css has the placement).
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!el) return;
+    el.removeAttribute('data-placement');
+    if (el.getBoundingClientRect().bottom > window.innerHeight - 8) {
+      el.setAttribute('data-placement', 'up');
+    }
   }, [menuFor]);
 
   const topics = useLiveQuery(() => db.topics.toArray(), []) ?? [];

@@ -1,0 +1,183 @@
+/*
+ * Save-ahead sheet. Doubled class selectors (.aq-sheet.aq-sheet) because the
+ * global .sheet rules are injected after page CSS and win on equal specificity.
+ * Tokens come from styles.css, so both themes follow without a media query.
+ */
+.aq-sheet.aq-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.aq-sheet .aq-intro {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.aq-sheet .aq-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.aq-sheet .aq-status {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.aq-sheet .aq-running {
+  display: grid;
+  gap: 10px;
+}
+
+.aq-sheet .aq-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.aq-sheet .aq-tab.aq-tab {
+  flex: 1 1 0;
+  min-height: 44px;
+  padding: 0 12px;
+}
+
+.aq-sheet .aq-tab.aq-tab[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+  font-weight: 600;
+}
+
+.aq-sheet .aq-pages {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+}
+
+.aq-sheet .aq-page-row {
+  display: grid;
+  gap: 6px;
+}
+
+.aq-sheet .aq-page-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.aq-sheet .aq-page-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 44px;
+  height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--border-control);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+}
+
+.aq-sheet .aq-page-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.aq-sheet .aq-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.aq-sheet .aq-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.aq-sheet .aq-list-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.aq-sheet .aq-selects {
+  display: flex;
+  gap: 4px;
+}
+
+.aq-sheet .aq-select.aq-select {
+  min-height: 44px;
+  padding: 0 10px;
+}
+
+.aq-sheet .aq-list {
+  max-height: 38dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--border);
+}
+
+.aq-sheet .aq-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.aq-sheet .aq-row:last-child {
+  border-bottom: 0;
+}
+
+.aq-sheet .aq-check {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
+.aq-sheet .aq-text {
+  display: grid;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.aq-sheet .aq-title {
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.3;
+}
+
+.aq-sheet .aq-count {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.aq-sheet .aq-saved {
+  color: var(--success);
+  font-size: 12px;
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+.aq-sheet .aq-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.aq-sheet .aq-actions.aq-actions {
+  margin-top: 4px;
+}

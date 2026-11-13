@@ -12,11 +12,13 @@ import { db } from '../core/db';
 import { pushBackHandler } from '../core/backButton';
 import { getSetting, setSetting, useSetting } from '../core/settings';
 import type { BookRecord, Highlight, PdfRect } from '../core/types';
+import { wordRects } from './pdfWord';
+import { fileMissing } from '../import';
 import { nativePlayback } from '../tts/native/playbackPlugin';
 import { setImmersive } from '../tts/native/systemUi';
 import { createPlayer, type ItemState, type Player } from '../tts/player';
 import { describeEngine, ENGINE_SETTING, warmEngine, type EngineInfo } from '../tts/registry';
-import { prerenderChapter } from '../tts/neural/prerender';
+import { isPrerendered, prerenderChapter } from '../tts/neural/prerender';
 import {
   addBookmark,
   addHighlight,
@@ -32,9 +34,12 @@ import AiActions from '../ai/AiActions';
 import TopicPicker from '../syllabus/TopicPicker';
 import ModelStatusBanner from '../tts/ModelStatusBanner';
 import PlayerBar, { type PageNav, type PlayState } from './PlayerBar';
+import AudioQueueSheet, { type AudioQueueChapter, type AudioQueueSelection } from './AudioQueueSheet';
 import SelectionBar, { type HighlightColor } from './SelectionBar';
 import { Glyph, icons } from './Icon';
 import ReflowView from './ReflowView';
+import ReadAlongGroup from './ReadAlongGroup';
+import { readAlongStyle, useReadAlong } from './readAlong';
 import { LAST_BOOK_KEY } from './lastBook';
 import {
   DEFAULT_PAUSE_MS,
@@ -122,6 +127,16 @@ function lastPosKey(bookId: string): string {
   return `reader.lastPos.${bookId}`;
 }
 
+/**
+ * The view this reader last chose for this book. Absent means they have never
+ * chosen: a PDF then opens on its drawn page (Page view), a text book stays in
+ * the text view, and a PDF whose file is gone falls back to text (Page view
+ * has nothing to draw).
+ */
+function modeKey(bookId: string): string {
+  return `reader.mode.${bookId}`;
+}
+
 interface SavedPos {
   chapterId: string;
   sentenceId: string;
@@ -164,6 +179,7 @@ export default function ReaderView() {
   const wordHighlight = useSetting<boolean>(WORD_HIGHLIGHT_KEY, true);
   const pauseMs = useSetting<number>(PAUSE_KEY, DEFAULT_PAUSE_MS);
   const prefetchAhead = usePrefetchAhead();
+  const readAlong = useReadAlong();
 
   const [cursor, setCursor] = useState<Pos | null>(null);
   const [mode, setMode] = useState<'text' | 'page'>('text');
@@ -176,8 +192,14 @@ export default function ReaderView() {
   const [aiText, setAiText] = useState<string | null>(null);
   const [playState, setPlayState] = useState<PlayState>('idle');
   const [engineInfo, setEngineInfo] = useState<EngineInfo | null>(null);
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number; status?: string } | null>(null);
   const [cachedChapter, setCachedChapter] = useState<string | null>(null);
+  /** The sheet that queues several chapters, or a page range, for saved audio. */
+  const [queueOpen, setQueueOpen] = useState(false);
+  /** Chapters whose saved audio this session has confirmed against the cache. */
+  const [savedChapters, setSavedChapters] = useState<ReadonlySet<number>>(() => new Set());
+  /** Chapters a queue could not finish; named in the sheet and the banner. */
+  const [queueFailed, setQueueFailed] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   /** A start the browser refused; a tap on Play is the only way past it. */
   const [notice, setNotice] = useState<string | null>(null);
@@ -212,6 +234,8 @@ export default function ReaderView() {
    */
   const resumeBlocked = useRef(false);
   const engineRef = useRef<EngineInfo | null>(null);
+  /** The book the engine effect last resolved, so a voice switch on the same book resumes. */
+  const engineBookRef = useRef<string | null | undefined>(null);
   // `rateRef` is the authoritative rate for the next player. It must not be
   // re-read from the (asynchronously persisted) setting on every render: a
   // release right after a slider move would then start at the stale rate.
@@ -367,6 +391,31 @@ export default function ReaderView() {
       alive = false;
     };
   }, [book, index]);
+
+  // Which view a book opens in: the reader's own last choice for this book,
+  // otherwise the drawn page for a PDF (most people never found it) and the
+  // text view for everything else. A PDF whose stored file is gone has nothing
+  // to draw, so it opens in text, where its parsed sentences still read.
+  useEffect(() => {
+    if (!book) return;
+    if (book.parsed.format !== 'pdf') {
+      setMode('text');
+      return;
+    }
+    let alive = true;
+    void getSetting<'text' | 'page' | undefined>(modeKey(book.id), undefined)
+      .catch(() => undefined)
+      .then((stored) => {
+        if (!alive) return;
+        // Nothing to draw when the file is gone, so even a remembered Page
+        // choice falls back to the text; the import banner explains it.
+        const wantsPage = !fileMissing(book) && stored !== 'text';
+        setMode(wantsPage ? 'page' : 'text');
+      });
+    return () => {
+      alive = false;
+    };
+  }, [book]);
 
   useEffect(() => {
     if (!book || !cursor || !index) return;
@@ -527,6 +576,12 @@ export default function ReaderView() {
   // probe must not delay it. Re-resolve when the user changes the engine.
   useEffect(() => {
     let alive = true;
+    // A voice that becomes ready mid-book (Kokoro finishing its download) continues
+    // from the same sentence on the new engine instead of leaving the reader stopped.
+    const wasPlaying = playStateRef.current === 'playing' && selectionPlay === null;
+    const position = cursorRef.current;
+    const sameBook = engineBookRef.current === bookId;
+    engineBookRef.current = bookId;
     releasePlayer();
     engineRef.current = null;
     setEngineInfo(null);
@@ -536,6 +591,9 @@ export default function ReaderView() {
         engineRef.current = info;
         setEngineInfo(info);
         warmEngine(info.engine);
+        if (sameBook && wasPlaying && position) {
+          beginPlayback(info, position.chapterIndex, position.index);
+        }
       })
       .catch(() => {
         // describeEngine already falls back to system; a throw here means no TTS.
@@ -1144,6 +1202,184 @@ export default function ReaderView() {
     }
   }
 
+  // -- saved audio queue ---------------------------------------------------
+
+  function chapterTitle(ci: number): string {
+    return book?.parsed.chapters[ci]?.title?.trim() || `Chapter ${ci + 1}`;
+  }
+
+  /**
+   * Sentences the player would speak that start on each PDF page (index 0 is
+   * page 1), so the sheet's page range promises only what will be rendered.
+   */
+  const pageSentenceCounts = useMemo(() => {
+    const counts: number[] = [];
+    if (!index || book?.parsed.format !== 'pdf') return counts;
+    const last = Math.max(1, lastPage(index));
+    for (let page = 1; page <= last; page += 1) counts.push(0);
+    for (let ci = 0; ci < index.chapters.length; ci += 1) {
+      for (const item of prerenderItems(ci)) {
+        const pos = index.byId.get(item.id);
+        const page = pos ? sentenceAt(index, pos)?.pdfRects?.[0]?.page : undefined;
+        if (page !== undefined && page >= 1 && page <= last) counts[page - 1] += 1;
+      }
+    }
+    return counts;
+    // prerenderItems follows skip/pauseMs through planFor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, book, skip, pauseMs]);
+
+  /** The sheet's chapter list: what the player would speak, and what is saved. */
+  const queueChapters = useMemo<AudioQueueChapter[]>(() => {
+    if (!book) return [];
+    return book.parsed.chapters.map((_chapter, ci) => ({
+      index: ci,
+      title: chapterTitle(ci),
+      sentences: prerenderItems(ci).length,
+      saved: savedChapters.has(ci),
+    }));
+    // prerenderItems follows skip/pauseMs through planFor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [book, savedChapters, skip, pauseMs]);
+
+  /**
+   * "Saved" is per chapter and has to be true. The cache keeps only content-
+   * hashed rows, so the only honest check is the player's own key for every
+   * sentence of the chapter — `isPrerendered` does exactly that, one key at a
+   * time, and stops at the first miss, so an unsaved chapter costs one lookup.
+   */
+  useEffect(() => {
+    if (!queueOpen || !index || progress !== null) return;
+    let alive = true;
+    void (async () => {
+      let info: EngineInfo;
+      try {
+        info = await engineForPlay();
+      } catch {
+        return;
+      }
+      if (!alive || !info.engine.synthesize) return;
+      const opts = { voiceId: engineVoiceId(info, voiceRef.current), rate: rateRef.current };
+      const hits = new Set<number>();
+      for (let ci = 0; ci < index.chapters.length; ci += 1) {
+        if (!alive) return;
+        const items = prerenderItems(ci);
+        if (!items.length) continue;
+        try {
+          if (await isPrerendered(info.engine, items, opts)) hits.add(ci);
+        } catch {
+          // A lookup that fails is "not known to be saved", never "saved".
+        }
+        // Let the sheet paint between chapters instead of freezing while it looks.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      if (alive) setSavedChapters(hits);
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queueOpen, index, progress]);
+
+  /**
+   * Queues chapters (or a PDF page range) through the same pre-render the
+   * single-chapter action uses. A chapter that fails is named and skipped; the
+   * rest still run, because the others are still worth having. Stop keeps
+   * whatever finished — the cache has no markers to roll back.
+   */
+  async function saveQueue(selection: AudioQueueSelection): Promise<void> {
+    if (!index || !book) return;
+    type Job = { chapterIndex: number; title: string; items: { id: string; text: string }[] };
+    const jobs: Job[] = [];
+    if (selection.kind === 'chapters') {
+      for (const ci of [...selection.chapterIndexes].sort((a, b) => a - b)) {
+        const items = prerenderItems(ci);
+        if (items.length) jobs.push({ chapterIndex: ci, title: chapterTitle(ci), items });
+      }
+    } else {
+      const from = Math.min(selection.from, selection.to);
+      const to = Math.max(selection.from, selection.to);
+      const items: { id: string; text: string }[] = [];
+      for (let ci = 0; ci < index.chapters.length; ci += 1) {
+        for (const item of prerenderItems(ci)) {
+          const pos = index.byId.get(item.id);
+          const page = pos ? sentenceAt(index, pos)?.pdfRects?.[0]?.page : undefined;
+          if (page !== undefined && page >= from && page <= to) items.push(item);
+        }
+      }
+      if (items.length) jobs.push({ chapterIndex: -1, title: `pages ${from}–${to}`, items });
+    }
+    if (!jobs.length) return;
+
+    const info = await engineForPlay();
+    if (!info.engine.synthesize) {
+      setError(`${info.engine.label} cannot store audio; it speaks directly.`);
+      setQueueOpen(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const voiceId = engineVoiceId(info, voiceRef.current);
+    const rate = rateRef.current;
+    const totalSentences = jobs.reduce((sum, job) => sum + job.items.length, 0);
+    const failedTitles: string[] = [];
+    const savedNow = new Set<number>();
+    let doneBefore = 0;
+    let pages = { from: 0, to: 0 };
+    if (selection.kind === 'pages') {
+      pages = { from: Math.min(selection.from, selection.to), to: Math.max(selection.from, selection.to) };
+    }
+
+    const queueStatus = (at: number, done: number): string =>
+      selection.kind === 'chapters'
+        ? `Saving chapter ${at + 1} of ${jobs.length} — ${done} of ${jobs[at]?.items.length ?? 0} sentences`
+        : `Saving pages ${pages.from}–${pages.to} — ${done} of ${totalSentences} sentences`;
+
+    setError(null);
+    setQueueFailed([]);
+    setProgress({ done: 0, total: jobs[0].items.length, status: queueStatus(0, 0) });
+    try {
+      for (let at = 0; at < jobs.length; at += 1) {
+        if (controller.signal.aborted) break;
+        const job = jobs[at];
+        setProgress({ done: 0, total: job.items.length, status: queueStatus(at, 0) });
+        try {
+          const report = await prerenderChapter(
+            info.engine,
+            job.items,
+            { voiceId, rate, signal: controller.signal },
+            (p) => {
+              setProgress(
+                selection.kind === 'chapters'
+                  ? { done: p.done, total: p.total, status: queueStatus(at, p.done) }
+                  : { done: doneBefore + p.done, total: totalSentences, status: queueStatus(0, doneBefore + p.done) }
+              );
+            }
+          );
+          if (report.aborted) break;
+          if (report.failed > 0) failedTitles.push(job.title);
+          else if (job.chapterIndex >= 0) savedNow.add(job.chapterIndex);
+        } catch {
+          if (controller.signal.aborted) break;
+          failedTitles.push(job.title);
+        }
+        doneBefore += job.items.length;
+      }
+    } finally {
+      abortRef.current = null;
+      setProgress(null);
+      if (savedNow.size > 0) {
+        setSavedChapters((previous) => new Set([...previous, ...savedNow]));
+        if (cursor && savedNow.has(cursor.chapterIndex)) setCachedChapter(chapter?.id ?? null);
+      }
+      if (failedTitles.length > 0) {
+        setQueueFailed(failedTitles);
+        setError(`Could not save ${failedTitles.join(', ')}.`);
+      }
+    }
+  }
+
   // -- selection actions ---------------------------------------------------
 
   function textsOf(ids: string[]): string {
@@ -1462,6 +1698,14 @@ export default function ReaderView() {
   }
 
   const showPage = isPdf && mode === 'page';
+  // The view is remembered per book, so a PDF the reader switched to text opens
+  // in text next time, while a PDF they never touched still opens on its page.
+  const chooseMode = (next: 'text' | 'page'): void => {
+    setMode(next);
+    void setSetting(modeKey(book.id), next).catch(() => {
+      // A preference only: never fail switching a view over it.
+    });
+  };
   // Full screen starts clean (no bar, dock or chapter nav) until the reader asks
   // for them with a tap on blank space.
   const showChrome = !fullscreen || chromeVisible;
@@ -1498,6 +1742,9 @@ export default function ReaderView() {
     <section
       className={`page rd-page${showPage ? ' rd-page--page' : ''}${fullscreen ? ' rd-page--fullscreen' : ''}`}
       ref={pageRef}
+      data-ra-style={readAlong.style}
+      data-ra-word={readAlong.wordStyle}
+      style={readAlongStyle(readAlong.colour, readAlong.strength, readAlong.wordStrength)}
       onClick={onImmersiveClick}
     >
       {showChrome ? (
@@ -1509,16 +1756,21 @@ export default function ReaderView() {
             {book.title}
           </h1>
           {isPdf ? (
-            <div className="rd-seg" role="group" aria-label="View mode">
+            <div className="rd-seg" role="group" aria-label="View mode" data-tour="view-switch">
               <button
                 type="button"
                 className="rd-seg-btn"
                 aria-pressed={!showPage}
-                onClick={() => setMode('text')}
+                onClick={() => chooseMode('text')}
               >
                 Text
               </button>
-              <button type="button" className="rd-seg-btn" aria-pressed={showPage} onClick={() => setMode('page')}>
+              <button
+                type="button"
+                className="rd-seg-btn"
+                aria-pressed={showPage}
+                onClick={() => chooseMode('page')}
+              >
                 Page
               </button>
             </div>
@@ -1528,6 +1780,7 @@ export default function ReaderView() {
             className="rd-bar-btn"
             aria-label="Contents"
             aria-expanded={drawer !== 'none'}
+            data-tour="contents"
             onClick={() => {
               setTypeOpen(false);
               setDrawer(drawer === 'none' ? 'toc' : 'none');
@@ -1540,6 +1793,7 @@ export default function ReaderView() {
             className="rd-bar-text"
             aria-label="Text size and spacing"
             aria-expanded={typeOpen}
+            data-tour="type"
             onClick={() => {
               setDrawer('none');
               setTypeOpen(!typeOpen);
@@ -1608,6 +1862,11 @@ export default function ReaderView() {
             file={book.fileBlob}
             page={pdfPage}
             rects={reading?.pdfRects ?? NO_PDF_RECTS}
+            wordRects={
+              wordHighlight && reading?.pdfRects && word?.id === reading.id
+                ? wordRects(reading.pdfRects, reading.text, word.charIndex)
+                : undefined
+            }
             fullscreen={fullscreen}
             layoutBlocks={layoutBlocks}
             onSaveOrder={savePageOrder}
@@ -1685,6 +1944,7 @@ export default function ReaderView() {
         <PlayerBar
           state={playState}
           engineName={engineName(engineInfo)}
+          engineId={engineInfo?.engine.id ?? null}
           fallback={Boolean(engineInfo && !engineInfo.preferred && engineChoice !== 'auto')} // auto on the phone voice is expected, not a failure
           rate={rate}
           canPrerender={Boolean(engineInfo?.engine.capabilities.prerender)}
@@ -1713,6 +1973,7 @@ export default function ReaderView() {
           onNext={() => step(1)}
           onRate={changeRate}
           onPrerender={() => void preRender()}
+          onPrerenderMore={() => setQueueOpen(true)}
           onCancelPrerender={() => abortRef.current?.abort()}
           onPlayFromHere={playFromHere}
           onSleepEnd={pauseOnly}
@@ -1834,6 +2095,8 @@ export default function ReaderView() {
               </div>
             </div>
 
+            <ReadAlongGroup />
+
             <button type="button" className="btn btn-primary btn-block" onClick={() => setTypeOpen(false)}>
               Done
             </button>
@@ -1922,6 +2185,23 @@ export default function ReaderView() {
             )}
           </div>
         </div>
+      ) : null}
+
+      {queueOpen ? (
+        <AudioQueueSheet
+          chapters={queueChapters}
+          pageCount={book.parsed.format === 'pdf' ? Math.max(1, lastPage(index)) : undefined}
+          pageSentences={book.parsed.format === 'pdf' ? pageSentenceCounts : undefined}
+          progress={
+            progress && progress.status
+              ? { done: progress.done, total: progress.total, status: progress.status }
+              : null
+          }
+          failed={queueFailed}
+          onSave={(selection) => void saveQueue(selection)}
+          onCancelQueue={() => abortRef.current?.abort()}
+          onClose={() => setQueueOpen(false)}
+        />
       ) : null}
     </section>
   );
