@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.10 — 2026-11-13
+Web app only (GitHub Pages). Installs over 0.3.9 without losing data.
+
+**Fixed — phone voice on iPhone**
+- Play could switch to Pause and then stay silent on iPhone. The app cleared the speech queue right before speaking even when nothing was queued, and Safari on iOS can drop a sentence sent straight after that. It now clears the queue only when something is actually playing.
+
 ## 0.3.9 — 2026-11-13
 Web app mostly (GitHub Pages); Android gets the import, backup and PDF fixes too. Installs over 0.3.8 without losing data.
 

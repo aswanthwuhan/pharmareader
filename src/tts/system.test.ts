@@ -238,8 +238,16 @@ describe('systemEngine (web)', () => {
     synth.queue[0]!.onend?.();
     await done;
 
-    expect(synth.cancels).toBeGreaterThan(1);
+    expect(synth.cancels).toBeGreaterThan(0);
     expect(log).toEqual([]);
+  });
+
+  it('does not cancel an idle synthesizer before speaking (WebKit can drop the speak)', async () => {
+    const done = systemEngine.speak([{ id: 's1', text: 'Alpha.' }], { rate: 1 }, {});
+    await until(() => synth.queue.length === 1);
+    expect(synth.cancels).toBe(0);
+    synth.queue[0]!.onend?.();
+    await done;
   });
 
   it('pauses by cancelling, keeps the call pending, and replays the chunk on resume', async () => {

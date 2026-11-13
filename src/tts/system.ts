@@ -208,10 +208,11 @@ const webEngine: TtsEngine = {
     // Some engines are left `paused` by an earlier cancel; speak() alone then
     // silently queues nothing.
     if (s.paused) s.resume();
-    const wasBusy = s.speaking === true || s.pending === true;
-    s.cancel();
-    if (wasBusy) {
-      // Chrome Android drops a speak() issued in the same tick as cancel().
+    // Cancel only what is actually queued: WebKit on iOS can drop a speak() that
+    // follows cancel() on an idle synthesizer, and Chrome Android drops one
+    // issued in the same tick as cancel().
+    if (s.speaking === true || s.pending === true) {
+      s.cancel();
       await delay(50);
     }
 
