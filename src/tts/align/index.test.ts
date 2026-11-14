@@ -62,6 +62,20 @@ describe('estimateTimings', () => {
     // "Digoxin" is longer than "a", and takes longer.
     expect(timings[0]!.endMs - timings[0]!.startMs).toBeGreaterThan(timings[2]!.endMs - timings[2]!.startMs);
   });
+
+  it('times a word by its spoken length and keeps inside the speech', () => {
+    // "CYP3A4" is said as "C Y P three eigh four": 21 characters, not 6.
+    const timings = estimateTimings('The CYP3A4 enzyme', 3000, { weights: [3, 21, 6], startMs: 300, endMs: 2500 });
+    expect(timings[0]!.startMs).toBe(300);
+    expect(timings.at(-1)!.endMs).toBeCloseTo(2500);
+    expect(timings[1]!.endMs - timings[1]!.startMs).toBeCloseTo((22 / 33) * 2200);
+  });
+
+  it('ignores a speech window with no room in it', () => {
+    const timings = estimateTimings('one two', 1000, { startMs: 400, endMs: 400 });
+    expect(timings[0]!.startMs).toBe(0);
+    expect(timings.at(-1)!.endMs).toBeCloseTo(1000);
+  });
 });
 
 describe('wordTimings', () => {

@@ -609,6 +609,21 @@ describe('rectsForRange', () => {
     expect(rects[1]).toMatchObject({ page: 3, x: 10, y: 120, w: 97 });
   });
 
+  it('gives a sentence only its share of a text item that holds two sentences', () => {
+    // One PDF item for the whole printed line, as pdf.js usually reports it.
+    const line: PdfParagraph = {
+      page: 1,
+      text: 'aaaa bbbb.',
+      spans: [{ start: 0, end: 10, item: item('aaaa bbbb.', 10, 100, 90) }],
+    };
+    const [second] = rectsForRange(line, 5, 10);
+    expect(second!.x).toBeGreaterThan(50);
+    expect(second!.x + second!.w).toBeCloseTo(100);
+    const [first] = rectsForRange(line, 0, 4);
+    expect(first!.x).toBe(10);
+    expect(first!.x + first!.w).toBeLessThan(second!.x);
+  });
+
   it('returns nothing when the range misses every item', () => {
     expect(rectsForRange({ page: 1, text: '', spans: [] }, 0, 5)).toEqual([]);
   });

@@ -1,4 +1,5 @@
 import type { Block, Chapter, PdfRect, Sentence } from '../core/types';
+import { textWidth } from '../reader/pdfWord';
 import { normaliseText } from './blocks';
 // Type-only: `assign.ts` reads pdf.js boxes, and this module must stay
 // importable (and testable) without pdf.js.
@@ -837,9 +838,31 @@ function groupItemsByRow(items: PdfTextItem[]): PdfTextItem[][] {
   return rows;
 }
 
+/**
+ * The part of a text item that holds `[start, end)`. A PDF text item is often a
+ * whole printed line, so a sentence that starts or ends inside it owns only a
+ * share of its width — estimated from typical letter widths, since the item
+ * carries no per-letter positions.
+ */
+function clipItem(text: string, span: PdfSpan, start: number, end: number): PdfTextItem {
+  const from = Math.max(start, span.start);
+  const to = Math.min(end, span.end);
+  if (from === span.start && to === span.end) return span.item;
+  const total = textWidth(text.slice(span.start, span.end));
+  if (total <= 0) return span.item;
+  const scale = span.item.w / total;
+  return {
+    ...span.item,
+    x: span.item.x + textWidth(text.slice(span.start, from)) * scale,
+    w: textWidth(text.slice(from, to)) * scale,
+  };
+}
+
 /** Rects covering the sentence text in `[start, end)`, one merged rect per line. */
 export function rectsForRange(paragraph: PdfParagraph, start: number, end: number): PdfRect[] {
-  const items = paragraph.spans.filter((span) => span.start < end && span.end > start).map((span) => span.item);
+  const items = paragraph.spans
+    .filter((span) => span.start < end && span.end > start)
+    .map((span) => clipItem(paragraph.text, span, start, end));
 
   return groupItemsByRow(items).map((group) => {
     const left = Math.min(...group.map((item) => item.x));

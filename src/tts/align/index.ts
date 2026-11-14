@@ -12,7 +12,7 @@ import { isIos } from '../../core/platform';
 import { getSetting } from '../../core/settings';
 import { supportsNeuralVoices } from '../capabilities';
 import { alignTimings } from './align';
-import { estimateTimings } from './text';
+import { estimateTimings, type EstimateShape } from './text';
 import type { WordTiming } from './types';
 import { isWhisperAvailable, isWhisperLoaded, resetWhisperWorker, transcribe } from './whisper';
 import { WHISPER_IOS_SETTING } from './whisperModel';
@@ -20,6 +20,7 @@ import { WHISPER_IOS_SETTING } from './whisperModel';
 export type { TranscriptWord, WordTiming } from './types';
 export { alignTimings, transcriptFromChunks } from './align';
 export { estimateTimings, words } from './text';
+export type { EstimateShape } from './text';
 
 /** Recognised clips kept for replay: 200 sentences is a chapter's worth. */
 const CACHE_LIMIT = 200;
@@ -215,8 +216,13 @@ function pauseAligning(): void {
  * `charMap`. The result covers every word of `text`, is monotonic and stays
  * inside the clip.
  */
-export async function wordTimings(audio: Blob, text: string, durationMs: number): Promise<WordTiming[]> {
-  const estimate = estimateTimings(text, durationMs);
+export async function wordTimings(
+  audio: Blob,
+  text: string,
+  durationMs: number,
+  shape?: EstimateShape,
+): Promise<WordTiming[]> {
+  const estimate = estimateTimings(text, durationMs, shape);
   if (audio.size === 0 || durationMs <= 0 || text.trim() === '') return estimate;
 
   // The recogniser is a SIMD-only ONNX build too. On a browser that cannot run

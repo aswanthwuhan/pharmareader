@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.1 — 2026-11-14
+Android, Windows and the web app. Installs over 0.4.0 without losing data.
+
+**Fixed — the word highlight keeps up with the voice**
+- The spoken word ran ahead of or behind the voice, most in sentences with notation such as CYP3A4, t½ or doses. Each word is now given the time its spoken form takes ("CYP3A4" is six spoken words), and the silence Kokoro leaves at the start and end of a sentence no longer counts as speech.
+- The last word of a sentence stayed lit through the pause before the next one. The mark now clears when the voice stops.
+- The phone voice follows the same spoken-length rule.
+- Timing is still an estimate unless word timing is installed (Settings → Word-by-word highlighting).
+
+**Fixed — the word mark in Page view sits on the word**
+- The mark was placed as if every letter were equally wide and could spill onto the line above. It now uses typical letter widths and is fitted line by line.
+- A sentence that shared a printed line with its neighbours was marked across the whole line. New imports mark only the sentence's own part. Books imported earlier keep their old sentence boxes: import the PDF again to get this.
+- The mark can still be about a letter off.
+
+**New — play from the page you turned to**
+- In Page view, turning the page while the voice is reading now only shows that page; the voice carries on. A small "Play from here" button starts reading at the top of the page in view. When paused or stopped, turning the page moves the reading position as before.
+
 ## 0.4.0 — 2026-11-13
 Android, Windows and the web app. Installs over 0.3.x without losing data.
 

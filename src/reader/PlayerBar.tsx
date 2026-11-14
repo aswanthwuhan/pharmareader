@@ -80,7 +80,7 @@ interface Props {
   readyAhead: number;
   /** Null when page stepping is not available (single page, or page view). */
   pages: PageNav | null;
-  /** The cursor is off-screen: play should start at the top of the viewport. */
+  /** What is on screen is not what is being read: offer to play from there. */
   fromHere: boolean;
   /** Set while a selected passage is playing, or just after it finished. */
   selection: SelectionStatus | null;
@@ -384,7 +384,7 @@ export default function PlayerBar({
           </button>
         </div>
 
-        {fromHere && !playing && selection === null ? (
+        {fromHere && selection === null ? (
           <button type="button" className="rd-from-here" onClick={onPlayFromHere}>
             <Glyph size={16}>{icons.play}</Glyph>
             <span>Play from here</span>

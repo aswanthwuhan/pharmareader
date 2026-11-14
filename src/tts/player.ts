@@ -1,8 +1,8 @@
 import type { AudioCacheRecord, TtsEngine } from '../core/types';
-import { cacheKey, getAudio, putAudio, wavDurationMs } from './cache';
+import { cacheKey, getAudio, putAudio, wavDurationMs, wavSpeechMs } from './cache';
 import { cacheVoiceId } from './cacheIdentity';
 import { expand } from './lexicon';
-import { estimateTimings, wordTimings, type WordTiming } from './align';
+import { estimateTimings, words, wordTimings, type EstimateShape, type WordTiming } from './align';
 
 /** What the reader is doing with one sentence of the queue. */
 export type ItemState = 'queued' | 'generating' | 'ready' | 'playing' | 'done' | 'error';
@@ -40,7 +40,7 @@ export interface PlayerOptions {
    * the Whisper alignment runs then: alignment is a second model on the phone.
    */
   wordHighlight?: boolean;
-  /** Character index into the item's `text` of the word being spoken. */
+  /** Character index into the item's `text` of the word being spoken; -1 when none is. */
   onWord?(id: string, charIndex: number): void;
   onDone?(): void;
   onError?(err: Error, id?: string): void;
@@ -429,6 +429,27 @@ export function createPlayer(options: PlayerOptions): Player {
     });
   }
 
+  /**
+   * What the estimate needs to follow the voice: the clip speaks the expanded
+   * sentence ("CYP3A4" → six words), and Kokoro pads it with silence.
+   *
+   * shortcut: each word is expanded alone, so a rule that needs its neighbours
+   * is missed for the weight; return a char map from expand() to make it exact.
+   */
+  function spokenLengths(spoken: string): Promise<number[]> {
+    return Promise.all(
+      words(spoken).map(async (w) => {
+        const word = spoken.slice(w.charStart, w.charEnd);
+        return ((await expand(word, engine.id)) || word).length;
+      }),
+    );
+  }
+
+  async function estimateShape(spoken: string, blob: Blob): Promise<EstimateShape> {
+    const [weights, speech] = await Promise.all([spokenLengths(spoken), wavSpeechMs(blob)]);
+    return { weights, ...speech };
+  }
+
   /** Word timings for one clip, in the item's original-text coordinates. */
   function timingsFor(item: Item, clip: Clip): Promise<WordTiming[]> {
     const known = timings.get(item.id);
@@ -439,7 +460,9 @@ export function createPlayer(options: PlayerOptions): Player {
     // word timing worth asking Whisper for: estimate from the text instead.
     const job =
       clip.durationMs > 1
-        ? wordTimings(clip.blob, spoken, clip.durationMs).catch(() => estimateTimings(spoken, 1))
+        ? estimateShape(spoken, clip.blob)
+            .then((shape) => wordTimings(clip.blob, spoken, clip.durationMs, shape))
+            .catch(() => estimateTimings(spoken, 1))
         : Promise.resolve(estimateTimings(spoken, 1));
     timings.set(item.id, job);
     return job;
@@ -481,6 +504,13 @@ export function createPlayer(options: PlayerOptions): Player {
       last = word;
       options.onWord?.(item.id, word);
     };
+    // -1: no word is being said (the clip's silent tail, or the gap before the
+    // next sentence), so the mark must not sit on the last word meanwhile.
+    const clear = () => {
+      if (last === -1) return;
+      last = -1;
+      options.onWord?.(item.id, -1);
+    };
 
     // First pass: proportional to how much of the clip has been heard, so the
     // highlight moves even before alignment lands.
@@ -497,6 +527,7 @@ export function createPlayer(options: PlayerOptions): Player {
       stopLength = startClock(() => {
         if (stopped || gen !== generation || el.ended) return;
         const played = el.currentTime * 1000;
+        if (played > list[list.length - 1]!.endMs + 120) return clear();
         let timing = list[0]!;
         for (const candidate of list) {
           if (candidate.startMs <= played) timing = candidate;
@@ -509,6 +540,7 @@ export function createPlayer(options: PlayerOptions): Player {
     stopClock = () => {
       stopped = true;
       stopLength();
+      if (gen === generation) clear();
     };
     return () => stopClock();
   }
@@ -595,6 +627,21 @@ export function createPlayer(options: PlayerOptions): Player {
       options.onWord?.(item.id, word);
     };
 
+    // Offsets index the expanded utterance ("CYP3A4" is six words there): each
+    // word of the sentence owns the stretch its own expansion takes up.
+    const stretches = wordsWanted
+      ? estimateTimings(spoken, text.length, { weights: await spokenLengths(spoken) })
+      : [];
+    if (gen !== generation) throw new AbortPlayback();
+    const emitAt = (expandedIndex: number) => {
+      let at = stretches[0];
+      for (const stretch of stretches) {
+        if (stretch.startMs <= expandedIndex) at = stretch;
+        else break;
+      }
+      if (at) emit(item.charMap?.[at.charStart] ?? at.charStart);
+    };
+
     options.onSentence?.(item.id, i);
     setState(item, 'playing');
     if (wordsWanted) {
@@ -603,7 +650,7 @@ export function createPlayer(options: PlayerOptions): Player {
       timer = setInterval(() => {
         if (gen !== generation) return;
         const elapsed = startedAt ? Date.now() - startedAt : 0;
-        emit(charAtFraction(item.text, elapsed / expected));
+        emitAt((elapsed / expected) * text.length);
       }, 160);
     }
 
@@ -615,9 +662,7 @@ export function createPlayer(options: PlayerOptions): Player {
         },
         onWord: (_id, charIndex) => {
           if (!wordsWanted) return;
-          // Boundary offsets index the expanded utterance; relate them to the
-          // sentence the reader sees by proportion.
-          emit(charAtFraction(item.text, charIndex / Math.max(1, text.length)));
+          emitAt(charIndex);
         },
         onError: (err) => {
           failure = err;

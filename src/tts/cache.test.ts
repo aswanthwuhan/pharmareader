@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../core/db';
 import type { AudioCacheRecord } from '../core/types';
+import { encodeWav } from './neural/wav';
 import {
   DEFAULT_MAX_CACHE_BYTES,
   cacheKey,
@@ -12,6 +13,7 @@ import {
   resetAudioSizeCache,
   sha256Hex,
   wavDurationMs,
+  wavSpeechMs,
 } from './cache';
 
 afterEach(async () => {
@@ -258,5 +260,20 @@ describe('wavDurationMs', () => {
   it('survives a header with zero byteRate', async () => {
     const blob = wavBlob(0, 100);
     expect(await wavDurationMs(blob)).toBe(0);
+  });
+});
+
+describe('wavSpeechMs', () => {
+  it('finds the speech between the silent head and tail of a clip', async () => {
+    // 1 s at 1 kHz: 300 ms of silence, 200 ms of sound, 500 ms of silence.
+    const pcm = new Float32Array(1000);
+    pcm.fill(0.5, 300, 500);
+    expect(await wavSpeechMs(encodeWav(pcm, 1000))).toEqual({ startMs: 300, endMs: 500 });
+  });
+
+  it('answers null for a silent clip and for anything that is not 16-bit PCM', async () => {
+    expect(await wavSpeechMs(encodeWav(new Float32Array(100), 1000))).toBeNull();
+    expect(await wavSpeechMs(wavBlob(8000, 16000))).toBeNull(); // 8-bit
+    expect(await wavSpeechMs(new Blob([new Uint8Array(10)]))).toBeNull();
   });
 });

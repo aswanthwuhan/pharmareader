@@ -24,6 +24,18 @@ export function words(text: string): WordRange[] {
 }
 
 /**
+ * What the caller knows about a clip that plain word length does not: how long
+ * each word is as the voice says it ("CYP3A4" is six spoken words), and where
+ * the speech sits inside the clip (Kokoro pads both ends with silence).
+ */
+export interface EstimateShape {
+  /** Spoken length of each word of the text, in characters. */
+  weights?: readonly number[];
+  startMs?: number;
+  endMs?: number;
+}
+
+/**
  * Timing proportional to word length.
  *
  * This is what the reader highlights with when the Whisper model is not
@@ -31,13 +43,19 @@ export function words(text: string): WordRange[] {
  * It is wrong in the same way for every sentence — it cannot know where a pause
  * or a long drug name sits — but it covers every word inside `durationMs`.
  */
-export function estimateTimings(text: string, durationMs: number): WordTiming[] {
+export function estimateTimings(text: string, durationMs: number, shape?: EstimateShape): WordTiming[] {
   const ws = words(text);
-  const total = ws.reduce((n, w) => n + (w.charEnd - w.charStart) + 1, 0);
-  const duration = Math.max(0, durationMs);
-  let t = 0;
-  return ws.map((w) => {
-    const share = total > 0 ? ((w.charEnd - w.charStart + 1) / total) * duration : 0;
+  // +1 per word: the gap after it is spoken time too.
+  const weight = (w: WordRange, i: number) => (shape?.weights?.[i] ?? w.charEnd - w.charStart) + 1;
+  const total = ws.reduce((n, w, i) => n + weight(w, i), 0);
+  const whole = Math.max(0, durationMs);
+  const from = Math.min(whole, Math.max(0, shape?.startMs ?? 0));
+  const to = Math.min(whole, Math.max(from, shape?.endMs ?? whole));
+  // A window with no room in it (a silent clip) is no information: use the clip.
+  const [start, duration] = to > from ? [from, to - from] : [0, whole];
+  let t = start;
+  return ws.map((w, i) => {
+    const share = total > 0 ? (weight(w, i) / total) * duration : 0;
     const timing = { ...w, startMs: t, endMs: t + share };
     t += share;
     return timing;

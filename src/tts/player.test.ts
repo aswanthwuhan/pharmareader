@@ -13,9 +13,9 @@ vi.mock('./align', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./align')>();
   return {
     ...actual,
-    wordTimings: (audio: Blob, text: string, durationMs: number) => {
-      wordTimingsSpy(text, durationMs);
-      return actual.wordTimings(audio, text, durationMs);
+    wordTimings: (audio: Blob, text: string, durationMs: number, shape?: import('./align').EstimateShape) => {
+      wordTimingsSpy(text, durationMs, shape);
+      return actual.wordTimings(audio, text, durationMs, shape);
     },
   };
 });
@@ -1292,6 +1292,9 @@ describe('prefetch ahead', () => {
     player.play();
     await until(() => wordTimingsSpy.mock.calls.length === 1);
     expect(wordTimingsSpy.mock.calls[0]?.[1]).toBe(2000);
+    // One spoken length per word, so the estimate follows the expanded text.
+    const [text, , shape] = wordTimingsSpy.mock.calls[0] as [string, number, { weights: number[] }];
+    expect(shape.weights).toHaveLength(text.trim().split(/\s+/).length);
     player.stop();
   });
 });

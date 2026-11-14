@@ -189,6 +189,53 @@ export async function wavDurationMs(blob: Blob): Promise<number> {
   return Math.round((dataSize / byteRate) * 1000);
 }
 
+/**
+ * Where the speech sits inside a 16-bit PCM WAV: the first and last moment
+ * louder than 2 % of the clip's peak. Kokoro pads a clip with ~0.3 s of silence
+ * before and ~0.5 s after; a word clock that counts those as speech runs ahead
+ * at the start of a sentence and behind at its end. Null for anything else.
+ */
+export async function wavSpeechMs(blob: Blob): Promise<{ startMs: number; endMs: number } | null> {
+  if (blob.size < 44) return null;
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  const tag = (o: number) => String.fromCharCode(buf[o]!, buf[o + 1]!, buf[o + 2]!, buf[o + 3]!);
+  if (tag(0) !== 'RIFF' || tag(8) !== 'WAVE') return null;
+
+  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  let frameBytes = 0;
+  let sampleRate = 0;
+  let data = -1;
+  let dataSize = 0;
+  for (let off = 12; off + 8 <= buf.length; ) {
+    const id = tag(off);
+    const size = view.getUint32(off + 4, true);
+    const body = off + 8;
+    if (id === 'fmt ' && size >= 16 && body + 16 <= buf.length) {
+      // PCM, 16 bits: the only form the on-device engines write.
+      if (view.getUint16(body, true) !== 1 || view.getUint16(body + 14, true) !== 16) return null;
+      sampleRate = view.getUint32(body + 4, true);
+      frameBytes = view.getUint16(body + 12, true);
+    } else if (id === 'data' && size > 0) {
+      data = body;
+      dataSize = Math.min(size, buf.length - body);
+    }
+    off = body + size + (size & 1);
+  }
+  if (data < 0 || sampleRate <= 0 || frameBytes < 2) return null;
+
+  const frames = Math.floor(dataSize / frameBytes);
+  const level = (frame: number) => Math.abs(view.getInt16(data + frame * frameBytes, true));
+  let peak = 0;
+  for (let i = 0; i < frames; i++) peak = Math.max(peak, level(i));
+  const floor = peak * 0.02;
+  if (floor <= 0) return null;
+  let first = 0;
+  while (first < frames && level(first) <= floor) first++;
+  let last = frames - 1;
+  while (last > first && level(last) <= floor) last--;
+  return { startMs: (first / sampleRate) * 1000, endMs: ((last + 1) / sampleRate) * 1000 };
+}
+
 function toHex(bytes: Uint8Array): string {
   let out = '';
   for (const b of bytes) out += b.toString(16).padStart(2, '0');

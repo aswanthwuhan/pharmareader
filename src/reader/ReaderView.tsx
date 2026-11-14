@@ -275,8 +275,12 @@ export default function ReaderView() {
   prefetchRef.current = prefetchAhead;
   /** Plans are pure and cheap-ish; a chapter is planned once per settings change. */
   const planCache = useRef(new Map<string, ChapterPlan>());
-  /** True while the page number came from the spoken sentence, not from a tap. */
-  const pageFromCursor = useRef(false);
+  /**
+   * Page view: the reader turned to another page while the voice kept going.
+   * The page then stays put instead of following the voice, and "Play from
+   * here" is offered.
+   */
+  const [browsing, setBrowsing] = useState(false);
   /** The sleep timer's "End of chapter": stop instead of auto-advancing. */
   const sleepAtChapterEnd = useRef(false);
 
@@ -604,14 +608,15 @@ export default function ReaderView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId, engineChoice]);
 
-  // Auto-turn the PDF page when the spoken sentence lives on another page. The
-  // flag keeps the page callback from moving the cursor back to the page start.
+  // Auto-turn the PDF page when the spoken sentence lives on another page —
+  // unless the reader is looking at a page of their own choosing meanwhile.
   useEffect(() => {
     const first = reading?.pdfRects?.[0];
-    if (first && mode === 'page') {
-      pageFromCursor.current = true;
-      setPdfPage(Math.max(1, first.page));
-    }
+    if (!first || mode !== 'page') return;
+    const page = Math.max(1, first.page);
+    if (browsing && playStateRef.current === 'playing' && page !== pdfPage) return;
+    setBrowsing(false);
+    setPdfPage(page);
   }, [readingId, mode]);
 
   // B2: is the cursor still on screen? After a long scroll it is not, and Play
@@ -733,7 +738,7 @@ export default function ReaderView() {
       },
       onWord: (id, charIndex) => {
         if (mine !== generation.current || !wordRef.current) return;
-        setWord({ id, charIndex });
+        setWord(charIndex < 0 ? null : { id, charIndex });
       },
       onDone: () => {
         if (mine !== generation.current) return;
@@ -986,17 +991,20 @@ export default function ReaderView() {
     }
     // B2: after scrolling away from the cursor, Play starts at the top of what
     // is on screen rather than at a sentence she can no longer see.
-    const fromTop = mode === 'text' && !cursorOnScreenRef.current ? firstVisibleSentence() : null;
+    const fromTop =
+      mode === 'text' ? (cursorOnScreenRef.current ? null : firstVisibleSentence()) : browsing ? pageStart(pdfPage) : null;
     const start = fromTop ?? pos;
+    setBrowsing(false);
     const info = engineRef.current;
     if (info) beginPlayback(info, start.chapterIndex, start.index);
     else void startFrom(start.chapterIndex, start.index);
   }
 
-  /** The small "Play from here" pill: always the visible top of the text. */
+  /** The small "Play from here" pill: the visible top of the text, or the page in view. */
   function playFromHere(): void {
-    const start = firstVisibleSentence() ?? cursorRef.current;
+    const start = (mode === 'page' ? pageStart(pdfPage) : firstVisibleSentence()) ?? cursorRef.current;
     if (!start) return;
+    setBrowsing(false);
     const info = engineRef.current;
     if (info) beginPlayback(info, start.chapterIndex, start.index);
     else void startFrom(start.chapterIndex, start.index);
@@ -1073,10 +1081,14 @@ export default function ReaderView() {
   }
 
   /** Jump to the first readable sentence of a PDF page, playing stays playing. */
+  function pageStart(page: number): Pos | null {
+    return pages.get(page) ?? pageStartNear(page);
+  }
+
   function goToPage(page: number): void {
     if (!index || page < 1) return;
     setPdfPage(page);
-    const pos = pages.get(page) ?? pageStartNear(page);
+    const pos = pageStart(page);
     if (pos) goToPos(pos);
   }
 
@@ -1872,13 +1884,14 @@ export default function ReaderView() {
             onSaveOrder={savePageOrder}
             onPageChange={(page) => {
               const next = Math.max(1, page);
-              setPdfPage(next);
-              // The page turned because the voice moved on: keep the cursor.
-              if (pageFromCursor.current) {
-                pageFromCursor.current = false;
+              // While the voice is going a page turn is a look, not a jump:
+              // "Play from here" moves the voice when the reader wants it to.
+              if (playStateRef.current !== 'playing') {
+                goToPage(next);
                 return;
               }
-              goToPage(next);
+              setPdfPage(next);
+              setBrowsing(next !== Math.max(1, reading?.pdfRects?.[0]?.page ?? next));
             }}
           />
         </Suspense>
@@ -1955,7 +1968,7 @@ export default function ReaderView() {
           generating={generatingNumber}
           readyAhead={readyAhead}
           pages={showPage ? null : pageNav}
-          fromHere={mode === 'text' && !cursorOnScreen && playState !== 'playing'}
+          fromHere={showPage ? browsing : mode === 'text' && !cursorOnScreen && playState !== 'playing'}
           selection={
             selectionPlay
               ? {

@@ -1029,6 +1029,36 @@ describe('reader: playback start and page stepping', () => {
     await waitFor(() => playerMock.calls.length === 1, 'player created');
     expect(playerMock.calls[0]?.startIndex).toBe(1);
   });
+
+  it('lets a page turn in page view look ahead, and plays from that page on request', async () => {
+    await db.books.put(makePdfBook());
+    await renderReader();
+    await waitForEngine();
+    await waitFor(() => container.querySelector('.rd-pdf') !== null, 'page view');
+
+    await act(async () => {
+      playButton()?.click();
+    });
+    await waitFor(() => playerMock.calls.length === 1, 'player created');
+    await act(async () => {
+      playerMock.calls[0]!.onSentence?.('0-0-0', 0);
+    });
+    expect(buttonByText('Play from here')).toBeNull();
+
+    // Turning the page while the voice is going is a look: the voice stays.
+    await act(async () => {
+      buttonByLabel('Next page')?.click();
+    });
+    await waitFor(() => buttonByText('Play from here') !== null, 'play-from-here pill');
+    expect(playerMock.calls.length).toBe(1);
+
+    await act(async () => {
+      buttonByText('Play from here')?.click();
+    });
+    await waitFor(() => playerMock.calls.length === 2, 'player restarted');
+    expect(playerMock.calls[1]?.startIndex).toBe(1);
+    expect(buttonByText('Play from here')).toBeNull();
+  });
 });
 
 describe('reader: generation status, skips and word highlight', () => {
