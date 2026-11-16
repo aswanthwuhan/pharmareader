@@ -2,7 +2,7 @@
 
 | Contributor | Role |
 |---|---|
-| [@aswanthwuhan](https://github.com/aswanthwuhan) (AuraPharmLab) | Product owner, requirements, testing on device |
+| [@aswanthwuhan](https://github.com/aswanthwuhan)  | Product owner, requirements, testing on device |
 | **DeepSeek V4.1 Flash** ([DeepSeek](https://github.com/deepseek-ai)), via DeepSeek Harness | Wrote, reviewed and tested most of the code: importers, TTS engines, native Kokoro plugin, study/syllabus features, UI, emulator and browser QA |
 | **Claude Opus** ([Anthropic](https://www.anthropic.com)), via Claude Code | Planning, architecture, orchestration of the DeepSeek agents, integration, releases |
 | **Google Stitch** | UI reference screen designs |
